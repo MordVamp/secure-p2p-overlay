@@ -1,8 +1,8 @@
 [package]
-name = "overlay_node"
+name = "p2p-overlay"
 version = "0.1.0"
 edition = "2021"
-description = "Decentralised P2P overlay network — Kademlia DHT + TLS tunnels (course work)"
+description = "[Coursework] Secure decentralised P2P overlay: Kademlia DHT + TLS 1.3 tunnels"
 
 # ── Основные зависимости ───────────────────────────────────────────────────────
 [dependencies]
@@ -65,9 +65,9 @@ tokio-test = "0.4"
 
 # ── Бинарники ──────────────────────────────────────────────────────────────────
 [[bin]]
-name = "overlay_node"
+name = "p2p-node"
 path = "src/main.rs"
 
 [[bin]]
-name = "orchestrator"
+name = "p2p-orchestrator"
 path = "src/orchestrator.rs"

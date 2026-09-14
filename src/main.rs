@@ -8,7 +8,7 @@ use anyhow::Result;
 use clap::Parser;
 use tracing::info;
 
-use overlay_node::config::NodeConfig;
+use p2p_overlay::config::NodeConfig;
 
 #[derive(Parser, Debug)]
 #[command(name = "overlay_node", about = "P2P overlay network node")]
@@ -55,7 +55,7 @@ async fn main() -> Result<()> {
     info!("DHT: k={}, α={}, R={}", cfg.dht.k_bucket_size, cfg.dht.alpha, cfg.dht.replication_factor);
 
     // ── Инициализация идентичности ────────────────────────────────────────────
-    use overlay_node::identity::node_identity::NodeIdentity;
+    use p2p_overlay::identity::node_identity::NodeIdentity;
     let identity = NodeIdentity::load_or_create(&cfg.state_dir)?;
     info!("NodeID = {}", identity.node_id);
 
