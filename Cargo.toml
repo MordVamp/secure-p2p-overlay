@@ -1,0 +1,73 @@
+[package]
+name = "overlay_node"
+version = "0.1.0"
+edition = "2021"
+description = "Decentralised P2P overlay network — Kademlia DHT + TLS tunnels (course work)"
+
+# ── Основные зависимости ───────────────────────────────────────────────────────
+[dependencies]
+# Async runtime
+tokio        = { version = "1",    features = ["full"] }
+tokio-util   = { version = "0.7",  features = ["codec"] }
+bytes        = "1"
+
+# TLS 1.3 (упрощённый уровень)
+tokio-rustls  = "0.26"
+rustls        = { version = "0.23", features = ["ring"] }
+rustls-pemfile = "2"
+rcgen         = { version = "0.13", features = ["crypto"] }
+
+# Криптография (и для TLS-level, и закладки под AKE продвинутого уровня)
+ed25519-dalek = { version = "2", features = ["pkcs8", "pem", "rand_core"] }
+pkcs8          = { version = "0.10", features = ["pem"] }
+x25519-dalek  = { version = "2", features = ["static_secrets"] }
+sha2          = "0.10"
+hkdf          = "0.12"
+aes-gcm       = "0.10"
+rand          = "0.8"
+zeroize       = { version = "1", features = ["derive"] }
+hex           = "0.4"
+
+# Сериализация (MessagePack — выбор обоснован в docs/design_decision.md)
+rmp-serde = "1"
+serde     = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+
+# Битовые флаги
+bitflags = "2"
+
+# Async trait
+async-trait = "0.1"
+
+# UUID, время
+uuid    = { version = "1", features = ["v4", "serde"] }
+chrono  = { version = "0.4", features = ["serde"] }
+
+# Логирование
+tracing            = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+# Ошибки
+anyhow    = "1"
+thiserror = "2"
+
+# Конкурентные структуры (для DHT storage — следующие фазы)
+dashmap = "6"
+
+# Метрики / CSV (фаза 8)
+csv = "1"
+
+# CLI
+clap    = { version = "4", features = ["derive"] }
+
+[dev-dependencies]
+tokio-test = "0.4"
+
+# ── Бинарники ──────────────────────────────────────────────────────────────────
+[[bin]]
+name = "overlay_node"
+path = "src/main.rs"
+
+[[bin]]
+name = "orchestrator"
+path = "src/orchestrator.rs"

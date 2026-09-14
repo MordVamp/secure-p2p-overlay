@@ -1,0 +1,35 @@
+# Конфигурация узла P2P оверлейной сети
+# Все параметры меняются без правки исходного кода
+
+level: simplified     # simplified | advanced
+
+dht:
+  node_id_bits: 256
+  k_bucket_size: 3    # 3 (simplified) / 4 (advanced)
+  alpha: 3
+  replication_factor: 3
+  ttl_seconds: 180
+  republish_interval_seconds: 80
+  refresh_interval_seconds: 60
+  rpc_timeout_seconds: 5
+
+transport:
+  max_frame_payload: 65536
+  connect_timeout_seconds: 10
+  read_timeout_seconds: 30
+
+tunnel:
+  min_relays: 2       # 2 (simplified) / 3 (advanced)
+  max_hops: 5
+  ttl_seconds: 600
+  pool_size: 1        # 1 (simplified) / ≥3 (advanced)
+  build_timeout_seconds: 15
+  ack_timeout_seconds: 5
+
+security:
+  session_id_ttl_seconds: 3600
+
+node:
+  state_dir: "./state"
+  listen_port: 7000
+  metrics_dir: "./metrics"
