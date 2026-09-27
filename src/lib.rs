@@ -1,7 +1,5 @@
-//! p2p-overlay — защищённая оверлейная P2P-сеть (Kademlia DHT + TLS).
-//!
+//! p2p-overlay — защищённая оверлейная P2P-сеть (Kademlia DHT + TLS-туннели).
 //! Уровень: Simplified (N=12-15, K=3, relays≥2)
-//! Расширяемо до Advanced без рефакторинга (traits + config)
 
 // Фаза 0
 pub mod config;
@@ -22,10 +20,12 @@ pub mod dht;
 pub mod rpc;
 pub mod node;
 
-// Фаза 5 — Bootstrap
+// Фаза 5 ✅
 pub mod bootstrap;
 
-// Фазы 6-10: TODO
-// pub mod tunnel;
+// Фаза 6 ✅
+pub mod tunnel;
+
+// Фаза 7-8: TODO
+pub mod metrics;
 // pub mod app;
-// pub mod metrics;

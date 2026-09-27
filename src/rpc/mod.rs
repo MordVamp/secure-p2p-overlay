@@ -84,6 +84,17 @@ impl RpcHandler {
             },
             MsgType::FindNodeResponse => { self.pending.deliver(frame.request_id, frame).await; None }
             MsgType::Error => { self.pending.deliver(frame.request_id, frame.clone()).await; None }
+            MsgType::TunnelBuild => match self.handle_tunnel_build(&frame).await {
+                Ok(resp) => Some(resp),
+                Err(e) => { tracing::warn!("tunnel_build err: {e}"); None }
+            },
+            MsgType::TunnelBuildOk | MsgType::TunnelBuildFail => {
+                self.pending.deliver(frame.request_id, frame).await; None
+            }
+            MsgType::TunnelData | MsgType::TunnelAck | MsgType::TunnelClose => {
+                // TODO Phase 6: forward payload through tunnel
+                debug!("tunnel data {:?} (forwarding not yet impl)", frame.msg_type); None
+            }
             MsgType::StoreRequest    => { self.pending.deliver(frame.request_id, frame).await; None }
             MsgType::StoreResponse   => { self.pending.deliver(frame.request_id, frame).await; None }
             MsgType::FindValueRequest  => { self.pending.deliver(frame.request_id, frame).await; None }
@@ -251,5 +262,36 @@ impl RpcClient {
         }
         let r: FindValueResponse = payload::decode(&resp.payload)?;
         Ok(r)
+    }
+}
+
+// ── TUNNEL_BUILD обработчик (Фаза 6) ─────────────────────────────────────────
+
+impl RpcHandler {
+    /// Обработать входящий TUNNEL_BUILD — relay соглашается участвовать.
+    pub async fn handle_tunnel_build(&self, frame: &crate::transport::framing::Frame)
+        -> anyhow::Result<crate::transport::framing::Frame>
+    {
+        use crate::tunnel::builder::{TunnelBuildPayload, TunnelBuildOkPayload};
+
+        let req: TunnelBuildPayload = payload::decode(&frame.payload)?;
+        let tid_hex = hex::encode(&req.tunnel_id[..4.min(req.tunnel_id.len())]);
+
+        tracing::info!(
+            "← TUNNEL_BUILD id={} hop={}/{} from={}",
+            tid_hex, req.hop_index, req.total_hops, req.initiator
+        );
+
+        // Упрощённый уровень: всегда соглашаемся (нет проверки мощности)
+        let ok = TunnelBuildOkPayload {
+            tunnel_id: req.tunnel_id,
+            relay:     self.own_contact.clone(),
+            hop_index: req.hop_index,
+        };
+        Ok(crate::transport::framing::Frame::new_response(
+            crate::transport::framing::MsgType::TunnelBuildOk,
+            frame.request_id,
+            bytes::Bytes::from(payload::encode(&ok)?),
+        ))
     }
 }

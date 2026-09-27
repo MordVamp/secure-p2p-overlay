@@ -143,3 +143,47 @@ pub struct FindValueResponse {
     pub contacts:  Vec<Contact>,        // ближайшие если не найдено
     pub ttl_remaining_secs: Option<u64>,
 }
+
+// ── Tunnel payloads (Фаза 6) ─────────────────────────────────────────────────
+
+/// `TUNNEL_BUILD` payload (0x10).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TunnelBuildPayload {
+    pub tunnel_id:    Vec<u8>,
+    pub initiator:    Contact,
+    pub hop_index:    usize,
+    pub total_hops:   usize,
+    pub ttl_seconds:  u64,
+    pub timestamp_ms: u64,
+}
+
+/// `TUNNEL_BUILD_OK` payload (0x11).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TunnelBuildOkPayload {
+    pub tunnel_id: Vec<u8>,
+    pub relay:     Contact,
+    pub hop_index: usize,
+}
+
+/// `TUNNEL_DATA` payload (0x13) — данные через туннель.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TunnelDataPayload {
+    pub tunnel_id:  Vec<u8>,
+    pub seq:        u64,
+    pub data:       Vec<u8>,
+}
+
+/// `TUNNEL_ACK` payload (0x14).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TunnelAckPayload {
+    pub tunnel_id: Vec<u8>,
+    pub seq:       u64,
+    pub rtt_ms:    u64,
+}
+
+/// `TUNNEL_CLOSE` payload (0x15).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TunnelClosePayload {
+    pub tunnel_id: Vec<u8>,
+    pub reason:    String,
+}
