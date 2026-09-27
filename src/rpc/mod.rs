@@ -84,6 +84,10 @@ impl RpcHandler {
             },
             MsgType::FindNodeResponse => { self.pending.deliver(frame.request_id, frame).await; None }
             MsgType::Error => { self.pending.deliver(frame.request_id, frame.clone()).await; None }
+            MsgType::StoreRequest    => { self.pending.deliver(frame.request_id, frame).await; None }
+            MsgType::StoreResponse   => { self.pending.deliver(frame.request_id, frame).await; None }
+            MsgType::FindValueRequest  => { self.pending.deliver(frame.request_id, frame).await; None }
+            MsgType::FindValueResponse => { self.pending.deliver(frame.request_id, frame).await; None }
             _ => { debug!("unhandled type {:?}", frame.msg_type); None }
         }
     }
@@ -188,6 +192,64 @@ impl RpcClient {
         }
         let r: FindNodeResponse = payload::decode(&resp.payload)?;
         debug!("FIND_NODE_RESPONSE {} contacts", r.contacts.len());
+        Ok(r)
+    }
+}
+
+// ── STORE / FIND_VALUE RPC-клиент (Фаза 4) ───────────────────────────────────
+
+impl RpcClient {
+    /// Отправить STORE к peer.
+    pub async fn store_value<S>(
+        &self, stream: &mut FramedStream<S>, own: &Contact,
+        key: &[u8], value: Vec<u8>, ttl_seconds: u64,
+    ) -> Result<StoreResponse>
+    where S: tokio::io::AsyncReadExt + tokio::io::AsyncWriteExt + Unpin + Send
+    {
+        let request_id = new_request_id();
+        let req = StoreRequest {
+            sender: own.clone(), key: key.to_vec(),
+            value, ttl_seconds, signature: None,
+        };
+        let frame = Frame {
+            version: crate::protocol::PROTOCOL_VERSION, msg_type: MsgType::StoreRequest,
+            flags: FrameFlags::empty(), request_id,
+            payload: Bytes::from(payload::encode(&req)?),
+        };
+        let rx = self.pending.register(request_id).await;
+        stream.send(&frame).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        let resp = timeout(Duration::from_millis(self.rpc_timeout_ms), rx).await
+            .map_err(|_| anyhow::anyhow!("STORE timeout"))??;
+        if resp.msg_type == MsgType::Error {
+            let e: ErrorPayload = payload::decode(&resp.payload)?;
+            anyhow::bail!("STORE ERROR {}: {}", e.code, e.description);
+        }
+        let r: StoreResponse = payload::decode(&resp.payload)?;
+        Ok(r)
+    }
+
+    /// Отправить FIND_VALUE к peer.
+    pub async fn find_value<S>(
+        &self, stream: &mut FramedStream<S>, own: &Contact, key: &[u8],
+    ) -> Result<FindValueResponse>
+    where S: tokio::io::AsyncReadExt + tokio::io::AsyncWriteExt + Unpin + Send
+    {
+        let request_id = new_request_id();
+        let req = FindValueRequest { sender: own.clone(), key: key.to_vec() };
+        let frame = Frame {
+            version: crate::protocol::PROTOCOL_VERSION, msg_type: MsgType::FindValueRequest,
+            flags: FrameFlags::empty(), request_id,
+            payload: Bytes::from(payload::encode(&req)?),
+        };
+        let rx = self.pending.register(request_id).await;
+        stream.send(&frame).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        let resp = timeout(Duration::from_millis(self.rpc_timeout_ms), rx).await
+            .map_err(|_| anyhow::anyhow!("FIND_VALUE timeout"))??;
+        if resp.msg_type == MsgType::Error {
+            let e: ErrorPayload = payload::decode(&resp.payload)?;
+            anyhow::bail!("FIND_VALUE ERROR {}: {}", e.code, e.description);
+        }
+        let r: FindValueResponse = payload::decode(&resp.payload)?;
         Ok(r)
     }
 }

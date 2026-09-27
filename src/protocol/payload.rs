@@ -104,3 +104,42 @@ pub fn encode<T: Serialize>(val: &T) -> anyhow::Result<Vec<u8>> {
 pub fn decode<'a, T: Deserialize<'a>>(bytes: &'a [u8]) -> anyhow::Result<T> {
     rmp_serde::from_slice(bytes).map_err(|e| anyhow::anyhow!("msgpack decode: {e}"))
 }
+
+// ── Payload для STORE/FIND_VALUE (Фаза 4) ────────────────────────────────────
+
+/// `STORE_REQUEST` payload (0x05):
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StoreRequest {
+    pub sender:      Contact,
+    pub key:         Vec<u8>,   // RecordKey (32 bytes)
+    pub value:       Vec<u8>,
+    pub ttl_seconds: u64,
+    pub signature:   Option<Vec<u8>>,
+}
+
+/// `STORE_RESPONSE` payload (0x06):
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StoreResponse {
+    pub responder: Contact,
+    pub key:       Vec<u8>,
+    pub stored:    bool,        // false если хранилище полно
+}
+
+/// `FIND_VALUE_REQUEST` payload (0x07):
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FindValueRequest {
+    pub sender: Contact,
+    pub key:    Vec<u8>,        // RecordKey (32 bytes)
+}
+
+/// `FIND_VALUE_RESPONSE` payload (0x08):
+/// Если значение найдено — value заполнено, contacts пусто.
+/// Если не найдено — contacts содержит K ближайших (как FIND_NODE).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FindValueResponse {
+    pub responder: Contact,
+    pub key:       Vec<u8>,
+    pub value:     Option<Vec<u8>>,     // найденное значение
+    pub contacts:  Vec<Contact>,        // ближайшие если не найдено
+    pub ttl_remaining_secs: Option<u64>,
+}

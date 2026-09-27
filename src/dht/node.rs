@@ -24,6 +24,8 @@ pub struct DhtNode {
     pub pending:     Arc<PendingRpc>,
     pub rpc_client:  Arc<RpcClient>,
     pub cfg:         Arc<NodeConfig>,
+    /// DHT key-value хранилище (STORE/FIND_VALUE) — Фаза 4
+    pub store:       crate::dht::storage::DhtStore,
 }
 
 impl DhtNode {
@@ -34,7 +36,8 @@ impl DhtNode {
         let pending    = Arc::new(PendingRpc::new());
         let rpc_client = Arc::new(RpcClient::new(pending.clone(), &cfg));
 
-        Self { own_contact, routing, pending, rpc_client, cfg }
+        Self { own_contact, routing, pending, rpc_client, cfg,
+               store: crate::dht::storage::DhtStore::new(1024) }
     }
 
     /// Процедура bootstrap (§22.2):
@@ -137,5 +140,26 @@ impl DhtNode {
             .context("PING")?;
 
         Ok(pong.responder)
+    }
+}
+
+// ── Store/Value поддержка (Фаза 4) ──────────────────────────────────────────
+
+use crate::dht::storage::{DhtRecord, RecordKey};
+
+impl DhtNode {
+    /// Сохранить значение в локальном хранилище.
+    pub async fn store_local(&self, record: DhtRecord) -> bool {
+        self.store.store(record).await
+    }
+
+    /// Найти значение локально.
+    pub async fn find_value_local(&self, key: &RecordKey) -> Option<DhtRecord> {
+        self.store.find(key).await
+    }
+
+    /// Экспорт хранилища в JSON.
+    pub async fn export_store(&self) -> serde_json::Value {
+        self.store.export_json().await
     }
 }

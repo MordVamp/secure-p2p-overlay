@@ -1,8 +1,9 @@
 //! dht/ — Kademlia DHT.
-//! routing_table: k-bucket + RoutingTable  (✅ Фаза 4)
-//! lookup:        итеративный lookup       (✅ Фаза 4)
-//! node:          DhtNode, join/find_node  (✅ Фаза 5)
+//!
+//! Фаза 4: routing_table (k-bucket), lookup (итеративный), node (join/find),
+//!         storage (STORE/FIND_VALUE с TTL)
 
 pub mod routing_table;
 pub mod lookup;
 pub mod node;
+pub mod storage;
