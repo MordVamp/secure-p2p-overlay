@@ -29,3 +29,4 @@ pub mod tunnel;
 // Фаза 7-8: TODO
 pub mod metrics;
 // pub mod app;
+pub mod app;

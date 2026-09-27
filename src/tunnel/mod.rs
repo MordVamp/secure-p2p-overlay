@@ -20,3 +20,6 @@ pub mod session;
 pub use state::TunnelState;
 pub use manager::TunnelManager;
 pub use session::TunnelSession;
+
+pub mod forwarder;
+pub use forwarder::{TunnelForwarder, TunnelMessage, MAX_SEGMENT_SIZE};
