@@ -1,33 +1,49 @@
 # ARCHITECTURE.md — Архитектура узла P2P оверлейной сети
 
+> **Навигация:** [docs/README.md](../README.md)  
+> **Требования:** [ТЗ этапов 1-2](../requirements/TZ_Etapy_1-2.md) · [Неформальные требования](../requirements/Ustnie_Trebovaniya.md)  
+> **Смежные:** [PROTOCOL.md](PROTOCOL.md) · [DESIGN_DECISIONS.md](DESIGN_DECISIONS.md)
+
+---
+
 ## Обзор
 
 Система состоит из независимых Rust-процессов (узлов), каждый из которых:
 - слушает TCP-порт
 - поддерживает таблицу маршрутизации Kademlia (k-bucket)
-- выполняет RPC: PING/PONG, FIND_NODE
-- присоединяется к сети через bootstrap-узел
-- выполняет итеративный lookup
+- выполняет RPC: PING/PONG, FIND_NODE, STORE, FIND_VALUE
+- присоединяется к сети через bootstrap-узел (Star или Ring)
+- выполняет итеративный lookup (α=3 параллельных)
+- строит многопереходные туннели (min_relays=2)
+- передаёт E2E подписанные сообщения через туннель
 
 ## Модульная структура
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│ main.rs — CLI, загрузка конфига, старт Node                     │
-├──────────────────┬──────────────────┬───────────────────────────┤
-│ node/            │ dht/             │ identity/                 │
-│ TCP-сервер       │ RoutingTable     │ Ed25519 ключи             │
-│ Диспетчер        │ IterativeLookup  │ NodeId = SHA-256(pubkey)  │
-│ Bootstrap-запуск │ DhtNode.join()   │ load_or_create()          │
-├──────────────────┼──────────────────┼───────────────────────────┤
-│ rpc/             │ protocol/        │ transport/                │
-│ RpcHandler       │ Payload structs  │ FrameReader (автомат)     │
-│ RpcClient        │ MessagePack enc  │ FramedStream              │
-│ PendingRpc map   │ Error codes      │ Кадр 24B заголовок        │
-├──────────────────┴──────────────────┴───────────────────────────┤
-│ config.rs — NodeConfig (YAML)                                   │
-│ types.rs  — NodeId, Contact                                     │
-└─────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│ main.rs — CLI, загрузка конфига, старт Node                         │
+├────────────┬────────────────┬────────────────┬──────────────────────┤
+│ node/      │ dht/           │ identity/      │ security/            │
+│ TCP-сервер │ RoutingTable   │ Ed25519 ключи  │ TLS 1.3 (rustls)    │
+│ Диспетчер  │ IterativeLookup│ NodeId=SHA-256 │ SessionTracker       │
+│ Bootstrap  │ DhtNode.join() │ load_or_create │ replay-защита        │
+├────────────┼────────────────┼────────────────┼──────────────────────┤
+│ rpc/       │ protocol/      │ transport/     │ bootstrap/           │
+│ RpcHandler │ Payload structs│ FrameReader    │ StarBootstrap        │
+│ RpcClient  │ MessagePack    │ FramedStream   │ RingBootstrap        │
+│ PendingRpc │ Error codes    │ Кадр 24B       │ BootstrapScheme trait│
+├────────────┼────────────────┼────────────────┼──────────────────────┤
+│ tunnel/                     │ app/           │ metrics/             │
+│ TunnelState (машина сост.)  │ AppMessage     │ MetricsCollector     │
+│ TunnelSession + hop         │ Messenger      │ CSV: ping/lookup/    │
+│ TunnelBuilder (TUNNEL_BUILD)│ Ed25519 E2E sig│   tunnel/routing     │
+│ TunnelManager (пул, rebuild)│                │ JSON snapshots       │
+│ TunnelForwarder (DATA/ACK)  │                │                      │
+├─────────────────────────────┴────────────────┴──────────────────────┤
+│ dht/storage/ — DhtStore: STORE/FIND_VALUE + TTL + eviction          │
+├─────────────────────────────────────────────────────────────────────┤
+│ config.rs — NodeConfig (YAML)  ·  types.rs — NodeId, Contact        │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Ключевые инженерные решения

@@ -1,5 +1,8 @@
 # Secure P2P Overlay — Курсовая работа
 
+> 📚 **Документация:** [docs/README.md](docs/README.md) — ТЗ, архитектура, протокол, план  
+> 📋 **Требования:** [ТЗ 1-2](docs/requirements/TZ_Etapy_1-2.md) · [Устные](docs/requirements/Ustnie_Trebovaniya.md)
+
 Узел защищённой оверлейной P2P-сети на основе Kademlia DHT.  
 **Язык:** Rust 2021 | **Транспорт:** TCP | **DHT:** Kademlia | **Уровень:** Simplified (N=12–15, K=3)
 

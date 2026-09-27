@@ -1,5 +1,11 @@
 # Недостающее по Этапам 1 и 2
 
+> **Навигация:** [docs/README.md](../README.md)  
+> **Смежные:** [ТЗ этапов 1-2](TZ_Etapy_1-2.md) · [Устные требования](Ustnie_Trebovaniya.md)
+
+---
+
+
 > Документ создан по итогам проверки требований `Etapy_1-2_Tekhnicheskie_trebovania.md`  
 > Дата: 2026-09-21 | Репозиторий: `secure-p2p-overlay`
 
