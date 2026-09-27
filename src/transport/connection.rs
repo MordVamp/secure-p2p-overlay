@@ -1,7 +1,7 @@
-//! transport/connection.rs — Асинхронный TCP-транспорт с кадрированием.
-//! Умеет читать/писать Frame поверх любого AsyncRead+AsyncWrite стрима
-//! (обычный TCP или TLS).
+//! transport/connection.rs — Async TCP-транспорт с кадрированием.
+//! FramedStream<S> работает поверх любого AsyncRead+AsyncWrite (TCP или TLS).
 
+use std::io;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::{timeout, Duration};
 use tracing::{debug, warn};
@@ -12,58 +12,71 @@ pub const READ_CHUNK: usize = 4096;
 
 /// Обёртка над стримом: читает/пишет Frame.
 pub struct FramedStream<S> {
-    inner:   S,
-    reader:  FrameReader,
-    timeout: Duration,
+    inner:       S,
+    reader:      FrameReader,
+    timeout_ms:  u64,
+    pending:     Vec<ReadItem>,
 }
 
 impl<S: AsyncReadExt + AsyncWriteExt + Unpin + Send> FramedStream<S> {
-    pub fn new(stream: S, read_timeout_secs: u64) -> Self {
+    pub fn new(stream: S, read_timeout_ms: u64) -> Self {
         Self {
-            inner:   stream,
-            reader:  FrameReader::new(),
-            timeout: Duration::from_secs(read_timeout_secs),
+            inner:    stream,
+            reader:   FrameReader::new(),
+            timeout_ms: read_timeout_ms,
+            pending:  Vec::new(),
         }
     }
 
-    /// Отправить кадр.
+    /// Отправить кадр целиком.
     pub async fn send(&mut self, frame: &Frame) -> Result<(), FrameError> {
         let bytes = frame.encode()?;
         self.inner.write_all(&bytes).await?;
-        debug!("→ {}", frame);
+        debug!("→ {:?} len={}", frame.msg_type, bytes.len());
         Ok(())
     }
 
-    /// Прочитать следующий кадр (с тайм-аутом).
-    pub async fn recv(&mut self) -> Result<Frame, FrameError> {
+    /// Вернуть следующий `ReadItem` (Frame, Error или Eof).
+    pub async fn recv_item(&mut self) -> ReadItem {
         loop {
-            // Читаем новые данные
-            let mut chunk = [0u8; READ_CHUNK];
-            let n = timeout(self.timeout, self.inner.read(&mut chunk))
-                .await
-                .map_err(|_| FrameError::Io(std::io::Error::new(
-                    std::io::ErrorKind::TimedOut,
-                    "read timeout",
-                )))??;
-
-            if n == 0 {
-                return Err(FrameError::Io(std::io::Error::new(
-                    std::io::ErrorKind::UnexpectedEof,
-                    "connection closed",
-                )));
+            // Сначала возвращаем ранее разобранные элементы из буфера
+            if !self.pending.is_empty() {
+                return self.pending.remove(0);
             }
 
+            // Читаем новую порцию данных с тайм-аутом
+            let mut chunk = [0u8; READ_CHUNK];
+            let n = match timeout(
+                Duration::from_millis(self.timeout_ms),
+                self.inner.read(&mut chunk),
+            ).await {
+                Err(_) => return ReadItem::Error(FrameError::Io(io::Error::new(
+                    io::ErrorKind::TimedOut, "read timeout",
+                ))),
+                Ok(Err(e)) => return ReadItem::Error(FrameError::Io(e)),
+                Ok(Ok(0)) => return ReadItem::Eof,
+                Ok(Ok(n)) => n,
+            };
+
             let items = self.reader.feed(&chunk[..n]);
-            for item in items {
-                match item {
-                    ReadItem::Frame(f) => {
-                        debug!("← {}", f);
-                        return Ok(f);
-                    }
-                    ReadItem::Error(e) => {
-                        warn!("frame parse error (skipping byte): {}", e);
-                    }
+            self.pending.extend(items);
+        }
+    }
+
+    /// Для обратной совместимости: ждём первый Frame, остальные ошибки логируем.
+    pub async fn recv(&mut self) -> Result<Frame, FrameError> {
+        loop {
+            match self.recv_item().await {
+                ReadItem::Frame(f) => {
+                    debug!("← {:?} len={}", f.msg_type, f.payload.len());
+                    return Ok(f);
                 }
+                ReadItem::Error(e) => {
+                    warn!("frame parse error: {e}");
+                }
+                ReadItem::Eof => return Err(FrameError::Io(io::Error::new(
+                    io::ErrorKind::UnexpectedEof, "connection closed",
+                ))),
             }
         }
     }

@@ -35,24 +35,24 @@ impl KBucket {
         // Если уже есть — переместить в голову (самый свежий)
         if let Some(pos) = self.contacts.iter().position(|c| c.node_id == contact.node_id) {
             self.contacts.remove(pos);
-            self.contacts.push_front(contact);
+            self.contacts.push_back(contact);
             return None;
         }
 
         if !self.is_full() {
-            self.contacts.push_front(contact);
+            self.contacts.push_back(contact);
             return None;
         }
 
         // Bucket полон — возвращаем LRU (хвост) для PING-проверки
-        self.contacts.back().cloned()
+        self.contacts.front().cloned()
     }
 
     /// Удалить контакт по node_id (вызывается если PING LRU провалился).
     /// Затем добавляем новый.
     pub fn evict_lru_and_insert(&mut self, new_contact: Contact) {
-        self.contacts.pop_back();
-        self.contacts.push_front(new_contact);
+        self.contacts.pop_front();
+        self.contacts.push_back(new_contact);
     }
 
     /// Удалить контакт (узел ушёл offline).

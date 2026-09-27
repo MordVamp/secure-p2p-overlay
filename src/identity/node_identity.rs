@@ -89,3 +89,17 @@ pub fn verify_node_id(node_id: &NodeId, pubkey: &VerifyingKey) -> bool {
 pub fn verify_signature(pubkey: &VerifyingKey, data: &[u8], sig: &Signature) -> bool {
     pubkey.verify(data, sig).is_ok()
 }
+
+/// Вычислить NodeID из сырых байтов pubkey (для тестов и network payload).
+pub fn compute_node_id_from_bytes(pubkey_bytes: &[u8]) -> anyhow::Result<NodeId> {
+    let vk = VerifyingKey::from_bytes(pubkey_bytes.try_into().map_err(|_| anyhow::anyhow!("pubkey must be 32 bytes"))?)
+        .map_err(|e| anyhow::anyhow!("invalid pubkey: {e}"))?;
+    Ok(compute_node_id(&vk))
+}
+
+/// Проверить node_id по сырым байтам pubkey.
+pub fn verify_node_id_bytes(node_id: &NodeId, pubkey_bytes: &[u8]) -> bool {
+    compute_node_id_from_bytes(pubkey_bytes)
+        .map(|id| id == *node_id)
+        .unwrap_or(false)
+}

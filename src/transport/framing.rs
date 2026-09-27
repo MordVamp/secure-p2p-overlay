@@ -16,6 +16,7 @@ use uuid::Uuid;
 
 pub const PROTOCOL_VERSION: u8  = 1;
 pub const HEADER_SIZE: usize    = 24;
+pub const HEADER_LEN: usize = HEADER_SIZE;
 pub const MAX_FRAME_PAYLOAD: usize = 65_536;
 
 // ── Типы сообщений ────────────────────────────────────────────────────────────
@@ -43,7 +44,7 @@ pub enum MsgType {
     AppMessage        = 0x20,
     AppAck            = 0x21,
     // Служебное
-    Error             = 0xFF,
+    Error = 0x7F,
 }
 
 impl TryFrom<u8> for MsgType {
@@ -66,7 +67,7 @@ impl TryFrom<u8> for MsgType {
             0x15 => Ok(Self::TunnelClose),
             0x20 => Ok(Self::AppMessage),
             0x21 => Ok(Self::AppAck),
-            0xFF => Ok(Self::Error),
+            0x7F => Ok(Self::Error),
             _ => Err(FrameError::UnknownMsgType(v)),
         }
     }
@@ -151,11 +152,14 @@ pub struct FrameReader {
     buf: BytesMut,
 }
 
+#[derive(Debug)]
 /// Результат одного шага чтения: либо готовый кадр, либо ошибка разбора.
 pub enum ReadItem {
     Frame(Frame),
     /// Ошибка разбора; reader сбросил один байт и пытается ресинхронизоваться.
     Error(FrameError),
+    /// Соединение закрыто другой стороной (EOF).
+    Eof,
 }
 
 impl FrameReader {
@@ -239,4 +243,36 @@ pub enum FrameError {
     PayloadTooLarge(usize),
     #[error("i/o error: {0}")]
     Io(#[from] std::io::Error),
+}
+
+
+// ── Вспомогательные конструкторы ─────────────────────────────────────────────
+
+impl Frame {
+    /// Ответный Frame с тем же request_id.
+    pub fn new_response(msg_type: MsgType, request_id: [u8; 16], payload: Bytes) -> Self {
+        Self { version: PROTOCOL_VERSION, msg_type, flags: FrameFlags::IS_RESPONSE, request_id, payload }
+    }
+
+    /// ERROR-кадр для неверной версии протокола.
+    pub fn error_version(request_id: [u8; 16]) -> Self {
+        use crate::protocol::payload::{encode as mp_encode, ErrorPayload, error_codes};
+        let err = ErrorPayload { code: error_codes::BAD_VERSION, description: "bad version".into() };
+        let bytes = mp_encode(&err).unwrap_or_default();
+        Self {
+            version: PROTOCOL_VERSION, msg_type: MsgType::Error,
+            flags: FrameFlags::IS_RESPONSE | FrameFlags::IS_ERROR,
+            request_id, payload: Bytes::from(bytes),
+        }
+    }
+
+    /// Добавить флаг IS_ERROR.
+    pub fn with_error_flag(mut self) -> Self {
+        self.flags |= FrameFlags::IS_ERROR;
+        self
+    }
+}
+
+impl ReadItem {
+    pub fn is_eof(&self) -> bool { matches!(self, ReadItem::Eof) }
 }

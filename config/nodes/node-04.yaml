@@ -1,0 +1,35 @@
+# Узел node-04 — упрощённый уровень (Star bootstrap)
+level: simplified
+
+dht:
+  node_id_bits:               256
+  k_bucket_size:              3
+  alpha:                      3
+  replication_factor:         3
+  ttl_seconds:                180
+  republish_interval_seconds: 80
+  refresh_interval_seconds:   60
+  ping_timeout_ms:            5000
+  rpc_timeout_ms:             5000
+
+transport:
+  max_frame_payload:  65536
+  protocol_version:   1
+  connect_timeout_ms: 3000
+  read_timeout_ms:    5000
+
+node:
+  state_dir:       ./state/node-04
+  listen_host:     0.0.0.0
+  listen_port:     7004
+  bootstrap_peers: ["127.0.0.1:7001"]
+  log_level:       INFO
+  metrics_dir:     ./metrics/node-04
+
+tunnel:
+  min_relays: 2
+  max_hops:   5
+  pool_size:  1
+
+security:
+  session_id_ttl_seconds: 3600

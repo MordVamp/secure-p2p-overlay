@@ -1,35 +1,40 @@
 # Конфигурация узла P2P оверлейной сети
-# Все параметры меняются без правки исходного кода
+# Все параметры меняются без правки исходного кода (§5 ТЗ)
 
-level: simplified     # simplified | advanced
+level: simplified   # simplified | advanced
 
 dht:
-  node_id_bits: 256
-  k_bucket_size: 3    # 3 (simplified) / 4 (advanced)
-  alpha: 3
-  replication_factor: 3
-  ttl_seconds: 180
+  node_id_bits:               256
+  k_bucket_size:              3       # simplified=3 / advanced=4
+  alpha:                      3
+  replication_factor:         3
+  ttl_seconds:                180
   republish_interval_seconds: 80
-  refresh_interval_seconds: 60
-  rpc_timeout_seconds: 5
+  refresh_interval_seconds:   60
+  ping_timeout_ms:            5000    # PING_TIMEOUT_MS (§5)
+  rpc_timeout_ms:             5000    # READ_TIMEOUT_MS для RPC
 
 transport:
-  max_frame_payload: 65536
-  connect_timeout_seconds: 10
-  read_timeout_seconds: 30
+  max_frame_payload:   65536          # MAX_FRAME_PAYLOAD (§5)
+  protocol_version:    1              # PROTOCOL_VERSION
+  connect_timeout_ms:  3000           # CONNECT_TIMEOUT_MS (§5)
+  read_timeout_ms:     5000           # READ_TIMEOUT_MS (§5)
+
+node:
+  state_dir:       ./state/node-01    # NODE_STATE_DIR (§5)
+  listen_host:     0.0.0.0            # LISTEN_HOST (§5)
+  listen_port:     7001               # LISTEN_PORT (§5)
+  bootstrap_peers: []                 # BOOTSTRAP_PEERS (§5) — пусто у seed
+  log_level:       INFO               # LOG_LEVEL (§5)
+  metrics_dir:     ./metrics/node-01
 
 tunnel:
-  min_relays: 2       # 2 (simplified) / 3 (advanced)
-  max_hops: 5
-  ttl_seconds: 600
-  pool_size: 1        # 1 (simplified) / ≥3 (advanced)
-  build_timeout_seconds: 15
-  ack_timeout_seconds: 5
+  min_relays:       2
+  max_hops:         5
+  ttl_seconds:      600
+  pool_size:        1
+  build_timeout_ms: 15000
+  ack_timeout_ms:   5000
 
 security:
   session_id_ttl_seconds: 3600
-
-node:
-  state_dir: "./state"
-  listen_port: 7000
-  metrics_dir: "./metrics"
