@@ -43,6 +43,68 @@ key = SHA-256("node:" ‖ node_id)   // упрощённый уровень
 // продвинутый: SHA-256("alias:" ‖ normalize(alias))
 ```
 
+
+## Примеры payload (§9 ТЗ)
+
+Все значения сериализуются через MessagePack. Ниже показаны логические структуры.
+
+### PING
+```json
+{
+  "sender": {
+    "node_id": "a1b2c3...32bytes",
+    "identity_algorithm": "ed25519",
+    "identity_public_key": "d4e5f6...32bytes",
+    "host": "127.0.0.1",
+    "port": 7001,
+    "last_seen_ms": 1727430000000,
+    "last_verified_ms": 0
+  },
+  "timestamp_ms": 1727430000123
+}
+```
+
+### PONG
+```json
+{
+  "responder": { "node_id": "...", "host": "127.0.0.1", "port": 7002, "..." },
+  "ping_timestamp_ms": 1727430000123,
+  "responder_timestamp_ms": 1727430000145
+}
+```
+
+### FIND_NODE_REQUEST
+```json
+{
+  "sender": { "node_id": "...", "host": "127.0.0.1", "port": 7001, "..." },
+  "target_node_id": "ff00aa11...32bytes"
+}
+```
+
+### FIND_NODE_RESPONSE
+```json
+{
+  "responder": { "node_id": "...", "host": "127.0.0.1", "port": 7002, "..." },
+  "target_node_id": "ff00aa11...32bytes",
+  "contacts": [
+    { "node_id": "fe10bb22...", "host": "127.0.0.1", "port": 7003, "..." },
+    { "node_id": "fd20cc33...", "host": "127.0.0.1", "port": 7004, "..." }
+  ]
+}
+```
+*Контакты отсортированы по возрастанию XOR-расстояния до `target_node_id`. Количество ≤ K_BUCKET_SIZE.*
+
+### ERROR
+```json
+{
+  "code": "BAD_VERSION",
+  "description": "unsupported protocol version: 42"
+}
+```
+*Код ошибки не содержит стека вызовов, путей к файлам или секретов (§10 ТЗ).*
+
+---
+
 ## Handshake-транскрипт (продвинутый уровень — TODO)
 ```
 transcript = version(1B) ‖ role_initiator(1B) ‖ role_responder(1B)
