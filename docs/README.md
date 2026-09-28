@@ -31,7 +31,8 @@
 
 | Документ | Описание |
 |----------|----------|
-| [defense/Theory.md](defense/Theory.md) | Теория: DHT, Kademlia, TLS, туннели, метрики |
+| [defense/Theory.md](defense/Theory.md) | Теория (краткая): DHT, Kademlia, TLS, туннели, метрики |
+| [defense/Theory_Etapy_1-2.md](defense/Theory_Etapy_1-2.md) | **Подробная теория Этапов 1–2** — каждый термин, цели, архитектурные решения |
 | [defense/Defense_Etapy_1-2.md](defense/Defense_Etapy_1-2.md) | Что показывать и рассказывать на защите этапов 1–2 |
 
 ---

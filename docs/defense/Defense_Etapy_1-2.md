@@ -1,6 +1,6 @@
 # Защита этапов 1 и 2
 
-> **Навигация:** [docs/README.md](../README.md) · [Теория](Theory.md)  
+> **Навигация:** [docs/README.md](../README.md) · [Краткая теория](Theory.md) · [**Подробная теория 1–2**](Theory_Etapy_1-2.md)  
 > **ТЗ:** [requirements/TZ_Etapy_1-2.md](../requirements/TZ_Etapy_1-2.md) · [Устные требования](../requirements/Ustnie_Trebovaniya.md)  
 > **Матрица соответствия:** [GAP_TZ_Full_Check.md](../requirements/GAP_TZ_Full_Check.md)  
 > **Перекрёстные ссылки:** [dev/CROSSLINKS.md](../dev/CROSSLINKS.md)
