@@ -4,6 +4,8 @@
 
 set -euo pipefail
 BINARY="./target/debug/p2p-node"
+LOG_DIR="$LOG_DIR/06_tunnel_message/$(date +%Y%m%d_%H%M%S)"
+mkdir -p "$LOG_DIR"
 OUT="experiments/results/06_tunnel_message"
 mkdir -p "$OUT" logs state
 [ -f "$BINARY" ] || cargo build
@@ -16,7 +18,7 @@ trap cleanup EXIT INT TERM
 for i in $(seq 1 5); do
   "$BINARY" --port $((PORT_BASE + i - 1)) \
     $([ $i -gt 1 ] && echo "--bootstrap 127.0.0.1:$PORT_BASE") \
-    > "logs/tm_n$(printf '%02d' $i).log" 2>&1 &
+    > "$LOG_DIR/tm_n$(printf '%02d' $i).log" 2>&1 &
   PIDS+=($!); sleep 0.3
 done
 sleep 4

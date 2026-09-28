@@ -6,6 +6,8 @@
 set -euo pipefail
 N=${1:-5}
 BINARY="./target/debug/p2p-node"
+LOG_DIR="$LOG_DIR/04_keeper_failure/$(date +%Y%m%d_%H%M%S)"
+mkdir -p "$LOG_DIR"
 OUT="experiments/results/04_keeper_failure"
 mkdir -p "$OUT" logs state
 
@@ -14,10 +16,10 @@ mkdir -p "$OUT" logs state
 PORT_BASE=7500
 PIDS=()
 
-"$BINARY" --port $PORT_BASE > "logs/kf_n01.log" 2>&1 & PIDS+=($!); sleep 0.5
+"$BINARY" --port $PORT_BASE > "$LOG_DIR/kf_n01.log" 2>&1 & PIDS+=($!); sleep 0.5
 for i in $(seq 2 $N); do
   "$BINARY" --port $((PORT_BASE + i - 1)) --bootstrap "127.0.0.1:$PORT_BASE" \
-    > "logs/kf_n$(printf '%02d' $i).log" 2>&1 &
+    > "$LOG_DIR/kf_n$(printf '%02d' $i).log" 2>&1 &
   PIDS+=($!); sleep 0.2
 done
 sleep 3
@@ -33,7 +35,7 @@ for inj in $(seq 1 5); do
   echo "$TS,$inj,node-$(printf '%02d' $((IDX+1))),key_$inj,1,$(( RANDOM % 500 + 100 ))" >> "$OUT/results.csv"
   # Перезапуск жертвы
   "$BINARY" --port $((PORT_BASE + IDX)) --bootstrap "127.0.0.1:$PORT_BASE" \
-    > "logs/kf_n$(printf '%02d' $((IDX+1)))_restart.log" 2>&1 &
+    > "$LOG_DIR/kf_n$(printf '%02d' $((IDX+1)))_restart.log" 2>&1 &
   PIDS[$IDX]=$!
   sleep 1
 done

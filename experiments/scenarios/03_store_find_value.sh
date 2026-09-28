@@ -5,6 +5,8 @@
 set -euo pipefail
 N=${1:-5}
 BINARY="./target/debug/p2p-node"
+LOG_DIR="$LOG_DIR/03_store_find_value/$(date +%Y%m%d_%H%M%S)"
+mkdir -p "$LOG_DIR"
 OUT="experiments/results/03_store_find_value"
 mkdir -p "$OUT" logs state
 
@@ -15,10 +17,10 @@ PIDS=()
 cleanup() { kill "${PIDS[@]}" 2>/dev/null || true; }
 trap cleanup EXIT INT TERM
 
-"$BINARY" --port $PORT_BASE > "logs/sfv_n01.log" 2>&1 & PIDS+=($!); sleep 0.5
+"$BINARY" --port $PORT_BASE > "$LOG_DIR/sfv_n01.log" 2>&1 & PIDS+=($!); sleep 0.5
 for i in $(seq 2 $N); do
   "$BINARY" --port $((PORT_BASE + i - 1)) --bootstrap "127.0.0.1:$PORT_BASE" \
-    > "logs/sfv_n$(printf '%02d' $i).log" 2>&1 &
+    > "$LOG_DIR/sfv_n$(printf '%02d' $i).log" 2>&1 &
   PIDS+=($!); sleep 0.2
 done
 sleep 3

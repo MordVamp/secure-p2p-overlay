@@ -16,12 +16,16 @@ echo " $(date)"
 echo "================================================================"
 
 cargo build 2>&1 | tail -1
+mkdir -p logs
+SUITE_LOG="logs/run_all_$(date +%Y%m%d_%H%M%S).log"
+echo "Suite log: $SUITE_LOG"
+
 
 for script in "$SCENARIOS_DIR"/0*.sh; do
   name=$(basename "$script" .sh)
   echo ""
   echo "--- Running $name ---"
-  bash "$script" "$N" || echo "WARNING: $name exited with error"
+  bash "$script" "$N" 2>&1 | tee -a "$SUITE_LOG" || echo "WARNING: $name exited with error" | tee -a "$SUITE_LOG"
 done
 
 echo ""

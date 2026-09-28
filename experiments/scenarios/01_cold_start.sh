@@ -7,6 +7,8 @@ set -euo pipefail
 N=${1:-5}
 RUNS=${2:-5}
 BINARY="./target/debug/p2p-node"
+LOG_DIR="$LOG_DIR/01_cold_start/$(date +%Y%m%d_%H%M%S)"
+mkdir -p "$LOG_DIR"
 OUT="experiments/results/01_cold_start"
 mkdir -p "$OUT" logs state
 
@@ -21,14 +23,14 @@ for run in $(seq 1 $RUNS); do
 
   # Seed
   RUST_LOG=p2p_overlay=info "$BINARY" --port $PORT_BASE \
-    > "logs/cs_run${run}_n01.log" 2>&1 &
+    > "$LOG_DIR/cs_run${run}_n01.log" 2>&1 &
   PIDS+=($!); sleep 0.5
 
   for i in $(seq 2 $N); do
     PORT=$((PORT_BASE + i - 1))
     RUST_LOG=p2p_overlay=info "$BINARY" \
       --port "$PORT" --bootstrap "127.0.0.1:$PORT_BASE" \
-      > "logs/cs_run${run}_n$(printf '%02d' $i).log" 2>&1 &
+      > "$LOG_DIR/cs_run${run}_n$(printf '%02d' $i).log" 2>&1 &
     PIDS+=($!); sleep 0.2
   done
 
@@ -37,7 +39,7 @@ for run in $(seq 1 $RUNS); do
 
   # Парсим логи: ищем "Bootstrap done" или "Routing table: N contacts"
   for i in $(seq 1 $N); do
-    LOG="logs/cs_run${run}_n$(printf '%02d' $i).log"
+    LOG="$LOG_DIR/cs_run${run}_n$(printf '%02d' $i).log"
     TS=$(grep -m1 "Routing table:" "$LOG" 2>/dev/null | grep -oP '^\d+' || echo "0")
     CONTACTS=$(grep -m1 "Routing table:" "$LOG" 2>/dev/null | grep -oP '\d+ contacts' | grep -oP '\d+' || echo "0")
     echo "$(date +%s%3N),$run,node-$(printf '%02d' $i),0,$CONTACTS" >> "$OUT/results.csv"

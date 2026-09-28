@@ -7,6 +7,8 @@ set -euo pipefail
 N=${1:-5}
 LOOKUPS=${2:-30}
 BINARY="./target/debug/p2p-node"
+LOG_DIR="$LOG_DIR/02_find_node/$(date +%Y%m%d_%H%M%S)"
+mkdir -p "$LOG_DIR"
 OUT="experiments/results/02_find_node"
 mkdir -p "$OUT" logs state
 
@@ -18,11 +20,11 @@ cleanup() { kill "${PIDS[@]}" 2>/dev/null || true; }
 trap cleanup EXIT INT TERM
 
 echo "Starting $N nodes..."
-"$BINARY" --port $PORT_BASE > "logs/fn_n01.log" 2>&1 & PIDS+=($!); sleep 0.5
+"$BINARY" --port $PORT_BASE > "$LOG_DIR/fn_n01.log" 2>&1 & PIDS+=($!); sleep 0.5
 for i in $(seq 2 $N); do
   PORT=$((PORT_BASE + i - 1))
   "$BINARY" --port "$PORT" --bootstrap "127.0.0.1:$PORT_BASE" \
-    > "logs/fn_n$(printf '%02d' $i).log" 2>&1 &
+    > "$LOG_DIR/fn_n$(printf '%02d' $i).log" 2>&1 &
   PIDS+=($!); sleep 0.2
 done
 sleep 3

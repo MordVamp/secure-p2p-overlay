@@ -12,6 +12,8 @@ set -euo pipefail
 N_NODES=${1:-5}
 N_LOOKUPS=${2:-30}
 BINARY="./target/debug/p2p-node"
+LOG_DIR="$LOG_DIR/run_experiment/$(date +%Y%m%d_%H%M%S)"
+mkdir -p "$LOG_DIR"
 RESULTS_DIR="experiments/results/$(date +%Y-%m-%d_%H-%M)"
 
 mkdir -p "$RESULTS_DIR" logs state
@@ -37,7 +39,7 @@ mkdir -p "state/exp-node-01" "metrics/exp-node-01"
 RUST_LOG=p2p_overlay=info "$BINARY" \
     --config config/nodes/node-01.yaml \
     --port $PORT_BASE \
-    > "logs/exp-node-01.log" 2>&1 &
+    > "$LOG_DIR/exp-node-01.log" 2>&1 &
 PIDS+=($!)
 sleep 1
 
@@ -49,7 +51,7 @@ for i in $(seq 2 $N_NODES); do
     RUST_LOG=p2p_overlay=info "$BINARY" \
         --port "$PORT" \
         --bootstrap "127.0.0.1:$PORT_BASE" \
-        > "logs/$NODE.log" 2>&1 &
+        > "$LOG_DIR/$NODE.log" 2>&1 &
     PIDS+=($!)
     sleep 0.3
 done
