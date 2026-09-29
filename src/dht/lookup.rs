@@ -19,7 +19,6 @@ use uuid::Uuid;
 
 use crate::config::NodeConfig;
 use crate::dht::routing_table::RoutingTable;
-use crate::protocol::payload::FindNodeResponse;
 use crate::rpc::{RpcClient, dial};
 use crate::types::{Contact, NodeId, now_ms};
 

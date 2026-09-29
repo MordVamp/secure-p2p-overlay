@@ -10,15 +10,14 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use anyhow::{Result, bail};
+use anyhow::Result;
 use bytes::Bytes;
-use tokio::sync::{Mutex, mpsc, RwLock};
+use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, info, warn};
 
 use crate::config::NodeConfig;
 use crate::protocol::payload::{TunnelDataPayload, TunnelAckPayload, encode, decode};
 use crate::transport::framing::{Frame, FrameFlags, MsgType};
-use crate::transport::connection::FramedStream;
 use crate::tunnel::session::TunnelId;
 use crate::rpc::dial;
 use crate::types::now_ms;
@@ -143,7 +142,7 @@ impl TunnelForwarder {
             ).await
                 .map_err(|_| anyhow::anyhow!("ACK timeout for seq={seq}"))??;
 
-            let ack: TunnelAckPayload = decode(&ack_frame.payload)?;
+            let _ack: TunnelAckPayload = decode(&ack_frame.payload)?;
             let rtt = now_ms() - t0;
             rtts.push(rtt);
             debug!("seg seq={} rtt={}ms ACK received", seq, rtt);

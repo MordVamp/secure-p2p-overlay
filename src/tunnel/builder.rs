@@ -91,7 +91,7 @@ impl TunnelBuilder {
             }
         }
 
-        let (mut session, _rx) = TunnelSession::new(confirmed_hops, self.cfg.clone());
+        let (session, _rx) = TunnelSession::new(confirmed_hops, self.cfg.clone());
         // Переопределяем ID = тот же что использовали при построении
         session.transition(TunnelState::Active).await;
 
@@ -134,7 +134,7 @@ impl TunnelBuilder {
             payload:    Bytes::from(encode(&payload)?),
         };
 
-        use crate::transport::connection::FramedStream;
+        
         stream.send(&frame).await.map_err(|e| anyhow::anyhow!("{e}"))?;
 
         // Ждём TUNNEL_BUILD_OK за build_timeout_ms

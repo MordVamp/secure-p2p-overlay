@@ -35,7 +35,7 @@ Offset  Size  Field           Description
 | 0x15 | TUNNEL_CLOSE          | `{tunnel_id: [u8;16]}` |
 | 0x20 | APP_MESSAGE           | `{message_id: [u8;16], to: NodeId, ciphertext: bytes}` |
 | 0x21 | APP_ACK               | `{message_id: [u8;16], ok: bool}` |
-| 0xFF | ERROR                 | `{code: u16, description: str}` |
+| 0x7F | ERROR                 | `{code: u16, description: str}` |
 
 ## Ключ DHT-записи
 ```

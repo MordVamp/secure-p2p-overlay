@@ -13,7 +13,7 @@ use tracing::{debug, info, warn};
 use crate::config::NodeConfig;
 use crate::dht::routing_table::RoutingTable;
 use crate::tunnel::builder::TunnelBuilder;
-use crate::tunnel::session::{TunnelId, TunnelSession};
+use crate::tunnel::session::TunnelSession;
 use crate::tunnel::state::TunnelState;
 use crate::types::{Contact, NodeId};
 
@@ -22,6 +22,7 @@ pub struct TunnelManager {
     /// Активные туннели: target NodeId → сессия
     tunnels:  RwLock<HashMap<String, TunnelSession>>,
     builder:  TunnelBuilder,
+    #[allow(dead_code)] // будет использован в C3 (monitor_loop)
     cfg:      Arc<NodeConfig>,
 }
 

@@ -6,7 +6,7 @@ use std::sync::Arc;
 use anyhow::{bail, Result};
 use bytes::Bytes;
 use tokio::net::TcpStream;
-use tokio::sync::{oneshot, Mutex};
+use tokio::sync::Mutex;
 use tokio::time::{timeout, Duration};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
@@ -122,7 +122,7 @@ impl RpcHandler {
         debug!("← FIND_NODE target={}", target.short());
         self.update_routing(req.sender).await;
         let k = self.cfg.dht.k_bucket_size;
-        let mut closest = {
+        let closest = {
             let rt = self.routing.lock().await;
             let own_id = *rt.own_id();
             let mut c = rt.find_closest(&target, k);

@@ -93,15 +93,18 @@ async fn handle_conn(
         match framed.recv_item().await {
             ReadItem::Frame(frame) => {
                 if frame.version != protocol::PROTOCOL_VERSION {
-                    warn!("Bad version {} from {}", frame.version, peer);
+                    warn!("Bad version {} from {} — closing (§10 TZ)", frame.version, peer);
                     let _ = framed.send(&Frame::error_version(frame.request_id)).await;
-                    continue;
+                    return Err(anyhow::anyhow!("bad protocol version"));
                 }
                 if let Some(resp) = handler.handle(frame).await {
                     framed.send(&resp).await.map_err(|e| anyhow::anyhow!("{e}"))?;
                 }
             }
-            ReadItem::Error(e) => warn!("Frame error from {}: {e}", peer),
+            ReadItem::Error(e) => {
+                warn!("Frame error from {} (§10 TZ — closing): {e}", peer);
+                return Err(anyhow::anyhow!("protocol error: {e}"));
+            }
             ReadItem::Eof     => return Ok(()),
         }
     }

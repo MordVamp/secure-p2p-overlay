@@ -8,10 +8,8 @@
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use tokio::sync::Mutex;
 use tracing::{debug, warn};
 
 use crate::types::{NodeId, now_ms};

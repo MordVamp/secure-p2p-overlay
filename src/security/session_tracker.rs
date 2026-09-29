@@ -26,7 +26,7 @@ impl SessionTracker {
     /// Сразу регистрирует его.
     pub fn check_and_register(&self, request_id: [u8; 16]) -> bool {
         let now = now_unix();
-        let mut guard = self.seen.lock().unwrap();
+        let mut guard = self.seen.lock().expect("SessionTracker mutex should never be poisoned");
 
         // Очистка устаревших
         guard.retain(|_, &mut t| now - t < self.ttl);

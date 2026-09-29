@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 use tokio::sync::{Mutex, mpsc};
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::config::NodeConfig;

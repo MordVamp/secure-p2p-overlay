@@ -43,6 +43,8 @@
 |----------|----------|
 | [dev/PLAN.md](dev/PLAN.md) | Пошаговый план реализации по фазам (рабочий) |
 | [dev/CROSSLINKS.md](dev/CROSSLINKS.md) | Все перекрёстные ссылки и причины их существования |
+| [dev/IMPROVEMENTS.md](dev/IMPROVEMENTS.md) | Аудит улучшений: критичные, технические, концептуальные |
+| [dev/COMMANDS.md](dev/COMMANDS.md) | Справочник всех команд (CLI, тесты, скрипты) |
 
 ---
 

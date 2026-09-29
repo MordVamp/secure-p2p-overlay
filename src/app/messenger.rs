@@ -17,17 +17,17 @@ use std::collections::VecDeque;
 
 use anyhow::{Result, bail};
 use tokio::sync::{Mutex, mpsc};
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
-use crate::app::message::{AppMessage, MessageKind};
+use crate::app::message::AppMessage;
 use crate::config::NodeConfig;
 use crate::dht::node::DhtNode;
 use crate::identity::node_identity::NodeIdentity;
-use crate::metrics::{MetricsCollector, LookupRecord};
+use crate::metrics::MetricsCollector;
 use crate::protocol::payload::{encode, decode};
 use crate::tunnel::manager::TunnelManager;
-use crate::tunnel::forwarder::{TunnelForwarder, InboxReceiver};
-use crate::types::{NodeId, now_ms};
+use crate::tunnel::forwarder::TunnelForwarder;
+use crate::types::NodeId;
 
 /// Входящие подтверждённые сообщения для UI.
 pub type MessageRx = mpsc::Receiver<AppMessage>;
@@ -36,9 +36,9 @@ pub struct Messenger {
     identity:   Arc<NodeIdentity>,
     dht:        Arc<DhtNode>,
     tunnels:    Arc<TunnelManager>,
-    forwarder:  Arc<TunnelForwarder>,
-    metrics:    Arc<MetricsCollector>,
-    cfg:        Arc<NodeConfig>,
+    #[allow(dead_code)] forwarder:  Arc<TunnelForwarder>,
+    #[allow(dead_code)] metrics:    Arc<MetricsCollector>,
+    #[allow(dead_code)] cfg:        Arc<NodeConfig>,
     /// Буфер входящих сообщений (до 100).
     inbox:      Mutex<VecDeque<AppMessage>>,
 }

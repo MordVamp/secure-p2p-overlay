@@ -29,6 +29,10 @@ struct Cli {
     /// Bootstrap-пиры (BOOTSTRAP_PEERS), напр.: -b 127.0.0.1:7000
     #[arg(short, long)]
     bootstrap: Vec<String>,
+
+    /// Экспортировать таблицу маршрутизации в JSON и выйти (§26 ТЗ)
+    #[arg(long)]
+    export_routing: Option<std::path::PathBuf>,
 }
 
 #[tokio::main]
@@ -60,9 +64,19 @@ async fn main() -> Result<()> {
     let identity = NodeIdentity::load_or_create(&cfg.node.state_dir)?;
     info!("NodeID = {}", identity.node_id);
 
-    // Инициализировать и запустить узел
+    // Инициализировать узел
     let cfg = Arc::new(cfg);
     let node = Node::new(&identity, cfg.clone())?;
+
+    // --export-routing: вывести таблицу и выйти (§26 ТЗ)
+    if let Some(path) = cli.export_routing {
+        let json = node.dht.export_routing_table().await;
+        let s = serde_json::to_string_pretty(&json)?;
+        std::fs::write(&path, &s)?;
+        println!("Routing table exported to {}", path.display());
+        return Ok(());
+    }
+
     node.start().await?;
 
     Ok(())
