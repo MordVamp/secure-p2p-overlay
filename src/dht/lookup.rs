@@ -1,10 +1,10 @@
 //! dht/lookup.rs — Итеративный lookup Kademlia (§21 ТЗ).
 //!
-//! Алгоритм:
+//! Алгоритм (A5: first-K-wins вместо «дождаться всех α»):
 //!  1. Начинаем с α ближайших кандидатов из локальной таблицы.
-//!  2. Параллельно отправляем FIND_NODE_REQUEST к α неопрошенным ближайшим.
-//!  3. Объединяем ответы, обновляем таблицу маршрутизации.
-//!  4. Повторяем итерации пока есть прогресс (ближайший контакт становится лучше).
+//!  2. Запускаем α параллельных FIND_NODE через FuturesUnordered.
+//!  3. Обрабатываем ответы по мере поступления — не ждём самый медленный.
+//!  4. Повторяем итерации пока есть прогресс (ближайший контакт улучшается).
 //!  5. Остановка: нет новых кандидатов, ближе цели.
 //!  6. Возвращаем K ближайших найденных контактов.
 
@@ -13,12 +13,14 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use anyhow::Result;
+use futures::StreamExt;
 use tokio::sync::Mutex;
 use tracing::{debug, info};
 use uuid::Uuid;
 
 use crate::config::NodeConfig;
 use crate::dht::routing_table::RoutingTable;
+use crate::metrics::{LookupRecord, MetricsCollector};
 use crate::rpc::{RpcClient, dial};
 use crate::types::{Contact, NodeId, now_ms};
 
@@ -36,12 +38,14 @@ pub struct LookupResult {
     pub duration_ms: u64,
 }
 
-/// Итеративный lookup (§21 ТЗ).
+/// Итеративный lookup (§21 ТЗ) + A5: first-K-wins.
 pub struct IterativeLookup {
     own_contact: Contact,
     routing:     Arc<Mutex<RoutingTable>>,
     rpc_client:  Arc<RpcClient>,
     cfg:         Arc<NodeConfig>,
+    /// Опционально: MetricsCollector для записи CSV (C4)
+    metrics:     Option<Arc<MetricsCollector>>,
 }
 
 impl IterativeLookup {
@@ -51,7 +55,13 @@ impl IterativeLookup {
         rpc_client:  Arc<RpcClient>,
         cfg:         Arc<NodeConfig>,
     ) -> Self {
-        Self { own_contact, routing, rpc_client, cfg }
+        Self { own_contact, routing, rpc_client, cfg, metrics: None }
+    }
+
+    /// Привязать MetricsCollector для записи lookup stats в CSV (C4).
+    pub fn with_metrics(mut self, m: Arc<MetricsCollector>) -> Self {
+        self.metrics = Some(m);
+        self
     }
 
     /// Выполнить lookup для `target`.
@@ -71,22 +81,23 @@ impl IterativeLookup {
 
         if initial.is_empty() {
             info!("[lookup-{}] no initial candidates", lookup_id);
-            return Ok(LookupResult {
+            let res = LookupResult {
                 lookup_id, target: *target, closest: vec![],
                 rpc_count: 0, iterations: 0,
                 duration_ms: now_ms() - start,
-            });
+            };
+            self.record_metrics(&res);
+            return Ok(res);
         }
 
         // Состояние lookup
-        let mut candidates: Vec<Contact> = initial;
-        let mut queried:    HashSet<String> = HashSet::new(); // node_id hex
+        let mut candidates: Vec<Contact>         = initial;
+        let mut queried:    HashSet<String>       = HashSet::new(); // node_id hex
         let mut found:      HashMap<String, Contact> = HashMap::new();
         let mut rpc_count   = 0usize;
         let mut iterations  = 0usize;
-        let mut best_dist   = [0xFFu8; 32]; // XOR-расстояние до лучшего кандидата
+        let mut best_dist   = [0xFFu8; 32];
 
-        // Сортируем по XOR
         candidates.sort_by_key(|c| c.node_id.xor_distance(target));
         for c in &candidates { found.insert(c.node_id.to_hex(), c.clone()); }
 
@@ -107,8 +118,9 @@ impl IterativeLookup {
 
             debug!("[lookup-{}] iter={} querying {} peers", lookup_id, iterations, to_query.len());
 
-            // Параллельные FIND_NODE запросы (α штук)
-            let mut handles = vec![];
+            // ── A5: FuturesUnordered — обрабатываем ответы по мере прихода ──
+            let mut stream = futures::stream::FuturesUnordered::new();
+
             for contact in to_query {
                 queried.insert(contact.node_id.to_hex());
                 let own  = self.own_contact.clone();
@@ -116,22 +128,22 @@ impl IterativeLookup {
                 let cfg  = self.cfg.clone();
                 let rpc  = self.rpc_client.clone();
 
-                handles.push(tokio::spawn(async move {
+                stream.push(tokio::spawn(async move {
                     let addr: SocketAddr = contact.socket_addr()?;
-                    let mut stream = dial(
+                    let mut s = dial(
                         addr,
                         cfg.transport.connect_timeout_ms,
                         cfg.transport.read_timeout_ms,
                     ).await?;
-                    let resp = rpc.find_node(&mut stream, &own, &tgt).await?;
+                    let resp = rpc.find_node(&mut s, &own, &tgt).await?;
                     anyhow::Ok((contact, resp))
                 }));
             }
 
-            let results = futures::future::join_all(handles).await;
-
             let mut improved = false;
-            for res in results {
+
+            // Читаем ответы как только приходят (не ждём самый медленный)
+            while let Some(res) = stream.next().await {
                 match res {
                     Ok(Ok((contact, resp))) => {
                         rpc_count += 1;
@@ -143,13 +155,13 @@ impl IterativeLookup {
                             rt.update(resp.responder.clone());
                         }
 
-                        // Прогресс: нашли узел ближе текущего лучшего?
+                        // Прогресс?
                         if dist < best_dist {
                             best_dist = dist;
                             improved = true;
                         }
 
-                        // Добавить новые контакты из ответа
+                        // Добавить новые контакты
                         for c in resp.contacts {
                             let hex = c.node_id.to_hex();
                             if !found.contains_key(&hex) {
@@ -163,9 +175,9 @@ impl IterativeLookup {
                 }
             }
 
-            // Пересортировать кандидатов по XOR
+            // Пересортировать, не раздувать список
             candidates.sort_by_key(|c| c.node_id.xor_distance(target));
-            candidates.truncate(k * 3); // не раздуваем список
+            candidates.truncate(k * 3);
 
             if !improved {
                 debug!("[lookup-{}] no improvement, stopping", lookup_id);
@@ -184,13 +196,33 @@ impl IterativeLookup {
             lookup_id, target.short(), closest.len(), rpc_count, iterations, duration_ms
         );
 
-        Ok(LookupResult {
+        let res = LookupResult {
             lookup_id,
             target: *target,
             closest,
             rpc_count,
             iterations,
             duration_ms,
-        })
+        };
+
+        self.record_metrics(&res);
+        Ok(res)
+    }
+
+    /// C4: Записать статистику lookup в CSV (если MetricsCollector подключён).
+    fn record_metrics(&self, r: &LookupResult) {
+        if let Some(m) = &self.metrics {
+            m.record_lookup(&LookupRecord {
+                ts_ms:         crate::types::now_ms(),
+                lookup_id:     r.lookup_id.clone(),
+                initiator:     self.own_contact.node_id.to_hex()[..8].to_string(),
+                target:        r.target.to_hex(),
+                found:         !r.closest.is_empty(),
+                rpc_count:     r.rpc_count,
+                iterations:    r.iterations,
+                duration_ms:   r.duration_ms,
+                closest_count: r.closest.len(),
+            });
+        }
     }
 }

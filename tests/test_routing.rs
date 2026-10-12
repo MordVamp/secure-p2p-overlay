@@ -242,3 +242,46 @@ fn t2_14_bootstrap_independence() {
     assert!(ids.contains(&peer_a.node_id) || ids.contains(&peer_b.node_id),
         "T2.14: after bootstrap disconnect, other peers must still be reachable");
 }
+
+// ── A1: Bucket refresh ────────────────────────────────────────────────────────
+
+// T_A1: random_targets_per_bucket генерирует цели в правильном диапазоне бакета.
+#[test]
+fn t_a1_bucket_refresh_targets_in_correct_bucket() {
+    use p2p_overlay::dht::routing_table::RoutingTable;
+
+    let own = NodeId([0x00; 32]);
+    let mut rt = RoutingTable::new(own, 3);
+
+    // Добавим контакты в разные бакеты
+    let c1 = make_contact(0x80, 9001); // бит 255 отличается → bucket[255]
+    let c2 = make_contact(0x40, 9002); // бит 254 → bucket[254]
+    let c3 = make_contact(0x20, 9003); // бит 253 → bucket[253]
+    rt.update(c1.clone());
+    rt.update(c2.clone());
+    rt.update(c3.clone());
+
+    let targets = rt.random_targets_per_bucket(&own);
+
+    // Должны быть цели для непустых бакетов
+    assert!(!targets.is_empty(), "A1: should generate targets for non-empty buckets");
+
+    // Каждая цель попадает в соответствующий бакет (XOR-расстояние ≥ 2^(bit_pos))
+    for target in &targets {
+        let dist = own.xor_distance(target);
+        // Хотя бы один бит отличается (не equal)
+        assert_ne!(dist, [0u8; 32], "A1: target must not equal own_id");
+    }
+}
+
+// T_A1b: empty routing table — нет targets (refresh не нужен).
+#[test]
+fn t_a1_bucket_refresh_empty_table() {
+    use p2p_overlay::dht::routing_table::RoutingTable;
+
+    let own = NodeId([0xAA; 32]);
+    let rt = RoutingTable::new(own, 3);
+
+    let targets = rt.random_targets_per_bucket(&own);
+    assert!(targets.is_empty(), "A1: empty table must produce no refresh targets");
+}

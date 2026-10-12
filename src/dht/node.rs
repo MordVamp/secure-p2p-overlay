@@ -26,6 +26,8 @@ pub struct DhtNode {
     pub cfg:         Arc<NodeConfig>,
     /// DHT key-value хранилище (STORE/FIND_VALUE) — Фаза 4
     pub store:       crate::dht::storage::DhtStore,
+    /// Метрики (C4)
+    pub metrics:     Arc<crate::metrics::MetricsCollector>,
 }
 
 impl DhtNode {
@@ -36,8 +38,12 @@ impl DhtNode {
         let pending    = Arc::new(PendingRpc::new());
         let rpc_client = Arc::new(RpcClient::new(pending.clone(), &cfg));
 
+        let metrics = Arc::new(
+            crate::metrics::MetricsCollector::new(&cfg.node.metrics_dir, &own_contact.node_id)
+        );
+
         Self { own_contact, routing, pending, rpc_client, cfg,
-               store: crate::dht::storage::DhtStore::new(1024) }
+               store: crate::dht::storage::DhtStore::new(1024), metrics }
     }
 
     /// Процедура bootstrap (§22.2):
@@ -124,7 +130,7 @@ impl DhtNode {
             self.routing.clone(),
             self.rpc_client.clone(),
             self.cfg.clone(),
-        )
+        ).with_metrics(self.metrics.clone())
     }
 
     async fn ping_bootstrap(&self, addr: SocketAddr) -> Result<Contact> {

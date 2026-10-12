@@ -150,3 +150,43 @@ impl RoutingTable {
     pub fn own_id(&self) -> &NodeId { &self.own_id }
     pub fn k(&self) -> usize { self.k }
 }
+
+// ── A1: Bucket refresh ────────────────────────────────────────────────────────
+
+impl RoutingTable {
+    /// Для каждого непустого bucket генерирует случайный NodeId в диапазоне bucket[i].
+    /// Это используется для периодического refresh (A1) — lookup этих ID заполняет
+    /// таблицу актуальными контактами и вытесняет мёртвые через PING.
+    ///
+    /// Алгоритм: берём own_id, флипаем бит на позиции (255 - bucket_index),
+    /// остальные биты — случайные. Получаем ID, гарантированно попадающий в бакет i.
+    pub fn random_targets_per_bucket(&self, own_id: &NodeId) -> Vec<NodeId> {
+        use rand::Rng;
+        let mut rng = rand::thread_rng();
+        let mut targets = Vec::new();
+
+        for (bucket_idx, bucket) in self.buckets.iter().enumerate() {
+            if bucket.len() == 0 { continue; }
+
+            // bit_pos: старший бит XOR-расстояния для bucket[i]
+            let bit_pos = 255 - bucket_idx;
+
+            // Начинаем с own_id
+            let mut target = own_id.0;
+
+            // Флипаем определяющий бит
+            let byte_idx = bit_pos / 8;
+            let bit_in_byte = 7 - (bit_pos % 8);
+            target[byte_idx] ^= 1 << bit_in_byte;
+
+            // Рандомизируем оставшиеся биты (менее значимые)
+            for b in target[byte_idx + 1..].iter_mut() {
+                *b = rng.gen();
+            }
+
+            targets.push(NodeId(target));
+        }
+
+        targets
+    }
+}
