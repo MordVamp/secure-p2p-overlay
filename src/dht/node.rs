@@ -15,7 +15,7 @@ use tracing::{info, warn};
 use crate::config::NodeConfig;
 use crate::dht::lookup::IterativeLookup;
 use crate::dht::routing_table::RoutingTable;
-use crate::rpc::{RpcClient, PendingRpc, dial};
+use crate::rpc::{RpcClient, PendingRpc};
 use crate::types::{Contact, NodeId};
 
 pub struct DhtNode {
@@ -134,17 +134,16 @@ impl DhtNode {
     }
 
     async fn ping_bootstrap(&self, addr: SocketAddr) -> Result<Contact> {
-        let mut stream = dial(
-            addr,
-            self.cfg.transport.connect_timeout_ms,
-            self.cfg.transport.read_timeout_ms,
-        ).await.context("connect")?;
-
+        // E1-6: RpcClient::ping теперь сам открывает соединение и запускает reader-задачу
         let pong = self.rpc_client
-            .ping(&mut stream, &self.own_contact)
+            .ping(
+                addr,
+                self.cfg.transport.connect_timeout_ms,
+                self.cfg.transport.read_timeout_ms,
+                &self.own_contact,
+            )
             .await
             .context("PING")?;
-
         Ok(pong.responder)
     }
 }

@@ -79,3 +79,91 @@ fn tempdir(tag: &str) -> PathBuf {
     fs::create_dir_all(&p).unwrap();
     p
 }
+
+// ── E21: NodeID сохраняется при перезапуске ───────────────────────────────────
+
+
+fn temp_state_dir(name: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("p2p_test_{name}_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+// E21: load_or_create() с одним и тем же state_dir дважды даёт одинаковый NodeID.
+#[test]
+fn e21_node_id_stable_across_restarts() {
+    use p2p_overlay::identity::node_identity::NodeIdentity;
+
+    let dir = temp_state_dir("e21_stable");
+
+    let id1 = NodeIdentity::load_or_create(&dir).unwrap();
+    let node_id_first = id1.node_id;
+    let pubkey_first  = id1.public_key_bytes();
+    drop(id1);
+
+    // "Перезапуск" — создаём новый NodeIdentity с тем же путём
+    let id2 = NodeIdentity::load_or_create(&dir).unwrap();
+    assert_eq!(node_id_first, id2.node_id,
+        "E21: NodeID must be identical after restart");
+    assert_eq!(pubkey_first, id2.public_key_bytes(),
+        "E21: public key must be identical after restart");
+
+    // Очистка
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+// E21b: Разные state_dir → разные NodeID.
+#[test]
+fn e21_different_dirs_different_ids() {
+    use p2p_overlay::identity::node_identity::NodeIdentity;
+
+    let dir_a = temp_state_dir("e21_diff_a");
+    let dir_b = temp_state_dir("e21_diff_b");
+
+    let id_a = NodeIdentity::load_or_create(&dir_a).unwrap();
+    let id_b = NodeIdentity::load_or_create(&dir_b).unwrap();
+
+    assert_ne!(id_a.node_id, id_b.node_id,
+        "E21: different state dirs must produce different NodeIDs");
+
+    std::fs::remove_dir_all(&dir_a).ok();
+    std::fs::remove_dir_all(&dir_b).ok();
+}
+
+// ── E22: Проверка NodeID/pubkey ───────────────────────────────────────────────
+
+// E22: verify_node_id_bytes корректна для валидного pubkey.
+#[test]
+fn e22_verify_node_id_valid_pubkey() {
+    use p2p_overlay::identity::node_identity::{NodeIdentity, verify_node_id_bytes};
+
+    let dir = temp_state_dir("e22_valid");
+    let id  = NodeIdentity::load_or_create(&dir).unwrap();
+
+    assert!(
+        verify_node_id_bytes(&id.node_id, &id.public_key_bytes()),
+        "E22: NodeID computed from pubkey must verify correctly"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+// E22: verify_node_id_bytes отклоняет чужой pubkey при заявленном NodeID.
+#[test]
+fn e22_verify_node_id_wrong_pubkey_rejected() {
+    use p2p_overlay::identity::node_identity::{NodeIdentity, verify_node_id_bytes};
+
+    let dir_a = temp_state_dir("e22_rej_a");
+    let dir_b = temp_state_dir("e22_rej_b");
+
+    let id_a = NodeIdentity::load_or_create(&dir_a).unwrap();
+    let id_b = NodeIdentity::load_or_create(&dir_b).unwrap();
+
+    // Проверяем NodeID узла A с pubkey узла B — должно вернуть false
+    assert!(
+        !verify_node_id_bytes(&id_a.node_id, &id_b.public_key_bytes()),
+        "E22: mismatched pubkey must NOT verify against NodeID"
+    );
+
+    std::fs::remove_dir_all(&dir_a).ok();
+    std::fs::remove_dir_all(&dir_b).ok();
+}

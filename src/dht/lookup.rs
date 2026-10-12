@@ -21,7 +21,7 @@ use uuid::Uuid;
 use crate::config::NodeConfig;
 use crate::dht::routing_table::RoutingTable;
 use crate::metrics::{LookupRecord, MetricsCollector};
-use crate::rpc::{RpcClient, dial};
+use crate::rpc::RpcClient;
 use crate::types::{Contact, NodeId, now_ms};
 
 /// Результат lookup — ближайшие K контактов.
@@ -129,13 +129,14 @@ impl IterativeLookup {
                 let rpc  = self.rpc_client.clone();
 
                 stream.push(tokio::spawn(async move {
+                    // E24-E26: find_node сам открывает соединение и reader-задачу
                     let addr: SocketAddr = contact.socket_addr()?;
-                    let mut s = dial(
+                    let resp = rpc.find_node(
                         addr,
                         cfg.transport.connect_timeout_ms,
                         cfg.transport.read_timeout_ms,
+                        &own, &tgt,
                     ).await?;
-                    let resp = rpc.find_node(&mut s, &own, &tgt).await?;
                     anyhow::Ok((contact, resp))
                 }));
             }

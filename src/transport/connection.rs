@@ -83,3 +83,14 @@ impl<S: AsyncReadExt + AsyncWriteExt + Unpin + Send> FramedStream<S> {
 
     pub fn into_inner(self) -> S { self.inner }
 }
+
+// Специализация для TcpStream: выдать поток для spawn_conn_reader
+impl FramedStream<tokio::net::TcpStream> {
+    /// Отдать внутренний TcpStream с переносом накопленного буфера.
+    /// Используется в RpcClient после send() для запуска reader-задачи.
+    pub fn into_raw_stream(self) -> FramedStream<tokio::net::TcpStream> {
+        // Мы уже FramedStream — просто возвращаем себя.
+        // Накопленный буфер FrameReader переходит вместе.
+        self
+    }
+}
