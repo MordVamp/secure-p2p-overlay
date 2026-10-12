@@ -1,0 +1,91 @@
+# Changelog
+
+Все изменения проекта. Дата = дата фактического применения кода.
+
+---
+
+## [unreleased] — 2026-10-12
+
+### fix(E1-6, E21-E22, E24-E26) — критические исправления RPC и идентичности
+
+> Правки получены и применены **12.10.2026**.
+> Часть из них — по замечаниям ревью (веб-версия, оффлайн-правки).
+
+#### E1-6 / E24-E26 — Чтение пакетов в исходящих соединениях (`src/rpc/mod.rs`)
+- **Проблема:** RpcClient отправлял запрос, но никто не читал ответ
+  из TCP-потока — `pending.deliver()` никогда не вызывался, все RPC
+  падали по тайм-ауту.
+- **Решение:** функция `spawn_conn_reader(stream, pending)` запускает
+  фоновую задачу чтения на каждое исходящее соединение.
+  `ping()` и `find_node()` теперь принимают `SocketAddr`, сами вызывают
+  `dial()` → `send()` → `spawn_conn_reader()`.
+
+#### E22 — Проверка NodeID/pubkey при каждом входящем сообщении (`src/rpc/mod.rs`)
+- `handle_ping`, `handle_find_node`, `handle_store`, `handle_find_value`
+  вызывают `verify_node_id_bytes()` перед добавлением в routing table.
+- Несовпадение `NodeID ≠ SHA-256(pubkey)` → `warn + bail!` + ERROR-кадр.
+
+#### E21 — Тесты сохранности NodeID (`tests/test_identity.rs`)
+- `e21_node_id_stable_across_restarts` — NodeID не меняется при restart
+- `e21_different_dirs_different_ids` — разные dirs → разные ID
+- `e22_verify_node_id_valid_pubkey` — корректный pubkey → true
+- `e22_verify_node_id_wrong_pubkey_rejected` — чужой pubkey → false
+
+---
+
+## [2026-10-12] feat: A1+A5+C3+C4+T4 — архитектурные улучшения
+
+> Коммит `d3e05c1`. Написан **01.10.2026**, залит в репозиторий **12.10.2026**
+> (был потерян локально, применён через веб/оффлайн правку).
+
+#### A5 — First-K-wins lookup (`src/dht/lookup.rs`)
+- `join_all()` заменён на `FuturesUnordered` — ответы обрабатываются по мере прихода.
+
+#### A1 — Bucket refresh (`src/dht/routing_table.rs`, `src/node/mod.rs`)
+- `random_targets_per_bucket()` + `tokio::interval` → периодический lookup
+  для поддержания актуальности routing table.
+
+#### C3 — `TunnelManager::monitor_loop()` в `Node::start()` (`src/node/mod.rs`)
+- Туннели теперь реально мониторятся и перестраиваются при падении.
+
+#### C4 — `MetricsCollector` пишет CSV (`src/dht/node.rs`, `src/dht/lookup.rs`)
+- Каждый `find_node()` → `lookup_{node_id}.csv`.
+
+#### T4 — Graceful shutdown Ctrl+C (`src/node/mod.rs`)
+- `watch::channel` + `tokio::signal::ctrl_c()` + flush метрик при выходе.
+
+---
+
+## [2026-09-29] fix+docs — критические правки по ТЗ + команды + логи
+
+- PROTOCOL.md: `0xFF` → `0x7F` для ERROR
+- `handle_conn()`: закрытие соединения при ошибке кадра (§10 ТЗ)
+- 0 warnings компилятора (был 21)
+- `--export-routing <PATH>` в CLI (§26 ТЗ)
+- `docs/dev/COMMANDS.md` — справочник всех команд
+- `docs/dev/IMPROVEMENTS.md` — аудит улучшений
+- `scripts/run_tests.sh` — тесты с записью в `logs/tests/`
+
+---
+
+## [2026-09-28] fix(tz-compliance) — проверка по ТЗ этапов 1-2
+
+- §18.3: дубликат NodeID с другим pubkey отклоняется в `update_routing`
+- §9: примеры payload в PROTOCOL.md
+- §24: тесты T2.10–T2.14
+- 36/36 тестов ✅
+
+---
+
+## [2026-09-28] chore — логи + Defense_Etapy_1-2 обновлён
+
+- `logs/` в `.gitignore`, все скрипты пишут в `logs/<scenario>/`
+- `Defense_Etapy_1-2.md` — чек-лист защиты, 36 тестов, §26 материалы
+
+---
+
+## [2026-09-28] docs — Theory_Etapy_1-2.md подробная теория
+
+- Цели проекта, термины (DHT, Kademlia, XOR-метрика, k-bucket, overlay)
+- Ed25519, SHA-256, framing, tunnel — каждый термин объяснён
+
