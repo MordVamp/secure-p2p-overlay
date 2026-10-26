@@ -19,6 +19,7 @@ use bytes::Bytes;
 use uuid::Uuid;
 
 use crate::config::NodeConfig;
+use crate::identity::node_identity::verify_node_id_bytes;
 use crate::dht::routing_table::RoutingTable;
 use crate::rpc::dial;
 use crate::transport::framing::{Frame, FrameFlags, MsgType};
@@ -91,8 +92,9 @@ impl TunnelBuilder {
             }
         }
 
-        let (session, _rx) = TunnelSession::new(confirmed_hops, self.cfg.clone());
-        // Переопределяем ID = тот же что использовали при построении
+        // B3: ID сессии = tunnel_id, согласованный с relay; B6: rx не выбрасываем.
+        let (session, rx) = TunnelSession::with_id(tunnel_id, confirmed_hops, self.cfg.clone());
+        session.attach_outbox(rx).await;
         session.transition(TunnelState::Active).await;
 
         info!(
@@ -149,7 +151,21 @@ impl TunnelBuilder {
             bail!("relay {} refused tunnel build", relay);
         }
 
+        if resp_frame.msg_type != MsgType::TunnelBuildOk {
+            bail!("unexpected reply {:?} from relay {}", resp_frame.msg_type, relay);
+        }
+        if resp_frame.request_id != request_id {
+            bail!("request_id mismatch from relay {}", relay);
+        }
+
         let ok: TunnelBuildOkPayload = decode(&resp_frame.payload)?;
+        // B3 (аналог E22): relay обязан доказать, что он тот, кого мы выбрали
+        if !verify_node_id_bytes(&ok.relay.node_id, &ok.relay.identity_public_key) {
+            bail!("relay {} NodeID/pubkey mismatch", relay);
+        }
+        if ok.relay.node_id != relay.node_id {
+            bail!("relay identity differs from requested {}", relay);
+        }
         if ok.tunnel_id != tunnel_id {
             bail!("tunnel_id mismatch from relay {}", relay);
         }

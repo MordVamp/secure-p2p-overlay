@@ -4,6 +4,11 @@
 
 ---
 
+## [2026-10-26] fix: B3 + B6 (туннели)
+> Аналоги E22 и E1-6 в tunnel/. Статус всех замечаний: docs/dev/FIXED_REVIEW_COMMENTS.md
+- B3: проверка NodeID/pubkey инициатора (relay) и relay (инициатор), проверка типа ответа и request_id; сессия использует согласованный tunnel_id (`TunnelSession::with_id`)
+- B6: приёмник исходящей очереди хранится в сессии (`attach_outbox`/`take_outbox`), а не отбрасывается
+
 ## [unreleased] — 2026-10-12
 
 ### fix(E1-6, E21-E22, E24-E26) — критические исправления RPC и идентичности

@@ -440,6 +440,10 @@ impl RpcHandler {
     {
         use crate::tunnel::builder::{TunnelBuildPayload, TunnelBuildOkPayload};
         let req: TunnelBuildPayload = payload::decode(&frame.payload)?;
+        // B3 (аналог E22): проверить NodeID инициатора
+        if !verify_node_id_bytes(&req.initiator.node_id, &req.initiator.identity_public_key) {
+            anyhow::bail!("TUNNEL_BUILD: initiator NodeID/pubkey mismatch");
+        }
         let tid_hex = hex::encode(&req.tunnel_id[..4.min(req.tunnel_id.len())]);
         tracing::info!(
             "← TUNNEL_BUILD id={} hop={}/{} from={}",

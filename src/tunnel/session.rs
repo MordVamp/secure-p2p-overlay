@@ -31,22 +31,43 @@ pub struct TunnelSession {
     pub tx:       mpsc::Sender<TunnelData>,
     /// Время создания (unix ms).
     pub created_ms: u64,
+    /// B6: приёмник исходящей очереди. Раньше отбрасывался (`_rx`), и `send()`
+    /// падал с "channel closed". Теперь живёт в сессии до `take_outbox()`.
+    outbox:       Arc<Mutex<Option<mpsc::Receiver<TunnelData>>>>,
 }
 
 impl TunnelSession {
     pub fn new(hops: Vec<TunnelHop>, cfg: Arc<NodeConfig>)
         -> (Self, mpsc::Receiver<TunnelData>)
     {
+        Self::with_id(Uuid::new_v4().into_bytes(), hops, cfg)
+    }
+
+    /// B3/B6: сессия с заданным tunnel_id (тем, что согласован с relay в TUNNEL_BUILD).
+    pub fn with_id(id: TunnelId, hops: Vec<TunnelHop>, cfg: Arc<NodeConfig>)
+        -> (Self, mpsc::Receiver<TunnelData>)
+    {
         let (tx, rx) = mpsc::channel(64);
         let s = Self {
-            id:         Uuid::new_v4().into_bytes(),
+            id,
             hops,
             state:      Arc::new(Mutex::new(TunnelState::Building)),
             cfg,
             tx,
             created_ms: now_ms(),
+            outbox:     Arc::new(Mutex::new(None)),
         };
         (s, rx)
+    }
+
+    /// Сохранить приёмник внутри сессии (чтобы канал не закрылся).
+    pub async fn attach_outbox(&self, rx: mpsc::Receiver<TunnelData>) {
+        *self.outbox.lock().await = Some(rx);
+    }
+
+    /// Забрать приёмник исходящей очереди (один раз) для задачи-отправителя.
+    pub async fn take_outbox(&self) -> Option<mpsc::Receiver<TunnelData>> {
+        self.outbox.lock().await.take()
     }
 
     pub async fn state(&self) -> TunnelState {
