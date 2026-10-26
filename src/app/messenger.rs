@@ -41,6 +41,8 @@ pub struct Messenger {
     #[allow(dead_code)] cfg:        Arc<NodeConfig>,
     /// Буфер входящих сообщений (до 100).
     inbox:      Mutex<VecDeque<AppMessage>>,
+    /// Анти-replay: ID уже принятых сообщений (ограниченный набор).
+    seen:       Mutex<std::collections::HashSet<Vec<u8>>>,
 }
 
 impl Messenger {
@@ -52,7 +54,7 @@ impl Messenger {
         metrics:   Arc<MetricsCollector>,
         cfg:       Arc<NodeConfig>,
     ) -> Self {
-        Self { identity, dht, tunnels, forwarder, metrics, cfg, inbox: Mutex::new(VecDeque::new()) }
+        Self { identity, dht, tunnels, forwarder, metrics, cfg, inbox: Mutex::new(VecDeque::new()), seen: Mutex::new(Default::default()) }
     }
 
     /// Отправить текстовое сообщение узлу `target`.
@@ -61,11 +63,15 @@ impl Messenger {
             bail!("Message too large: {} > {}", text.len(), crate::tunnel::forwarder::MAX_SEGMENT_SIZE);
         }
 
-        // 1. Убедиться что туннель существует
+        // 1. Узнать адрес получателя (A5: последний relay должен знать, куда пересылать)
+        if let Err(e) = self.dht.find_node(&target).await {
+            warn!("lookup {} failed: {e}", target.short());
+        }
         self.tunnels.get_or_build(&target).await?;
 
         // 2. Сформировать и подписать сообщение
         let mut msg = AppMessage::new_text(self.identity.node_id, target, text);
+        msg.sender_pubkey = self.identity.public_key_bytes().to_vec();
         let sig = self.identity.sign(&msg.signing_bytes());
         msg.signature = sig.to_bytes().to_vec();
 
@@ -91,6 +97,15 @@ impl Messenger {
 
         info!("← msg {} from {} kind={:?}", msg.message_id_hex(), msg.from.short(), msg.kind);
 
+        // Анти-replay
+        {
+            let mut seen = self.seen.lock().await;
+            if seen.len() >= 4096 { seen.clear(); }
+            if !seen.insert(msg.message_id.clone()) {
+                bail!("duplicate message {}", msg.message_id_hex());
+            }
+        }
+
         let mut inbox = self.inbox.lock().await;
         if inbox.len() >= 100 { inbox.pop_front(); }
         inbox.push_back(msg);
@@ -102,33 +117,38 @@ impl Messenger {
         self.inbox.lock().await.pop_front()
     }
 
+    /// Копия последних сообщений без удаления (для GUI).
+    pub async fn recent(&self) -> Vec<AppMessage> {
+        self.inbox.lock().await.iter().cloned().collect()
+    }
+
     /// Все необработанные сообщения.
     pub async fn recv_all(&self) -> Vec<AppMessage> {
         let mut inbox = self.inbox.lock().await;
         inbox.drain(..).collect()
     }
 
+    /// A6: проверка не зависит от таблицы маршрутизации — ключ берётся из
+    /// сообщения и привязан к `from` через NodeID = hash(pubkey).
     async fn verify_signature(&self, msg: &AppMessage) -> bool {
-        use crate::identity::node_identity::verify_signature as verify_sig;
+        use crate::identity::node_identity::{verify_node_id_bytes, verify_signature as verify_sig};
         use ed25519_dalek::{VerifyingKey, Signature};
 
-        // Берём pubkey из routing table
-        let rt = self.dht.routing.lock().await;
-        let known = rt.find_closest(&msg.from, 1);
-        drop(rt);
-
-        if let Some(contact) = known.first() {
-            if contact.node_id != msg.from { return false; }
-            let pk_bytes: Result<[u8;32], _> = contact.identity_public_key.as_slice().try_into();
-            let sig_bytes: Result<[u8;64], _> = msg.signature.as_slice().try_into();
-            if let (Ok(pk), Ok(sb)) = (pk_bytes, sig_bytes) {
-                if let Ok(vk) = VerifyingKey::from_bytes(&pk) {
-                    let sig = Signature::from_bytes(&sb);
-                    return verify_sig(&vk, &msg.signing_bytes(), &sig);
-                }
+        if msg.to != self.identity.node_id {
+            warn!("verify: message addressed to {}, not us", msg.to.short());
+            return false;
+        }
+        if !verify_node_id_bytes(&msg.from, &msg.sender_pubkey) {
+            warn!("verify: NodeID/pubkey mismatch for {}", msg.from.short());
+            return false;
+        }
+        let pk: Result<[u8; 32], _> = msg.sender_pubkey.as_slice().try_into();
+        let sg: Result<[u8; 64], _> = msg.signature.as_slice().try_into();
+        if let (Ok(pk), Ok(sg)) = (pk, sg) {
+            if let Ok(vk) = VerifyingKey::from_bytes(&pk) {
+                return verify_sig(&vk, &msg.signing_bytes(), &Signature::from_bytes(&sg));
             }
         }
-        warn!("verify: contact {} not in routing table", msg.from.short());
         false
     }
 }

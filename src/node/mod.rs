@@ -23,6 +23,12 @@ pub struct Node {
     pub cfg:         Arc<NodeConfig>,
     pub own_contact: Contact,
     pub tunnel_mgr:  Arc<TunnelManager>,
+    /// A4: прикладной слой (подписанные сообщения через туннели).
+    pub messenger:   Arc<crate::app::messenger::Messenger>,
+    pub identity:    Arc<NodeIdentity>,
+    routes:          Arc<crate::tunnel::routes::TunnelRoutes>,
+    app_tx:          tokio::sync::mpsc::Sender<Vec<u8>>,
+    app_rx:          std::sync::Mutex<Option<tokio::sync::mpsc::Receiver<Vec<u8>>>>,
 }
 
 impl Node {
@@ -41,7 +47,17 @@ impl Node {
             dht.routing.clone(),
             cfg.clone(),
         ));
-        Ok(Self { dht, cfg, own_contact, tunnel_mgr })
+        let identity = Arc::new(identity.clone());
+        let routes   = Arc::new(crate::tunnel::routes::TunnelRoutes::new());
+        let (app_tx, app_rx) = tokio::sync::mpsc::channel(256);
+        let messenger = Arc::new(crate::app::messenger::Messenger::new(
+            identity.clone(), dht.clone(), tunnel_mgr.clone(),
+            tunnel_mgr.forwarder.clone(), dht.metrics.clone(), cfg.clone(),
+        ));
+        Ok(Self {
+            dht, cfg, own_contact, tunnel_mgr, messenger, identity, routes,
+            app_tx, app_rx: std::sync::Mutex::new(Some(app_rx)),
+        })
     }
 
     pub async fn start(&self) -> Result<()> {
@@ -49,6 +65,19 @@ impl Node {
         let listener = TcpListener::bind(&listen_addr)
             .await.with_context(|| format!("bind {listen_addr}"))?;
         info!("Listening on {} NodeID={}", listen_addr, self.own_contact.node_id.short());
+
+        // ── A4: доставка входящих TUNNEL_DATA в Messenger ────────────────
+        let app_rx = self.app_rx.lock().ok().and_then(|mut g| g.take());
+        if let Some(mut rx) = app_rx {
+            let m = self.messenger.clone();
+            tokio::spawn(async move {
+                while let Some(raw) = rx.recv().await {
+                    if let Err(e) = m.handle_incoming(raw).await {
+                        warn!("incoming message rejected: {e}");
+                    }
+                }
+            });
+        }
 
         // ── T4: Graceful shutdown через watch-канал ───────────────────────
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
@@ -175,7 +204,7 @@ impl Node {
             self.dht.routing.clone(),
             self.dht.pending.clone(),
             self.cfg.clone(),
-        )
+        ).with_services(self.dht.store.clone(), self.routes.clone(), Some(self.app_tx.clone()))
     }
 
     fn resolve_bootstrap(&self) -> Vec<SocketAddr> {

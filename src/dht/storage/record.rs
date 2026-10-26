@@ -35,6 +35,9 @@ pub struct DhtRecord {
     pub ttl_seconds: u64,
     /// Ed25519 подпись publisher'а над (key || value || published_ms) — для Фазы 4+
     pub signature:   Option<Vec<u8>>,
+    /// A7: публичный ключ публикатора (NodeID = hash(ключ) проверяется в `verify`).
+    #[serde(default)]
+    pub publisher_key: Vec<u8>,
 }
 
 impl DhtRecord {
@@ -44,7 +47,43 @@ impl DhtRecord {
             published_ms: now_ms(),
             ttl_seconds,
             signature: None,
+            publisher_key: Vec::new(),
         }
+    }
+
+    /// A7: байты для подписи: домен || key || publisher || value.
+    /// TTL и время не подписываются — их ограничивает/назначает принимающий узел.
+    pub fn signing_bytes(key: &RecordKey, publisher: &NodeId, value: &[u8]) -> Vec<u8> {
+        let mut b = b"P2P-DHT-RECORD-v1".to_vec();
+        b.extend_from_slice(&key.0);
+        b.extend_from_slice(&publisher.0);
+        b.extend_from_slice(value);
+        b
+    }
+
+    /// A7: создать запись, подписанную идентичностью узла.
+    pub fn new_signed(id: &crate::identity::node_identity::NodeIdentity,
+                      key: RecordKey, value: Vec<u8>, ttl_seconds: u64) -> Self {
+        let sig = id.sign(&Self::signing_bytes(&key, &id.node_id, &value));
+        let mut r = Self::new(key, value, id.node_id, ttl_seconds);
+        r.publisher_key = id.public_key_bytes().to_vec();
+        r.signature = Some(sig.to_bytes().to_vec());
+        r
+    }
+
+    /// A7: подпись есть, ключ соответствует publisher, подпись валидна.
+    pub fn verify(&self) -> bool {
+        use crate::identity::node_identity::{verify_node_id_bytes, verify_signature};
+        use ed25519_dalek::{Signature, VerifyingKey};
+        let Some(sig) = &self.signature else { return false };
+        if !verify_node_id_bytes(&self.publisher, &self.publisher_key) { return false; }
+        let (Ok(pk), Ok(sb)) = (
+            <[u8; 32]>::try_from(self.publisher_key.as_slice()),
+            <[u8; 64]>::try_from(sig.as_slice()),
+        ) else { return false };
+        let Ok(vk) = VerifyingKey::from_bytes(&pk) else { return false };
+        verify_signature(&vk, &Self::signing_bytes(&self.key, &self.publisher, &self.value),
+                         &Signature::from_bytes(&sb))
     }
 
     /// Истёк ли TTL?

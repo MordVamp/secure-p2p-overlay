@@ -34,6 +34,10 @@ pub struct AppMessage {
     pub payload:      Vec<u8>,
     /// Ed25519 подпись over (message_id || kind || from || to || timestamp_ms || payload).
     pub signature:    Vec<u8>,
+    /// A6: публичный ключ отправителя. Self-certifying: NodeID = hash(ключ),
+    /// поэтому проверка не зависит от таблицы маршрутизации получателя.
+    #[serde(default)]
+    pub sender_pubkey: Vec<u8>,
 }
 
 impl AppMessage {
@@ -46,6 +50,7 @@ impl AppMessage {
             timestamp_ms: now_ms(),
             payload:      text.as_bytes().to_vec(),
             signature:    vec![],  // заполняется через sign()
+            sender_pubkey: vec![],
         }
     }
 

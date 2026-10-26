@@ -4,6 +4,13 @@
 
 ---
 
+## [2026-10-26] fix: A4–A8 (чат, relay-пересылка, подписи DHT)
+- A4/A5: `Messenger` подключён к `Node`; TUNNEL_DATA пересылается relay по цепочке (`next_hop`, `TunnelRoutes`), конечный узел отдаёт данные в Messenger
+- A6: проверка подписи сообщения по `sender_pubkey` (не зависит от routing table), анти-replay
+- A7: подписанные DHT-записи, first-writer-wins
+- A8: STORE/FIND_VALUE больше не заглушки; `DhtNode::put/get`
+- GUI: отправка сообщений и входящие; STORE/FIND через DHT
+
 ## [2026-10-26] feat: GUI + аудит раунд 2
 - Веб-панель узла (`--gui-port`) и веб-оркестратор кластера (`p2p-orchestrator`), см. docs/dev/GUI.md
 - A2: проверка NodeID/pubkey в PONG и контактах FIND_NODE_RESPONSE

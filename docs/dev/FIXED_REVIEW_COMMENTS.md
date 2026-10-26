@@ -21,3 +21,6 @@
 |-----|----------|---------|-----|
 | B3 | В TUNNEL_BUILD нет проверки идентичности (аналог E22); сессия получала случайный tunnel_id, не совпадающий с согласованным у relay | Relay проверяет NodeID/pubkey инициатора; инициатор проверяет тип ответа, `request_id`, NodeID/pubkey relay и совпадение с выбранным; `TunnelSession::with_id` | `src/rpc/mod.rs`, `src/tunnel/builder.rs`, `src/tunnel/session.rs` |
 | B6 | `_rx` отбрасывался → канал закрыт, `TunnelSession::send` всегда падал | Приёмник хранится в сессии (`attach_outbox` / `take_outbox`) | `src/tunnel/session.rs`, `src/tunnel/builder.rs` |
+
+## Раунд 3 (аудит 26.10.2026, A4–A8) — ВЫПОЛНЕНО
+См. `CODE_AUDIT_2.md`: чат через туннели с пересылкой по relay (A4/A5), самодостаточная проверка подписи сообщений (A6), подписанные DHT-записи (A7), реальные STORE/FIND_VALUE (A8). Тесты: `tests/test_audit2.rs`.

@@ -142,6 +142,9 @@ pub struct FindValueResponse {
     pub value:     Option<Vec<u8>>,     // найденное значение
     pub contacts:  Vec<Contact>,        // ближайшие если не найдено
     pub ttl_remaining_secs: Option<u64>,
+    /// A7: публичный ключ публикатора и подпись записи (проверяются клиентом).
+    pub publisher_key: Vec<u8>,
+    pub signature:     Option<Vec<u8>>,
 }
 
 // ── Tunnel payloads (Фаза 6) ─────────────────────────────────────────────────
@@ -155,6 +158,8 @@ pub struct TunnelBuildPayload {
     pub total_hops:   usize,
     pub ttl_seconds:  u64,
     pub timestamp_ms: u64,
+    /// A5: следующий узел в цепочке (для последнего relay — получатель).
+    pub next_hop:     Option<Contact>,
 }
 
 /// `TUNNEL_BUILD_OK` payload (0x11).

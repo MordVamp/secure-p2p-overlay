@@ -17,6 +17,7 @@ use tracing::info;
 
 use crate::types::NodeId;
 
+#[derive(Clone)]
 pub struct NodeIdentity {
     pub node_id:    NodeId,
     pub public_key: VerifyingKey,

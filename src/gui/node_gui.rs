@@ -7,7 +7,7 @@ use std::sync::Arc;
 use serde_json::json;
 
 use super::http::{handler, serve, Request, Response};
-use crate::dht::storage::{DhtRecord, RecordKey};
+use crate::dht::storage::RecordKey;
 use crate::node::Node;
 use crate::types::{now_ms, NodeId};
 
@@ -80,17 +80,35 @@ async fn route(node: Arc<Node>, req: Request) -> Response {
             let (Some(k), Some(v)) = (req.query.get("key"), req.query.get("value"))
                 else { return Response::error(400, "нужны key и value"); };
             if k.is_empty() || v.len() > 4096 { return Response::error(400, "key пуст или value > 4096"); }
-            let rec = DhtRecord::new(RecordKey::from_str(k), v.clone().into_bytes(),
-                                     node.own_contact.node_id, node.cfg.dht.ttl_seconds);
-            let ok = node.dht.store_local(rec).await;
-            Response::json(json!({ "ok": ok }))
+            match node.dht.put(&node.identity, RecordKey::from_str(k), v.clone().into_bytes(),
+                               node.cfg.dht.ttl_seconds).await {
+                Ok(n)  => Response::json(json!({ "ok": true, "stored_on": n })),
+                Err(e) => Response::json(json!({ "ok": false, "error": e.to_string() })),
+            }
         }
         ("/api/find", false) => {
             let Some(k) = req.query.get("key") else { return Response::error(400, "нужен key"); };
-            match node.dht.find_value_local(&RecordKey::from_str(k)).await {
-                Some(r) => Response::json(json!({ "found": true, "value": String::from_utf8_lossy(&r.value), "ttl_left": r.remaining_ttl_secs() })),
+            match node.dht.get(&RecordKey::from_str(k)).await {
+                Some(r) => Response::json(json!({ "found": true, "value": String::from_utf8_lossy(&r.value),
+                                                  "publisher": r.publisher.short(), "ttl_left": r.remaining_ttl_secs() })),
                 None    => Response::json(json!({ "found": false })),
             }
+        }
+        ("/api/send", true) => {
+            let target = match parse_node_id(req.query.get("target").map(|s| s.as_str()).unwrap_or("")) {
+                Ok(t) => t, Err(e) => return Response::error(400, &e),
+            };
+            let Some(text) = req.query.get("text").filter(|t| !t.is_empty()) else { return Response::error(400, "text пуст"); };
+            match node.messenger.send_text(target, text).await {
+                Ok(()) => Response::json(json!({ "ok": true })),
+                Err(e) => Response::json(json!({ "ok": false, "error": e.to_string() })),
+            }
+        }
+        ("/api/inbox", false) => {
+            let msgs: Vec<_> = node.messenger.recent().await.iter().map(|m| json!({
+                "from": m.from.to_hex(), "text": m.text().unwrap_or("<binary>"), "ts": m.timestamp_ms,
+            })).collect();
+            Response::json(json!({ "messages": msgs }))
         }
         _ => Response::error(404, "not found"),
     }

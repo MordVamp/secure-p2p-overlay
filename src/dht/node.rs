@@ -25,7 +25,7 @@ pub struct DhtNode {
     pub rpc_client:  Arc<RpcClient>,
     pub cfg:         Arc<NodeConfig>,
     /// DHT key-value хранилище (STORE/FIND_VALUE) — Фаза 4
-    pub store:       crate::dht::storage::DhtStore,
+    pub store:       Arc<crate::dht::storage::DhtStore>,
     /// Метрики (C4)
     pub metrics:     Arc<crate::metrics::MetricsCollector>,
 }
@@ -43,7 +43,7 @@ impl DhtNode {
         );
 
         Self { own_contact, routing, pending, rpc_client, cfg,
-               store: crate::dht::storage::DhtStore::new(1024), metrics }
+               store: Arc::new(crate::dht::storage::DhtStore::new(1024)), metrics }
     }
 
     /// Процедура bootstrap (§22.2):
@@ -166,5 +166,65 @@ impl DhtNode {
     /// Экспорт хранилища в JSON.
     pub async fn export_store(&self) -> serde_json::Value {
         self.store.export_json().await
+    }
+}
+
+// ── A7/A8: подписанные DHT put/get с репликацией ─────────────────────────────
+impl DhtNode {
+    /// STORE: подписать запись, сохранить локально и на R ближайших узлах.
+    /// Возвращает число узлов (включая себя), принявших запись.
+    pub async fn put(
+        &self,
+        identity: &crate::identity::node_identity::NodeIdentity,
+        key: RecordKey,
+        value: Vec<u8>,
+        ttl: u64,
+    ) -> Result<usize> {
+        let ttl = ttl.min(self.cfg.dht.ttl_seconds);
+        if let Some(ex) = self.store.find(&key).await {
+            if ex.publisher != identity.node_id {
+                anyhow::bail!("ключ принадлежит другому публикатору");
+            }
+        }
+        let rec = DhtRecord::new_signed(identity, key, value.clone(), ttl);
+        let sig = rec.signature.clone();
+        self.store.store(rec).await;
+        let mut stored = 1;
+        let lk = self.find_node(&crate::types::NodeId(key.0)).await?;
+        for c in lk.closest.iter().take(self.cfg.dht.replication_factor) {
+            let Ok(addr) = c.socket_addr() else { continue };
+            match self.rpc_client.store_value(
+                addr, self.cfg.transport.connect_timeout_ms, self.cfg.transport.read_timeout_ms,
+                &self.own_contact, &key.0, value.clone(), ttl, sig.clone(),
+            ).await {
+                Ok(r) if r.stored => stored += 1,
+                Ok(_) => {}
+                Err(e) => tracing::debug!("STORE to {addr}: {e}"),
+            }
+        }
+        Ok(stored)
+    }
+
+    /// FIND_VALUE: локально, затем у ближайших узлов. Принимается только запись
+    /// с валидной подписью публикатора.
+    pub async fn get(&self, key: &RecordKey) -> Option<DhtRecord> {
+        if let Some(r) = self.store.find(key).await { return Some(r); }
+        let lk = self.find_node(&crate::types::NodeId(key.0)).await.ok()?;
+        for c in lk.closest.iter().take(self.cfg.dht.replication_factor + 2) {
+            let Ok(addr) = c.socket_addr() else { continue };
+            let Ok(resp) = self.rpc_client.find_value(
+                addr, self.cfg.transport.connect_timeout_ms, self.cfg.transport.read_timeout_ms,
+                &self.own_contact, &key.0,
+            ).await else { continue };
+            let (Some(v), Some(sig)) = (resp.value, resp.signature) else { continue };
+            let Ok(publisher) = crate::identity::node_identity::compute_node_id_from_bytes(&resp.publisher_key)
+                else { continue };
+            let mut rec = DhtRecord::new(*key, v, publisher, resp.ttl_remaining_secs.unwrap_or(1));
+            rec.publisher_key = resp.publisher_key;
+            rec.signature = Some(sig);
+            if rec.verify() { return Some(rec); }
+            tracing::warn!("FIND_VALUE: запись от {addr} с неверной подписью отброшена");
+        }
+        None
     }
 }

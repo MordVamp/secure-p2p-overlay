@@ -73,13 +73,20 @@ impl TunnelBuilder {
             bail!("Not enough relay candidates: {}/{}", candidates.len(), min_relays);
         }
 
+        // A5: адрес получателя нужен последнему relay (для финальной пересылки)
+        let target_contact = {
+            let rt = self.routing.lock().await;
+            rt.find_closest(target, 1).into_iter().find(|c| c.node_id == *target)
+        }.ok_or_else(|| anyhow::anyhow!("target {} unknown — сначала lookup", target.short()))?;
+
         let tunnel_id: TunnelId = Uuid::new_v4().into_bytes();
         let total_hops = candidates.len();
         let mut confirmed_hops = Vec::new();
 
         // Последовательно согласуем с каждым relay
         for (idx, relay) in candidates.iter().enumerate() {
-            match self.build_hop(&tunnel_id, relay, idx, total_hops).await {
+            let next = candidates.get(idx + 1).cloned().unwrap_or_else(|| target_contact.clone());
+            match self.build_hop(&tunnel_id, relay, idx, total_hops, Some(next)).await {
                 Ok(mut hop) => {
                     hop.mark_confirmed();
                     info!("[tunnel-{}] hop {} confirmed: {}", hex::encode(&tunnel_id[..4]), idx, relay);
@@ -110,6 +117,7 @@ impl TunnelBuilder {
         relay:     &Contact,
         hop_index: usize,
         total_hops: usize,
+        next_hop:  Option<Contact>,
     ) -> Result<TunnelHop> {
         let addr: SocketAddr = relay.socket_addr()?;
         let mut stream = dial(
@@ -126,6 +134,7 @@ impl TunnelBuilder {
             total_hops,
             ttl_seconds:  self.cfg.tunnel.ttl_seconds,
             timestamp_ms: now_ms(),
+            next_hop,
         };
 
         let frame = Frame {

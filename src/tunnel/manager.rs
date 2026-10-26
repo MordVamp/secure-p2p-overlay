@@ -15,6 +15,7 @@ use crate::dht::routing_table::RoutingTable;
 use crate::tunnel::builder::TunnelBuilder;
 use crate::tunnel::session::TunnelSession;
 use crate::tunnel::state::TunnelState;
+use crate::tunnel::forwarder::TunnelForwarder;
 use crate::types::{Contact, NodeId};
 
 /// Менеджер пула туннелей.
@@ -24,6 +25,8 @@ pub struct TunnelManager {
     builder:  TunnelBuilder,
     #[allow(dead_code)] // будет использован в C3 (monitor_loop)
     cfg:      Arc<NodeConfig>,
+    /// A4: отправка данных первому hop (используется задачей-отправителем сессии).
+    pub forwarder: Arc<TunnelForwarder>,
 }
 
 impl TunnelManager {
@@ -36,6 +39,7 @@ impl TunnelManager {
         Self {
             tunnels: RwLock::new(HashMap::new()),
             builder,
+            forwarder: Arc::new(TunnelForwarder::new(cfg.clone())),
             cfg,
         }
     }
@@ -59,6 +63,22 @@ impl TunnelManager {
         // Строим новый
         info!("Building tunnel to {}", target.short());
         let session = self.builder.build(target).await?;
+
+        // A4: задача-отправитель — забирает очередь сессии и шлёт данные первому hop
+        let first_hop = session.hops.first()
+            .ok_or_else(|| anyhow::anyhow!("empty route"))?
+            .relay.socket_addr()?;
+        if let Some(mut rx) = session.take_outbox().await {
+            let fwd = self.forwarder.clone();
+            let tag = session.id_hex();
+            tokio::spawn(async move {
+                while let Some(td) = rx.recv().await {
+                    if let Err(e) = fwd.send_data(&td.tunnel_id, first_hop, td.payload).await {
+                        warn!("[tunnel-{tag}] send failed: {e}");
+                    }
+                }
+            });
+        }
 
         let mut tunnels = self.tunnels.write().await;
         tunnels.insert(key, session);

@@ -104,15 +104,39 @@ pub struct RpcHandler {
     routing:     Arc<Mutex<RoutingTable>>,
     pending:     Arc<PendingRpc>,
     cfg:         Arc<NodeConfig>,
+    /// A8: DHT-хранилище (раньше STORE/FIND_VALUE были заглушками).
+    store:       Arc<crate::dht::storage::DhtStore>,
+    /// A5: таблица пересылки relay.
+    routes:      Arc<crate::tunnel::routes::TunnelRoutes>,
+    /// A4: получатель прикладных данных (конечный узел туннеля).
+    app_sink:    Option<tokio::sync::mpsc::Sender<Vec<u8>>>,
 }
 
 impl RpcHandler {
+    /// Подключить хранилище, таблицу пересылки и приёмник прикладных данных.
+    pub fn with_services(
+        mut self,
+        store:    Arc<crate::dht::storage::DhtStore>,
+        routes:   Arc<crate::tunnel::routes::TunnelRoutes>,
+        app_sink: Option<tokio::sync::mpsc::Sender<Vec<u8>>>,
+    ) -> Self {
+        self.store = store; self.routes = routes; self.app_sink = app_sink;
+        self
+    }
+
     pub fn new(
         own_contact: Contact,
         routing:     Arc<Mutex<RoutingTable>>,
         pending:     Arc<PendingRpc>,
         cfg:         Arc<NodeConfig>,
-    ) -> Self { Self { own_contact, routing, pending, cfg } }
+    ) -> Self {
+        Self {
+            own_contact, routing, pending, cfg,
+            store:    Arc::new(crate::dht::storage::DhtStore::default()),
+            routes:   Arc::new(crate::tunnel::routes::TunnelRoutes::new()),
+            app_sink: None,
+        }
+    }
 
     /// Обработать входящий Frame. Возвращает ответный Frame если нужен.
     pub async fn handle(&self, frame: Frame) -> Option<Frame> {
@@ -144,6 +168,10 @@ impl RpcHandler {
             MsgType::TunnelBuild => match self.handle_tunnel_build(&frame).await {
                 Ok(f)  => Some(f),
                 Err(e) => { warn!("tunnel_build err: {e}"); Some(make_error_frame(frame.request_id, error_codes::BAD_PAYLOAD, e.to_string())) }
+            },
+            MsgType::TunnelData => match self.handle_tunnel_data(&frame).await {
+                Ok(f)  => Some(f),
+                Err(e) => { warn!("tunnel_data err: {e}"); Some(make_error_frame(frame.request_id, error_codes::BAD_PAYLOAD, e.to_string())) }
             },
             other => {
                 warn!("unknown msg_type {:?} — sending ERROR", other);
@@ -218,16 +246,29 @@ impl RpcHandler {
         let key_arr: [u8; 32] = req.key.as_slice().try_into()
             .map_err(|_| anyhow::anyhow!("STORE key must be 32 bytes"))?;
         let key = RecordKey(key_arr);
-        let publisher = req.sender.node_id;
+        let publisher     = req.sender.node_id;
+        let publisher_key = req.sender.identity_public_key.clone();
         self.update_routing(req.sender).await;
 
-        let _record = DhtRecord::new(key, req.value, publisher, req.ttl_seconds);
-        debug!("← STORE key={} ttl={}s", key.to_hex(), req.ttl_seconds);
+        // A7: TTL ограничивается политикой узла, подпись публикатора обязательна
+        let ttl = req.ttl_seconds.min(self.cfg.dht.ttl_seconds);
+        let mut record = DhtRecord::new(key, req.value, publisher, ttl);
+        record.publisher_key = publisher_key;
+        record.signature     = req.signature;
+        if !record.verify() {
+            bail!("STORE: подпись записи отсутствует или неверна");
+        }
+        // first-writer-wins: чужой живой ключ не перезаписываем
+        if let Some(ex) = self.store.find(&key).await {
+            if ex.publisher != publisher { bail!("STORE: ключ принадлежит другому публикатору"); }
+        }
+        let stored = self.store.store(record).await;
+        debug!("← STORE key={} ttl={}s stored={}", key.to_hex(), ttl, stored);
 
         let resp = StoreResponse {
             responder: self.own_contact.clone(),
             key: key.0.to_vec(),
-            stored: true,
+            stored,
         };
         Ok(Frame::new_response(MsgType::StoreResponse, frame.request_id, Bytes::from(payload::encode(&resp)?)))
     }
@@ -247,12 +288,29 @@ impl RpcHandler {
         debug!("← FIND_VALUE key={}", key.to_hex());
         self.update_routing(req.sender).await;
 
-        let resp = FindValueResponse {
-            responder: self.own_contact.clone(),
-            key: req.key,
-            value: None,
-            contacts: vec![],
-            ttl_remaining_secs: None,
+        let resp = match self.store.find(&key).await {
+            Some(r) => FindValueResponse {
+                responder: self.own_contact.clone(),
+                key: req.key,
+                value: Some(r.value.clone()),
+                contacts: vec![],
+                ttl_remaining_secs: Some(r.remaining_ttl_secs()),
+                publisher_key: r.publisher_key.clone(),
+                signature: r.signature.clone(),
+            },
+            None => {
+                let contacts = self.routing.lock().await
+                    .find_closest(&NodeId(key.0), self.cfg.dht.k_bucket_size);
+                FindValueResponse {
+                    responder: self.own_contact.clone(),
+                    key: req.key,
+                    value: None,
+                    contacts,
+                    ttl_remaining_secs: None,
+                    publisher_key: vec![],
+                    signature: None,
+                }
+            }
         };
         Ok(Frame::new_response(MsgType::FindValueResponse, frame.request_id, Bytes::from(payload::encode(&resp)?)))
     }
@@ -387,11 +445,12 @@ impl RpcClient {
         key:  &[u8],
         value: Vec<u8>,
         ttl_seconds: u64,
+        signature: Option<Vec<u8>>,
     ) -> Result<StoreResponse> {
         let request_id = new_request_id();
         let req = StoreRequest {
             sender: own.clone(), key: key.to_vec(),
-            value, ttl_seconds, signature: None,
+            value, ttl_seconds, signature,
         };
         let frame = Frame {
             version: crate::protocol::PROTOCOL_VERSION, msg_type: MsgType::StoreRequest,
@@ -459,6 +518,21 @@ impl RpcHandler {
             "← TUNNEL_BUILD id={} hop={}/{} from={}",
             tid_hex, req.hop_index, req.total_hops, req.initiator
         );
+        // A5: relay запоминает следующий hop для пересылки TUNNEL_DATA
+        if let Some(next) = &req.next_hop {
+            if next.node_id == self.own_contact.node_id {
+                anyhow::bail!("TUNNEL_BUILD: next_hop указывает на этот же узел");
+            }
+            if !verify_node_id_bytes(&next.node_id, &next.identity_public_key) {
+                anyhow::bail!("TUNNEL_BUILD: next_hop NodeID/pubkey mismatch");
+            }
+            let tid: [u8; 16] = req.tunnel_id.as_slice().try_into()
+                .map_err(|_| anyhow::anyhow!("bad tunnel_id length"))?;
+            let ttl = req.ttl_seconds.min(self.cfg.tunnel.ttl_seconds);
+            if !self.routes.insert(tid, next.socket_addr()?, ttl).await {
+                anyhow::bail!("TUNNEL_BUILD: таблица маршрутов переполнена");
+            }
+        }
         let ok = TunnelBuildOkPayload {
             tunnel_id: req.tunnel_id,
             relay:     self.own_contact.clone(),
@@ -469,5 +543,46 @@ impl RpcHandler {
             frame.request_id,
             bytes::Bytes::from(payload::encode(&ok)?),
         ))
+    }
+}
+
+// ── TUNNEL_DATA обработчик (A4 + A5) ─────────────────────────────────────────
+impl RpcHandler {
+    /// Relay: переслать следующему hop и вернуть его ACK.
+    /// Конечный узел: отдать данные приложению (Messenger) и вернуть ACK.
+    pub async fn handle_tunnel_data(&self, frame: &Frame) -> Result<Frame> {
+        let p: TunnelDataPayload = payload::decode(&frame.payload)?;
+        let tid: [u8; 16] = p.tunnel_id.as_slice().try_into()
+            .map_err(|_| anyhow::anyhow!("bad tunnel_id length"))?;
+        if p.data.len() > crate::tunnel::forwarder::MAX_SEGMENT_SIZE {
+            bail!("TUNNEL_DATA segment too large");
+        }
+
+        if let Some(next) = self.routes.next_hop(&tid).await {
+            let mut stream = dial(next, self.cfg.transport.connect_timeout_ms,
+                                  self.cfg.transport.read_timeout_ms).await?;
+            let fwd = Frame {
+                version:    crate::protocol::PROTOCOL_VERSION,
+                msg_type:   MsgType::TunnelData,
+                flags:      FrameFlags::empty(),
+                request_id: new_request_id(),
+                payload:    frame.payload.clone(),
+            };
+            stream.send(&fwd).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+            let ack = timeout(Duration::from_millis(self.cfg.tunnel.ack_timeout_ms), stream.recv()).await
+                .map_err(|_| anyhow::anyhow!("next hop ACK timeout"))?
+                .map_err(|e| anyhow::anyhow!("recv: {e}"))?;
+            if ack.msg_type != MsgType::TunnelAck {
+                bail!("next hop replied {:?}", ack.msg_type);
+            }
+            debug!("TUNNEL_DATA relayed tunnel={} → {next}", hex::encode(&tid[..4]));
+        } else {
+            let sink = self.app_sink.as_ref()
+                .ok_or_else(|| anyhow::anyhow!("no local consumer for TUNNEL_DATA"))?;
+            sink.try_send(p.data).map_err(|_| anyhow::anyhow!("app inbox full"))?;
+        }
+
+        let ack = TunnelAckPayload { tunnel_id: p.tunnel_id, seq: p.seq, rtt_ms: 0 };
+        Ok(Frame::new_response(MsgType::TunnelAck, frame.request_id, Bytes::from(payload::encode(&ack)?)))
     }
 }

@@ -8,11 +8,20 @@
 | B6 | `_rx` отбрасывался — `TunnelSession::send` всегда падал | ✅ исправлено (c9bb483) |
 | A2 | PONG и контакты из FIND_NODE_RESPONSE принимались без проверки NodeID↔pubkey (E22 для ответов) | ✅ исправлено: `rpc/mod.rs` |
 | A3 | Контакт анонсировался с хостом `0.0.0.0` (его нельзя набрать) | ✅ анонс `127.0.0.1` при bind на `0.0.0.0` (только LAN/localhost; нужен параметр `advertise_host` для реальной сети) |
-| A4 | `Messenger` не подключён к `Node`: нет обработчика `TUNNEL_DATA`, нет задачи-отправителя, читающей `take_outbox()` | ⏳ открыто — чат через туннели пока не работает end-to-end |
-| A5 | Туннель строится «последовательно» без forward по цепочке (relay только подтверждает BUILD) | ⏳ открыто (упрощённый уровень) |
-| A6 | `verify_signature` в Messenger ищет pubkey через `find_closest(from,1)` — не находит узел вне таблицы | ⏳ открыто |
-| A7 | DHT STORE без подписи записи (`signature: None`) | ⏳ открыто (Advanced) |
+| A4 | `Messenger` не подключён к `Node`: нет обработчика `TUNNEL_DATA`, нет задачи-отправителя | ✅ `Node` создаёт `Messenger`; `RpcHandler::handle_tunnel_data`; задача-отправитель в `TunnelManager` читает `take_outbox()`; проверено на 6 узлах |
+| A5 | relay только подтверждал BUILD и ничего не пересылал | ✅ `TunnelBuildPayload.next_hop`, `TunnelRoutes` на relay, пересылка по цепочке до получателя с ACK на каждом hop |
+| A6 | `verify_signature` брал ключ из routing table — не работал для неизвестных узлов | ✅ `AppMessage.sender_pubkey` (self-certifying: NodeID = hash(ключ)); проверка адресата `to`; анти-replay по `message_id` |
+| A7 | DHT STORE без подписи записи | ✅ запись подписывается (`DhtRecord::new_signed`), получатель и клиент FIND_VALUE проверяют `verify()`; first-writer-wins по ключу; TTL ограничен политикой узла |
+| A8 | **STORE и FIND_VALUE в `RpcHandler` были заглушками**: запись создавалась и выбрасывалась, ответ всегда `stored: true` / «не найдено» | ✅ обработчики работают с `DhtStore`; `DhtNode::put/get` с репликацией на R ближайших |
 | — | `unwrap/expect` в src: 1 (mutex в session_tracker, допустимо) | ✅ |
 
 ## GUI — найденное при проверке
 - Веб-серверы GUI слушают только `127.0.0.1`, проверяют `Host` (DNS rebinding) и `Origin` для POST (CSRF); весь вывод в HTML экранируется (значения от пиров недоверенные).
+
+## Известные ограничения (не исправлено)
+- Подпись DHT-записи не включает время/TTL → старую запись может переиграть любой узел, увидевший её (нужен timestamp + окно свежести).
+- Relay доверяет `next_hop` от инициатора; цикл маршрутов ограничен только таймаутами ACK.
+- `TunnelManager::send` возвращает Ok после постановки в очередь, а не после доставки; ошибки отправки — только в лог.
+- `TunnelHop.last_ack_ms` не обновляется при ACK → `refresh_state` может считать hop-ы мёртвыми после `ack_timeout_ms`.
+- Трафик через туннель не шифруется между hop-ами (сквозная подпись есть, шифрования нет) — для Advanced.
+- Для туннеля нужно ≥ `min_relays`+1 известных узлов (по умолчанию 3 + получатель).

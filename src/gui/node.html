@@ -61,6 +61,11 @@ pre{margin:8px 0 0;padding:10px;border-radius:10px;background:#0006;font:12px ui
     <div class="row"><input id="st_key" placeholder="ключ"><input id="st_val" placeholder="значение"><button id="st_btn">STORE</button></div>
     <div class="row"><button id="fv_btn" style="width:100%">FIND по ключу</button></div><pre id="st_out">—</pre></section>
 
+  <section class="card"><h2>Сообщения через туннель</h2>
+    <div class="row"><input id="ms_target" placeholder="NodeID получателя (64 hex)"></div>
+    <div class="row"><input id="ms_text" placeholder="текст"><button id="ms_btn">Отправить</button></div><pre id="ms_out">—</pre></section>
+  <section class="card"><h2>Входящие</h2><pre id="inbox">пока пусто</pre></section>
+
   <section class="card wide"><h2>Таблица маршрутизации</h2><div id="rt"></div></section>
   <section class="card wide"><h2>Туннели</h2><div id="tn"></div></section>
   <section class="card wide"><h2>Хранилище DHT</h2><div id="sr"></div></section>
@@ -92,7 +97,9 @@ act('lk_btn','lk_out',()=>api('/api/lookup'+q({target:$('lk_target').value}),1))
 act('tn_btn','tn_out',()=>api('/api/tunnel'+q({target:$('tn_target').value}),1));
 act('st_btn','st_out',()=>api('/api/store'+q({key:$('st_key').value,value:$('st_val').value}),1));
 act('fv_btn','st_out',()=>api('/api/find'+q({key:$('st_key').value})));
-refresh();setInterval(refresh,2000);
+act('ms_btn','ms_out',()=>api('/api/send'+q({target:$('ms_target').value,text:$('ms_text').value}),1));
+async function inbox(){try{const d=await api('/api/inbox');$('inbox').textContent=d.messages.length?d.messages.map(m=>new Date(m.ts).toLocaleTimeString()+' '+m.from.slice(0,8)+': '+m.text).join('\n'):'пока пусто'}catch(e){}}
+refresh();inbox();setInterval(refresh,2000);setInterval(inbox,2000);
 </script>
 </body>
 </html>
