@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>P2P Overlay — оркестратор</title>
+<meta name="description" content="Запуск и остановка кластера узлов P2P-сети из браузера.">
+<style>
+:root{--bg:#0b0f1a;--card:rgba(255,255,255,.06);--bd:rgba(255,255,255,.12);--tx:#e7ecf7;--mut:#8b95b0;--ac:#7c5cff;--ac2:#22d3ee;--ok:#34d399;--bad:#f87171}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.5 Inter,system-ui,sans-serif;color:var(--tx);min-height:100vh;
+background:radial-gradient(900px 500px at 10% -10%,#2a1b6e55,transparent),radial-gradient(800px 500px at 100% 0,#0e7490380,transparent),var(--bg)}
+header{padding:22px 28px;border-bottom:1px solid var(--bd)}
+h1{margin:0;font-size:20px;background:linear-gradient(90deg,var(--ac),var(--ac2));-webkit-background-clip:text;color:transparent}
+main{max-width:1100px;margin:auto;padding:24px 28px}
+.bar{display:flex;gap:10px;align-items:center;margin-bottom:18px;flex-wrap:wrap}
+input{width:80px;background:#0006;border:1px solid var(--bd);border-radius:10px;padding:9px 12px;color:var(--tx);font:13px ui-monospace,monospace;outline:none}
+button{border:0;border-radius:10px;padding:9px 16px;font-weight:600;color:#fff;cursor:pointer;background:linear-gradient(135deg,var(--ac),#5b8cff);transition:transform .15s,box-shadow .15s}
+button:hover{transform:translateY(-1px);box-shadow:0 6px 20px #7c5cff55}
+button.danger{background:linear-gradient(135deg,#ef4444,#f97316)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:14px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:16px;padding:16px;backdrop-filter:blur(14px);transition:transform .2s,border-color .2s;animation:in .3s}
+.card:hover{transform:translateY(-3px);border-color:#7c5cff88}
+@keyframes in{from{opacity:0;transform:scale(.96)}}
+.card h3{margin:0 0 6px;font:600 15px ui-monospace,monospace}
+.card .m{color:var(--mut);font:12px ui-monospace,monospace;margin-bottom:12px}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;background:var(--ok);box-shadow:0 0 8px var(--ok)}.dot.off{background:var(--bad);box-shadow:0 0 8px var(--bad)}
+a{color:var(--ac2);text-decoration:none;margin-right:12px;font-weight:600}
+.empty{color:var(--mut);padding:40px;text-align:center;border:1px dashed var(--bd);border-radius:16px}
+#msg{color:var(--bad);margin-bottom:10px;min-height:20px}
+</style>
+</head>
+<body>
+<header><h1>P2P Overlay · оркестратор</h1></header>
+<main>
+ <div class="bar"><span>Запустить узлов:</span><input id="cnt" type="number" min="1" max="10" value="5"><button id="spawn">Запустить</button><button id="killall" class="danger">Остановить все</button></div>
+ <div id="msg"></div>
+ <div id="list" class="grid"></div>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+async function api(p){return (await fetch(p,{method:'POST'})).json()}
+async function refresh(){
+ const d=await (await fetch('/api/nodes')).json();
+ $('list').innerHTML=d.nodes.length?d.nodes.map((n,i)=>'<div class="card"><h3><i class="dot '+(n.alive?'':'off')+'"></i>node :'+esc(n.port)+(i==0?' · seed':'')+'</h3><div class="m">pid '+esc(n.pid??'—')+' · GUI :'+esc(n.gui_port)+'</div><a target="_blank" rel="noopener" href="http://127.0.0.1:'+esc(n.gui_port)+'/">Панель</a><button class="danger" data-p="'+esc(n.port)+'">Стоп</button></div>').join(''):'<div class="empty" style="grid-column:1/-1">Нет запущенных узлов</div>';
+ document.querySelectorAll('button[data-p]').forEach(b=>b.onclick=async()=>{await api('/api/kill?port='+b.dataset.p);refresh()});
+}
+$('spawn').onclick=async()=>{const r=await api('/api/spawn?count='+encodeURIComponent($('cnt').value));$('msg').textContent=r.ok?'':r.error;refresh()};
+$('killall').onclick=async()=>{await api('/api/killall');refresh()};
+refresh();setInterval(refresh,2000);
+</script>
+</body>
+</html>

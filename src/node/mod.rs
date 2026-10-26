@@ -27,7 +27,9 @@ pub struct Node {
 
 impl Node {
     pub fn new(identity: &NodeIdentity, cfg: Arc<NodeConfig>) -> Result<Self> {
-        let addr_str = format!("{}:{}", cfg.node.listen_host, cfg.node.listen_port);
+        // A3: 0.0.0.0 — адрес для bind, но не для анонса пирам (его нельзя набрать)
+        let adv_host = if cfg.node.listen_host == "0.0.0.0" { "127.0.0.1" } else { cfg.node.listen_host.as_str() };
+        let addr_str = format!("{}:{}", adv_host, cfg.node.listen_port);
         let own_contact = Contact::new(
             identity.node_id,
             identity.public_key_bytes().to_vec(),

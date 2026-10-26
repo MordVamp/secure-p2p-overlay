@@ -4,6 +4,12 @@
 
 ---
 
+## [2026-10-26] feat: GUI + аудит раунд 2
+- Веб-панель узла (`--gui-port`) и веб-оркестратор кластера (`p2p-orchestrator`), см. docs/dev/GUI.md
+- A2: проверка NodeID/pubkey в PONG и контактах FIND_NODE_RESPONSE
+- A3: анонс `127.0.0.1` вместо `0.0.0.0`
+- Аудит: docs/dev/CODE_AUDIT_2.md
+
 ## [2026-10-26] fix: B3 + B6 (туннели)
 > Аналоги E22 и E1-6 в tunnel/. Статус всех замечаний: docs/dev/FIXED_REVIEW_COMMENTS.md
 - B3: проверка NodeID/pubkey инициатора (relay) и relay (инициатор), проверка типа ответа и request_id; сессия использует согласованный tunnel_id (`TunnelSession::with_id`)

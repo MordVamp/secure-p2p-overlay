@@ -326,6 +326,10 @@ impl RpcClient {
             bail!("PING ERROR {}: {}", e.code, e.description);
         }
         let pong: PongPayload = payload::decode(&resp.payload)?;
+        // A2 (аналог E22): ответчик обязан соответствовать своему NodeID
+        if !verify_node_id_bytes(&pong.responder.node_id, &pong.responder.identity_public_key) {
+            bail!("PONG: NodeID/pubkey mismatch from {addr}");
+        }
         info!("PONG from {} rtt={}ms", pong.responder, now_ms() - ping.timestamp_ms);
         Ok(pong)
     }
@@ -359,7 +363,13 @@ impl RpcClient {
             let e: ErrorPayload = payload::decode(&resp.payload)?;
             bail!("FIND_NODE ERROR {}: {}", e.code, e.description);
         }
-        let r: FindNodeResponse = payload::decode(&resp.payload)?;
+        let mut r: FindNodeResponse = payload::decode(&resp.payload)?;
+        // A2: не принимаем в таблицу контакты с поддельной связкой NodeID/pubkey
+        let before = r.contacts.len();
+        r.contacts.retain(|c| verify_node_id_bytes(&c.node_id, &c.identity_public_key));
+        if r.contacts.len() != before {
+            warn!("FIND_NODE: отброшено {} контактов с неверным NodeID/pubkey", before - r.contacts.len());
+        }
         debug!("FIND_NODE_RESPONSE {} contacts", r.contacts.len());
         Ok(r)
     }

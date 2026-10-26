@@ -29,3 +29,6 @@ pub mod tunnel;
 pub mod metrics;
 // pub mod app;
 pub mod app;
+
+// GUI (веб-интерфейс узла и оркестратора)
+pub mod gui;

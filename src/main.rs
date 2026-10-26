@@ -30,6 +30,18 @@ struct Cli {
     #[arg(short, long)]
     bootstrap: Vec<String>,
 
+    /// Порт локального веб-интерфейса узла (127.0.0.1). Без флага GUI выключен.
+    #[arg(long)]
+    gui_port: Option<u16>,
+
+    /// Переопределить NODE_STATE_DIR
+    #[arg(long)]
+    state_dir: Option<PathBuf>,
+
+    /// Переопределить каталог метрик
+    #[arg(long)]
+    metrics_dir: Option<PathBuf>,
+
     /// Экспортировать таблицу маршрутизации в JSON и выйти (§26 ТЗ)
     #[arg(long)]
     export_routing: Option<std::path::PathBuf>,
@@ -46,6 +58,8 @@ async fn main() -> Result<()> {
         NodeConfig::default()
     };
     if let Some(port) = cli.port { cfg.node.listen_port = port; }
+    if let Some(d) = cli.state_dir { cfg.node.state_dir = d; }
+    if let Some(d) = cli.metrics_dir { cfg.node.metrics_dir = d; }
     if !cli.bootstrap.is_empty() { cfg.node.bootstrap_peers = cli.bootstrap; }
 
     // Инициализация логов
@@ -75,6 +89,16 @@ async fn main() -> Result<()> {
         std::fs::write(&path, &s)?;
         println!("Routing table exported to {}", path.display());
         return Ok(());
+    }
+
+    let node = Arc::new(node);
+    if let Some(gp) = cli.gui_port {
+        let n = node.clone();
+        tokio::spawn(async move {
+            if let Err(e) = p2p_overlay::gui::node_gui::run(n, gp).await {
+                tracing::error!("GUI: {e}");
+            }
+        });
     }
 
     node.start().await?;

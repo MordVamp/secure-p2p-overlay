@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>P2P Overlay — панель узла</title>
+<meta name="description" content="Локальная панель управления узлом защищённой P2P-сети: DHT, туннели, хранилище.">
+<style>
+:root{--bg:#0b0f1a;--card:rgba(255,255,255,.06);--bd:rgba(255,255,255,.12);--tx:#e7ecf7;--mut:#8b95b0;--ac:#7c5cff;--ac2:#22d3ee;--ok:#34d399;--bad:#f87171}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.5 Inter,system-ui,sans-serif;color:var(--tx);min-height:100vh;
+background:radial-gradient(900px 500px at 10% -10%,#2a1b6e55,transparent),radial-gradient(800px 500px at 100% 0,#0e7490380,transparent),var(--bg)}
+header{display:flex;gap:16px;align-items:center;justify-content:space-between;padding:20px 28px;border-bottom:1px solid var(--bd);backdrop-filter:blur(10px);position:sticky;top:0;z-index:2;background:#0b0f1acc}
+h1{font-size:18px;margin:0;background:linear-gradient(90deg,var(--ac),var(--ac2));-webkit-background-clip:text;color:transparent}
+.pill{padding:4px 10px;border-radius:99px;background:var(--card);border:1px solid var(--bd);font:12px ui-monospace,monospace;color:var(--mut)}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--ok);margin-right:6px;box-shadow:0 0 8px var(--ok);animation:p 2s infinite}
+.dot.off{background:var(--bad);box-shadow:0 0 8px var(--bad);animation:none}
+@keyframes p{50%{opacity:.35}}
+main{display:grid;grid-template-columns:repeat(auto-fit,minmax(380px,1fr));gap:18px;padding:24px 28px;max-width:1500px;margin:auto}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:16px;padding:18px;backdrop-filter:blur(14px);transition:transform .2s,border-color .2s}
+.card:hover{transform:translateY(-2px);border-color:#7c5cff88}
+.card h2{margin:0 0 12px;font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:var(--mut)}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+.stat{padding:12px;border-radius:12px;background:#0004;text-align:center}
+.stat b{display:block;font-size:24px;background:linear-gradient(90deg,var(--ac),var(--ac2));-webkit-background-clip:text;color:transparent}
+.stat span{font-size:11px;color:var(--mut)}
+.wide{grid-column:1/-1}
+table{width:100%;border-collapse:collapse;font:12px ui-monospace,monospace}
+td,th{padding:6px 8px;text-align:left;border-bottom:1px solid #ffffff12}th{color:var(--mut);font-weight:500}
+tr.me td{color:var(--ac2)}
+.row{display:flex;gap:8px;margin-bottom:8px}
+input{flex:1;min-width:0;background:#0006;border:1px solid var(--bd);border-radius:10px;padding:9px 12px;color:var(--tx);font:13px ui-monospace,monospace;outline:none;transition:border-color .2s}
+input:focus{border-color:var(--ac)}
+button{border:0;border-radius:10px;padding:9px 16px;font-weight:600;color:#fff;cursor:pointer;background:linear-gradient(135deg,var(--ac),#5b8cff);transition:transform .15s,box-shadow .15s}
+button:hover{transform:translateY(-1px);box-shadow:0 6px 20px #7c5cff55}button:active{transform:none}button:disabled{opacity:.5}
+pre{margin:8px 0 0;padding:10px;border-radius:10px;background:#0006;font:12px ui-monospace,monospace;white-space:pre-wrap;word-break:break-all;max-height:200px;overflow:auto;color:var(--mut)}
+.ok{color:var(--ok)}.bad{color:var(--bad)}
+.bucket{margin-bottom:10px}.bucket h3{margin:0 0 4px;font-size:12px;color:var(--ac2)}
+.empty{color:var(--mut);font-style:italic}
+</style>
+</head>
+<body>
+<header>
+  <div><h1>P2P Overlay · панель узла</h1><div class="pill" id="nid" title="NodeID">—</div></div>
+  <div style="display:flex;gap:8px;align-items:center"><span class="pill" id="addr">—</span><span class="pill" id="lvl">—</span><span class="pill"><i class="dot" id="dot"></i><span id="upd">…</span></span></div>
+</header>
+<main>
+  <section class="card wide"><h2>Обзор</h2><div class="stats">
+    <div class="stat"><b id="s_contacts">0</b><span>контактов</span></div>
+    <div class="stat"><b id="s_buckets">0</b><span>непустых бакетов</span></div>
+    <div class="stat"><b id="s_tunnels">0</b><span>туннелей</span></div>
+    <div class="stat"><b id="s_store">0</b><span>записей DHT</span></div></div></section>
+
+  <section class="card"><h2>PING</h2>
+    <div class="row"><input id="ping_addr" placeholder="127.0.0.1:7002"><button id="ping_btn">PING</button></div><pre id="ping_out">—</pre></section>
+  <section class="card"><h2>FIND_NODE (итеративный lookup)</h2>
+    <div class="row"><input id="lk_target" placeholder="NodeID (64 hex)"><button id="lk_btn">Найти</button></div><pre id="lk_out">—</pre></section>
+  <section class="card"><h2>Построить туннель</h2>
+    <div class="row"><input id="tn_target" placeholder="NodeID цели (64 hex)"><button id="tn_btn">Build</button></div><pre id="tn_out">—</pre></section>
+  <section class="card"><h2>DHT STORE / FIND_VALUE (локально)</h2>
+    <div class="row"><input id="st_key" placeholder="ключ"><input id="st_val" placeholder="значение"><button id="st_btn">STORE</button></div>
+    <div class="row"><button id="fv_btn" style="width:100%">FIND по ключу</button></div><pre id="st_out">—</pre></section>
+
+  <section class="card wide"><h2>Таблица маршрутизации</h2><div id="rt"></div></section>
+  <section class="card wide"><h2>Туннели</h2><div id="tn"></div></section>
+  <section class="card wide"><h2>Хранилище DHT</h2><div id="sr"></div></section>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+async function api(path,post){const r=await fetch(path,{method:post?'POST':'GET'});return r.json()}
+const q=o=>'?'+new URLSearchParams(o);
+function table(h,rows){if(!rows.length)return '<div class="empty">пусто</div>';
+ return '<table><tr>'+h.map(x=>'<th>'+esc(x)+'</th>').join('')+'</tr>'+rows.map(r=>'<tr>'+r.map(x=>'<td>'+esc(x)+'</td>').join('')+'</tr>').join('')+'</table>'}
+async function refresh(){
+ try{const s=await api('/api/status');
+  $('nid').textContent=s.node_id;$('addr').textContent=s.addr;$('lvl').textContent=s.level+' · K='+s.k+' α='+s.alpha;
+  $('s_contacts').textContent=s.routing.total_contacts;$('s_buckets').textContent=s.routing.non_empty_buckets;
+  $('s_tunnels').textContent=s.tunnels.total_tunnels;
+  const recs=Array.isArray(s.store)?s.store:(s.store.records||[]);$('s_store').textContent=s.store.total??recs.length;
+  $('rt').innerHTML=s.routing.buckets.length?s.routing.buckets.map(b=>'<div class="bucket"><h3>bucket '+esc(b.bucket_index)+'</h3>'+table(['NodeID','адрес','last seen'],b.contacts.map(c=>[c.node_id,c.host+':'+c.port,new Date(c.last_seen_ms).toLocaleTimeString()]))+'</div>').join(''):'<div class="empty">таблица пуста — узел ещё не нашёл пиров</div>';
+  $('tn').innerHTML=table(['tunnel_id','состояние','hops','живых','uptime, мс'],s.tunnels.tunnels.map(t=>[t.tunnel_id,t.state,t.hops,t.alive_hops,t.uptime_ms]));
+  $('sr').innerHTML='<pre>'+esc(JSON.stringify(s.store,null,1))+'</pre>';
+  $('dot').className='dot';$('upd').textContent='обновлено '+new Date().toLocaleTimeString();
+ }catch(e){$('dot').className='dot off';$('upd').textContent='нет связи с узлом'}
+}
+function act(btn,out,fn){$(btn).onclick=async()=>{const b=$(btn);b.disabled=true;$(out).textContent='…';
+ try{const r=await fn();$(out).innerHTML='<span class="'+(r.ok===false||r.error?'bad':'ok')+'">'+esc(JSON.stringify(r,null,1))+'</span>'}catch(e){$(out).textContent=String(e)}
+ b.disabled=false;refresh()}}
+act('ping_btn','ping_out',()=>api('/api/ping'+q({addr:$('ping_addr').value}),1));
+act('lk_btn','lk_out',()=>api('/api/lookup'+q({target:$('lk_target').value}),1));
+act('tn_btn','tn_out',()=>api('/api/tunnel'+q({target:$('tn_target').value}),1));
+act('st_btn','st_out',()=>api('/api/store'+q({key:$('st_key').value,value:$('st_val').value}),1));
+act('fv_btn','st_out',()=>api('/api/find'+q({key:$('st_key').value})));
+refresh();setInterval(refresh,2000);
+</script>
+</body>
+</html>
