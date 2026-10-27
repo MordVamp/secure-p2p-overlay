@@ -4,6 +4,12 @@
 
 ---
 
+## [2026-10-27] feat: сквозное шифрование сообщений (§11.2) + журнал архитектурных решений
+- `security/e2e.rs`: X25519 (эфемерный) + HKDF-SHA256 + AES-256-GCM, подпись внутри сообщения; relay видят только `Envelope`. Открытые сообщения не принимаются.
+- `Messenger::send_text` шифрует для получателя; ключ берётся из таблицы маршрутизации или из `NodeRecord` в DHT.
+- Тесты: `tests/test_e2e.rs` (9). Живая проверка: 6 узлов, A→B через туннель, текст получен и расшифрован.
+- Новый файл `docs/dev/ARCHITECTURE_DECISIONS.md` — все архитектурные решения сессии.
+
 ## [2026-10-27] feat: NodeRecord в DHT (§10.3) + кворум STORE (§10.1)
 - `NodeRecord` (node_id, pubkey, addresses, sequence_number, issued_at, expires_at, подпись) теперь реально используется: хранится в DHT под `SHA-256("node:"||NodeID)`, значение `NREC1`+msgpack.
 - `DhtNode::publish_node_record` (после bootstrap и при каждом republish, с новыми issued_at/expires_at) и `resolve_node` (подпись, TTL, привязка к ключу, совпадение NodeID).

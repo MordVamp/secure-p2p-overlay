@@ -8,6 +8,7 @@
 //!   impl AkeSecurity  (advanced)  — `ake.rs` (добавить без правки остальных модулей)
 
 pub mod tls;
+pub mod e2e;
 pub mod session_tracker;
 
 // TODO (продвинутый уровень): pub mod ake;

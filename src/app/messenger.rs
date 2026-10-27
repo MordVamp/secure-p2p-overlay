@@ -3,7 +3,7 @@
 //! Шаги отправки:
 //!  1. find_node(target) — получить адрес
 //!  2. get_or_build_tunnel(target) — построить туннель
-//!  3. sign(message) — Ed25519 подпись
+//!  3. sign(message) — Ed25519 подпись, затем E2E-шифрование (security/e2e.rs)
 //!  4. serialize → send_data через TunnelForwarder
 //!
 //! Шаги приёма:
@@ -75,8 +75,9 @@ impl Messenger {
         let sig = self.identity.sign(&msg.signing_bytes());
         msg.signature = sig.to_bytes().to_vec();
 
-        // 3. Сериализовать
-        let data = encode(&msg)?;
+        // 3. Сериализовать и зашифровать для получателя (relay видят только Envelope)
+        let pk = self.recipient_pubkey(&target).await?;
+        let data = crate::security::e2e::seal(&target, &pk, &encode(&msg)?)?;
 
         // 4. Отправить через туннель (в текущей реализации через send())
         self.tunnels.send(&target, data).await?;
@@ -87,7 +88,9 @@ impl Messenger {
 
     /// Обработать входящий TunnelMessage → проверить подпись → положить в inbox.
     pub async fn handle_incoming(&self, raw: Vec<u8>) -> Result<()> {
-        let msg: AppMessage = decode(&raw)
+        // E2E: открытый (нешифрованный) AppMessage не принимаем
+        let plain = crate::security::e2e::open(&self.identity, &raw)?;
+        let msg: AppMessage = decode(&plain)
             .map_err(|e| anyhow::anyhow!("AppMessage decode: {e}"))?;
 
         // Верификация подписи
@@ -110,6 +113,18 @@ impl Messenger {
         if inbox.len() >= 100 { inbox.pop_front(); }
         inbox.push_back(msg);
         Ok(())
+    }
+
+    /// Публичный ключ получателя: из таблицы маршрутизации, иначе из его NodeRecord в DHT.
+    async fn recipient_pubkey(&self, target: &NodeId) -> Result<Vec<u8>> {
+        let known = self.dht.routing.lock().await
+            .find_closest(target, self.cfg.dht.k_bucket_size.max(8))
+            .into_iter().find(|c| c.node_id == *target)
+            .map(|c| c.identity_public_key);
+        if let Some(k) = known { return Ok(k); }
+        Ok(self.dht.resolve_node(target).await
+            .map_err(|e| anyhow::anyhow!("ключ получателя неизвестен: {e}"))?
+            .identity_pubkey.to_vec())
     }
 
     /// Прочитать и удалить следующее сообщение из inbox.
