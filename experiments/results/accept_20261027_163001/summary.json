@@ -1,0 +1,104 @@
+{
+  "all_ok": true,
+  "checks": {
+    "converged": true,
+    "find_value_after_bootstrap_loss": true,
+    "lookups_after_bootstrap_loss_ok": true,
+    "lookups_before_ge_required_and_95pct_success_and_intermediate": true,
+    "tables_non_degenerate_ge80pct_below_N-1": true
+  },
+  "convergence_ms": 17011,
+  "find_value_after_bootstrap_loss": {
+    "found": true,
+    "publisher": "81079c9f",
+    "ttl_left": 178,
+    "value": "acceptance-value"
+  },
+  "lookups_after_bootstrap_loss": {
+    "duration_ms": {
+      "max": 38.0,
+      "mean": 25.3,
+      "median": 25.0,
+      "min": 19.0,
+      "n": 10
+    },
+    "found_target": 10,
+    "iterations": {
+      "max": 3.0,
+      "mean": 3.0,
+      "median": 3.0,
+      "min": 3.0,
+      "n": 10
+    },
+    "rpc_count": {
+      "max": 7.0,
+      "mean": 4.9,
+      "median": 5.0,
+      "min": 4.0,
+      "n": 10
+    },
+    "success_rate": 1.0,
+    "target_absent_before": 10,
+    "total_lookups": 10,
+    "used_intermediate_node": 10
+  },
+  "lookups_before_bootstrap_loss": {
+    "duration_ms": {
+      "max": 32.0,
+      "mean": 23.9,
+      "median": 23.5,
+      "min": 19.0,
+      "n": 30,
+      "p95": 28.0
+    },
+    "found_target": 30,
+    "iterations": {
+      "max": 3.0,
+      "mean": 3.0,
+      "median": 3.0,
+      "min": 3.0,
+      "n": 30,
+      "p95": 3.0
+    },
+    "rpc_count": {
+      "max": 8.0,
+      "mean": 5.133333333333334,
+      "median": 5.5,
+      "min": 4.0,
+      "n": 30,
+      "p95": 6.0
+    },
+    "success_rate": 1.0,
+    "target_absent_before": 30,
+    "total_lookups": 30,
+    "used_intermediate_node": 30
+  },
+  "params": {
+    "N": 13,
+    "bootstrap": "star",
+    "bootstrap_node_port": 7100,
+    "config": "config/node_config.yaml",
+    "finished_ms": 1793107821791,
+    "git_commit": "4b35f860eac1a86e9ed3ec05e8d6af3baab84e45",
+    "k": 3,
+    "lookups_requested": 30,
+    "pair_selection": "детерминированная (по кругу), цель отсутствует в свежей таблице инициатора",
+    "seed": null,
+    "started_ms": 1793107801491
+  },
+  "store": {
+    "ok": true,
+    "stored_on": 4
+  },
+  "tables": {
+    "contacts": {
+      "max": 11.0,
+      "mean": 7.461538461538462,
+      "median": 8.0,
+      "min": 5.0,
+      "n": 13
+    },
+    "nodes_with_lt_N-1_contacts": 13,
+    "share": 1.0
+  }
+}
