@@ -53,10 +53,10 @@ Distributed lookup должен быть **нетривиальным**: ини�
 | Конфиги для 5+ узлов | ✅ |
 | Скрипты запуска стенда | ✅ |
 | Тесты (автоматические) | ✅ 20 тестов |
-| **Экспорт routing table (JSON/CSV)** | ⬜ в работе |
-| **Логи контрольного запуска** | ⬜ нужно |
-| **Результаты lookup (JSON/CSV)** | ⬜ нужно |
-| **Краткий отчёт** | ⬜ нужно |
+| **Экспорт routing table (JSON/CSV)** | ✅ `experiments/results/accept_*/routing_tables/` |
+| **Логи контрольного запуска** | ✅ `accept_*/logs/` |
+| **Результаты lookup (JSON/CSV)** | ✅ `accept_*/lookups_*.csv/json` |
+| **Краткий отчёт** | ✅ `docs/defense/Report_Etapy_1-2.md` |
 
 ---
 

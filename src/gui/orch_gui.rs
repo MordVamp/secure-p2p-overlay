@@ -13,13 +13,15 @@ use super::http::{handler, serve, Request, Response};
 const PAGE: &str = include_str!("orch.html");
 const MAX_NODES: usize = 20;
 const NODE_BASE_PORT: u16 = 7100;
-const GUI_OFFSET: u16 = 1000;
+pub const GUI_OFFSET: u16 = 1000;
 
 struct Spawned { port: u16, child: Child }
 
 pub struct Orchestrator {
-    nodes:  Mutex<Vec<Spawned>>,
-    config: PathBuf,
+    nodes:    Mutex<Vec<Spawned>>,
+    config:   PathBuf,
+    /// Каталог state/metrics/logs запускаемых узлов.
+    work_dir: PathBuf,
 }
 
 fn node_binary() -> PathBuf {
@@ -28,9 +30,15 @@ fn node_binary() -> PathBuf {
 }
 
 impl Orchestrator {
-    pub fn new(config: PathBuf) -> Arc<Self> { Arc::new(Self { nodes: Mutex::new(Vec::new()), config }) }
+    pub fn new(config: PathBuf) -> Arc<Self> { Self::new_in(config, PathBuf::from(".")) }
 
-    async fn spawn(&self, count: usize) -> Result<Vec<u16>, String> {
+    pub fn new_in(config: PathBuf, work_dir: PathBuf) -> Arc<Self> {
+        Arc::new(Self { nodes: Mutex::new(Vec::new()), config, work_dir })
+    }
+
+    pub async fn ports(&self) -> Vec<u16> { self.nodes.lock().await.iter().map(|n| n.port).collect() }
+
+    pub async fn spawn(&self, count: usize) -> Result<Vec<u16>, String> {
         let bin = node_binary();
         if !bin.exists() {
             return Err(format!("нет {} — выполните `cargo build --bins`", bin.display()));
@@ -43,15 +51,21 @@ impl Orchestrator {
                 .find(|p| !nodes.iter().any(|n| n.port == *p))
                 .ok_or("нет свободных портов")?;
             // bootstrap = самый первый узел (seed), кроме самого первого
+            let w = &self.work_dir;
+            std::fs::create_dir_all(w.join("logs")).map_err(|e| format!("mkdir logs: {e}"))?;
+            let log = std::fs::File::create(w.join("logs").join(format!("node-{port}.log")))
+                .map_err(|e| format!("log file: {e}"))?;
+            let log_err = log.try_clone().map_err(|e| format!("log file: {e}"))?;
             let mut cmd = Command::new(&bin);
             cmd.arg("--config").arg(&self.config)
                .arg("--port").arg(port.to_string())
                .arg("--gui-port").arg((port + GUI_OFFSET).to_string())
-               .arg("--state-dir").arg(format!("./state/orch-{port}"))
-               .arg("--metrics-dir").arg(format!("./metrics/orch-{port}"))
+               .arg("--state-dir").arg(w.join(format!("state/orch-{port}")))
+               .arg("--metrics-dir").arg(w.join(format!("metrics/orch-{port}")))
+               .env("RUST_LOG", "p2p_overlay=info")
                .kill_on_drop(true)
-               .stdout(std::process::Stdio::null())
-               .stderr(std::process::Stdio::null());
+               .stdout(std::process::Stdio::from(log))
+               .stderr(std::process::Stdio::from(log_err));
             if let Some(seed) = nodes.first() {
                 cmd.arg("--bootstrap").arg(format!("127.0.0.1:{}", seed.port));
             }
@@ -62,7 +76,7 @@ impl Orchestrator {
         Ok(started)
     }
 
-    async fn kill(&self, port: u16) -> bool {
+    pub async fn kill(&self, port: u16) -> bool {
         let mut nodes = self.nodes.lock().await;
         if let Some(i) = nodes.iter().position(|n| n.port == port) {
             let mut n = nodes.remove(i);

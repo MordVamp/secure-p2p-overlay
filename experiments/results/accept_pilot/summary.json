@@ -1,0 +1,104 @@
+{
+  "all_ok": true,
+  "checks": {
+    "converged": true,
+    "find_value_after_bootstrap_loss": true,
+    "lookups_after_bootstrap_loss_ok": true,
+    "lookups_before_ge_required_and_95pct_success_and_intermediate": true,
+    "tables_non_degenerate_ge80pct_below_N-1": true
+  },
+  "convergence_ms": 16997,
+  "find_value_after_bootstrap_loss": {
+    "found": true,
+    "publisher": "a4b9a513",
+    "ttl_left": 178,
+    "value": "acceptance-value"
+  },
+  "lookups_after_bootstrap_loss": {
+    "duration_ms": {
+      "max": 8.0,
+      "mean": 6.2,
+      "median": 6.0,
+      "min": 5.0,
+      "n": 10
+    },
+    "found_target": 10,
+    "iterations": {
+      "max": 3.0,
+      "mean": 3.0,
+      "median": 3.0,
+      "min": 3.0,
+      "n": 10
+    },
+    "rpc_count": {
+      "max": 6.0,
+      "mean": 4.4,
+      "median": 4.0,
+      "min": 3.0,
+      "n": 10
+    },
+    "success_rate": 1.0,
+    "target_absent_before": 10,
+    "total_lookups": 10,
+    "used_intermediate_node": 10
+  },
+  "lookups_before_bootstrap_loss": {
+    "duration_ms": {
+      "max": 11.0,
+      "mean": 7.3,
+      "median": 6.0,
+      "min": 5.0,
+      "n": 30,
+      "p95": 11.0
+    },
+    "found_target": 30,
+    "iterations": {
+      "max": 3.0,
+      "mean": 3.0,
+      "median": 3.0,
+      "min": 3.0,
+      "n": 30,
+      "p95": 3.0
+    },
+    "rpc_count": {
+      "max": 9.0,
+      "mean": 5.333333333333333,
+      "median": 5.0,
+      "min": 4.0,
+      "n": 30,
+      "p95": 8.0
+    },
+    "success_rate": 1.0,
+    "target_absent_before": 30,
+    "total_lookups": 30,
+    "used_intermediate_node": 30
+  },
+  "params": {
+    "N": 13,
+    "bootstrap": "star",
+    "bootstrap_node_port": 7100,
+    "config": "config/node_config.yaml",
+    "finished_ms": 1793084154600,
+    "git_commit": "a2b44fbdd9994d9653121a447ab5fe7a2365fed5",
+    "k": 3,
+    "lookups_requested": 30,
+    "pair_selection": "детерминированная (по кругу), цель отсутствует в свежей таблице инициатора",
+    "seed": null,
+    "started_ms": 1793084135015
+  },
+  "store": {
+    "ok": true,
+    "stored_on": 4
+  },
+  "tables": {
+    "contacts": {
+      "max": 10.0,
+      "mean": 5.461538461538462,
+      "median": 5.0,
+      "min": 3.0,
+      "n": 13
+    },
+    "nodes_with_lt_N-1_contacts": 13,
+    "share": 1.0
+  }
+}

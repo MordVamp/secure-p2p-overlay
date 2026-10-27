@@ -38,6 +38,8 @@ pub struct LookupRecord {
     pub iterations:    usize,
     pub duration_ms:   u64,
     pub closest_count: usize,
+    pub target_known_before: bool,
+    pub found_target:  bool,
 }
 
 /// Результат построения туннеля.
@@ -102,11 +104,13 @@ impl MetricsCollector {
     pub fn record_lookup(&self, r: &LookupRecord) {
         let path = self.dir.join(format!("lookup_{}.csv", self.node_id));
         self.append_csv(&path, &format!(
-            "{},{},{},{},{},{},{},{},{}\n",
+            "{},{},{},{},{},{},{},{},{},{},{}\n",
             r.ts_ms, r.lookup_id, r.initiator, r.target,
             if r.found { 1 } else { 0 },
-            r.rpc_count, r.iterations, r.duration_ms, r.closest_count
-        ), "ts_ms,lookup_id,initiator,target,found,rpc_count,iterations,duration_ms,closest_count\n");
+            r.rpc_count, r.iterations, r.duration_ms, r.closest_count,
+            if r.target_known_before { 1 } else { 0 },
+            if r.found_target { 1 } else { 0 },
+        ), "ts_ms,lookup_id,initiator,target,found,rpc_count,iterations,duration_ms,closest_count,target_known_before,found_target\n");
     }
 
     pub fn record_tunnel_build(&self, r: &TunnelBuildRecord) {

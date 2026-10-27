@@ -125,3 +125,11 @@ docs/
 
 - Rust 1.75+
 - Linux/macOS
+
+
+## Приёмка этапов 1–2 (одна команда)
+```bash
+bash scripts/run_acceptance.sh 13 30    # N=13 узлов, 30 контрольных lookup
+```
+Результаты (реальные измерения): `experiments/results/accept_*/` — `summary.md`, `lookups_*.csv/json`, `routing_tables/`, `routing_summary.csv`, `logs/`.
+Отчёт: [docs/defense/Report_Etapy_1-2.md](docs/defense/Report_Etapy_1-2.md). Веб-интерфейс: [docs/dev/GUI.md](docs/dev/GUI.md).

@@ -62,6 +62,9 @@ async fn route(node: Arc<Node>, req: Request) -> Response {
             match node.dht.find_node(&target).await {
                 Ok(r) => Response::json(json!({
                     "ok": true, "rpc_count": r.rpc_count, "iterations": r.iterations,
+                    "duration_ms": r.duration_ms, "lookup_id": r.lookup_id,
+                    "target_known_before": r.target_known_before, "found_target": r.found_target,
+                    "queried_by_iter": r.queried_by_iter,
                     "closest": r.closest.iter().map(|c| json!({"node_id": c.node_id.to_hex(), "addr": format!("{}:{}", c.host, c.port)})).collect::<Vec<_>>(),
                 })),
                 Err(e) => Response::json(json!({ "ok": false, "error": e.to_string() })),

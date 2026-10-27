@@ -36,6 +36,12 @@ pub struct LookupResult {
     pub iterations:  usize,
     /// Длительность в мс
     pub duration_ms: u64,
+    /// §25.3: цель уже была в таблице инициатора до начала поиска
+    pub target_known_before: bool,
+    /// Цель присутствует в итоговом списке ближайших
+    pub found_target: bool,
+    /// §10.2: опрошенные узлы по итерациям (hex[:8])
+    pub queried_by_iter: Vec<Vec<String>>,
 }
 
 /// Итеративный lookup (§21 ТЗ) + A5: first-K-wins.
@@ -73,6 +79,12 @@ impl IterativeLookup {
 
         info!("[lookup-{}] start target={}", lookup_id, target.short());
 
+        let target_known_before = {
+            let rt = self.routing.lock().await;
+            rt.find_closest(target, 1).iter().any(|c| c.node_id == *target)
+        };
+        let mut queried_by_iter: Vec<Vec<String>> = Vec::new();
+
         // Начальные кандидаты из локальной таблицы
         let initial = {
             let rt = self.routing.lock().await;
@@ -85,6 +97,7 @@ impl IterativeLookup {
                 lookup_id, target: *target, closest: vec![],
                 rpc_count: 0, iterations: 0,
                 duration_ms: now_ms() - start,
+                target_known_before, found_target: false, queried_by_iter,
             };
             self.record_metrics(&res);
             return Ok(res);
@@ -117,6 +130,7 @@ impl IterativeLookup {
             }
 
             debug!("[lookup-{}] iter={} querying {} peers", lookup_id, iterations, to_query.len());
+            queried_by_iter.push(to_query.iter().map(|c| c.node_id.short()).collect());
 
             // ── A5: FuturesUnordered — обрабатываем ответы по мере прихода ──
             let mut stream = futures::stream::FuturesUnordered::new();
@@ -192,6 +206,7 @@ impl IterativeLookup {
         closest.truncate(k);
 
         let duration_ms = now_ms() - start;
+        let found_target = closest.iter().any(|c| c.node_id == *target);
         info!(
             "[lookup-{}] done target={} closest={} rpc={} iter={} dur={}ms",
             lookup_id, target.short(), closest.len(), rpc_count, iterations, duration_ms
@@ -204,6 +219,9 @@ impl IterativeLookup {
             rpc_count,
             iterations,
             duration_ms,
+            target_known_before,
+            found_target,
+            queried_by_iter,
         };
 
         self.record_metrics(&res);
@@ -223,6 +241,8 @@ impl IterativeLookup {
                 iterations:    r.iterations,
                 duration_ms:   r.duration_ms,
                 closest_count: r.closest.len(),
+                target_known_before: r.target_known_before,
+                found_target:  r.found_target,
             });
         }
     }
