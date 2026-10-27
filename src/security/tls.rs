@@ -4,7 +4,8 @@
 //!  1. Из Ed25519 identity-ключа генерируется X.509 self-signed cert (rcgen 0.13).
 //!  2. Оба узла используют mutual TLS.
 //!  3. TLS 1.2 и ниже запрещены; 0-RTT отключён.
-//!  4. После рукопожатия: извлекаем cert peer → NodeID из DER → сравниваем.
+//!  4. После рукопожатия: из SPKI сертификата берём Ed25519-ключ peer → NodeID=SHA-256(0x01||pk)
+//!     и сравниваем с ожидаемым (если он известен).
 
 use std::sync::Arc;
 use anyhow::{bail, Context, Result};
@@ -19,7 +20,6 @@ use rustls::{
     server::danger::{ClientCertVerified, ClientCertVerifier},
     pki_types::{ServerName, UnixTime},
 };
-use sha2::{Digest, Sha256};
 use tokio::net::TcpStream;
 use tokio_rustls::{TlsAcceptor, TlsConnector};
 use tracing::debug;
@@ -35,6 +35,9 @@ pub struct TlsSecurity {
 impl TlsSecurity {
     /// Создать TLS-провайдер из Ed25519 identity-ключа.
     pub fn new(signing_key: &SigningKey) -> Result<Self> {
+        // В дереве зависимостей может быть и ring, и aws-lc-rs — выбираем ring явно
+        // (повторная установка безвредна: вернёт Err, который игнорируем).
+        let _ = rustls::crypto::ring::default_provider().install_default();
         let (cert_der, key_der) = generate_self_signed(signing_key)?;
 
         // ── Серверный конфиг ──────────────────────────────────────────────
@@ -66,19 +69,21 @@ impl TlsSecurity {
     pub async fn connect(
         &self,
         stream: TcpStream,
-        expected_node_id: &NodeId,
-    ) -> Result<tokio_rustls::client::TlsStream<TcpStream>> {
+        expected_node_id: Option<&NodeId>,
+    ) -> Result<(tokio_rustls::client::TlsStream<TcpStream>, NodeId)> {
         let domain = rustls::pki_types::ServerName::try_from("overlay.local".to_string())
             .map_err(|e| anyhow::anyhow!("{e}"))?;
         let tls = self.connector.connect(domain, stream).await
             .context("TLS client handshake")?;
 
         let peer_id = peer_node_id_from_client(&tls)?;
-        if peer_id != *expected_node_id {
-            bail!("NodeID mismatch: expected {}, got {}", expected_node_id, peer_id);
+        if let Some(exp) = expected_node_id {
+            if peer_id != *exp {
+                bail!("NodeID mismatch: expected {}, got {}", exp, peer_id);
+            }
         }
-        debug!("TLS connected, peer NodeID verified: {}", expected_node_id);
-        Ok(tls)
+        debug!("TLS connected, peer NodeID: {}", peer_id);
+        Ok((tls, peer_id))
     }
 
     /// Сервер: принять входящее соединение, вернуть NodeID peer.
@@ -116,37 +121,45 @@ fn generate_self_signed(signing_key: &SigningKey) -> Result<(CertificateDer<'sta
 
 // ── NodeID из DER-сертификата ─────────────────────────────────────────────────
 
-/// SHA-256 от raw DER cert → NodeID (суррогат до подключения x509-parser).
-/// В продвинутой версии: парсим SubjectPublicKeyInfo и берём Ed25519 pubkey.
-fn node_id_from_cert_der(cert: &[u8]) -> NodeId {
-    let mut h = Sha256::new();
-    h.update([0x02u8]); // префикс "tls-cert" (отличаем от identity NodeID)
-    h.update(cert);
-    NodeId(h.finalize().into())
+/// NodeID пира из его сертификата: парсим SubjectPublicKeyInfo (x509-parser),
+/// требуем Ed25519 и считаем NodeID = SHA-256(0x01 || pubkey) — тот же, что у identity.
+/// Подлинность ключа доказана самим TLS-рукопожатием (CertificateVerify, TLS 1.3).
+pub fn node_id_from_cert_der(cert: &[u8]) -> Result<NodeId> {
+    use x509_parser::prelude::*;
+    let (rest, x509) = X509Certificate::from_der(cert)
+        .map_err(|e| anyhow::anyhow!("bad X.509 certificate: {e}"))?;
+    if !rest.is_empty() {
+        bail!("trailing bytes after certificate");
+    }
+    let spki = x509.public_key();
+    // OID 1.3.101.112 = Ed25519
+    if spki.algorithm.algorithm.to_id_string() != "1.3.101.112" {
+        bail!("peer certificate key is not Ed25519");
+    }
+    let pk = spki.subject_public_key.data.as_ref();
+    if pk.len() != 32 {
+        bail!("bad Ed25519 key length {}", pk.len());
+    }
+    crate::identity::node_identity::compute_node_id_from_bytes(pk)
+}
+
+fn peer_node_id(certs: Option<&[CertificateDer<'static>]>) -> Result<NodeId> {
+    match certs.and_then(|c| c.first()) {
+        Some(cert) => node_id_from_cert_der(cert.as_ref()),
+        None => bail!("peer provided no certificate"),
+    }
 }
 
 fn peer_node_id_from_client(
     tls: &tokio_rustls::client::TlsStream<TcpStream>,
 ) -> Result<NodeId> {
-    let (_, session) = tls.get_ref();
-    if let Some(certs) = session.peer_certificates() {
-        if let Some(cert) = certs.first() {
-            return Ok(node_id_from_cert_der(cert.as_ref()));
-        }
-    }
-    bail!("peer provided no certificate")
+    peer_node_id(tls.get_ref().1.peer_certificates())
 }
 
 fn peer_node_id_from_server(
     tls: &tokio_rustls::server::TlsStream<TcpStream>,
 ) -> Result<NodeId> {
-    let (_, session) = tls.get_ref();
-    if let Some(certs) = session.peer_certificates() {
-        if let Some(cert) = certs.first() {
-            return Ok(node_id_from_cert_der(cert.as_ref()));
-        }
-    }
-    bail!("client provided no certificate")
+    peer_node_id(tls.get_ref().1.peer_certificates())
 }
 
 // ── Кастомный верификатор (принимает self-signed Ed25519 certs) ───────────────

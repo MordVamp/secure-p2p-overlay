@@ -4,7 +4,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::TcpListener;
 use tokio::sync::watch;
 use tracing::{debug, error, info, warn};
 
@@ -13,7 +13,7 @@ use crate::dht::node::DhtNode;
 use crate::identity::node_identity::NodeIdentity;
 use crate::protocol;
 use crate::rpc::RpcHandler;
-use crate::transport::connection::FramedStream;
+use crate::transport::connection::{BoxedIo, FramedStream};
 use crate::transport::framing::{Frame, ReadItem};
 use crate::tunnel::manager::TunnelManager;
 use crate::types::Contact;
@@ -41,6 +41,11 @@ impl Node {
             identity.public_key_bytes().to_vec(),
             addr_str.parse().context("listen addr parse")?,
         );
+        // TLS 1.3 (mutual, Ed25519): сертификат строится из identity-ключа узла
+        crate::rpc::install_tls(Arc::new(
+            crate::security::tls::TlsSecurity::new(identity.signing_key())
+                .context("TLS init")?,
+        ));
         let dht = Arc::new(DhtNode::new(own_contact.clone(), cfg.clone()));
         let tunnel_mgr = Arc::new(TunnelManager::new(
             own_contact.clone(),
@@ -166,10 +171,23 @@ impl Node {
                             debug!("Connection from {}", peer_addr);
                             let handler  = self.make_handler();
                             let timeout  = self.cfg.transport.read_timeout_ms;
+                            let handshake_ms = self.cfg.transport.connect_timeout_ms;
                             let mut rx2  = shutdown_rx.clone();
                             tokio::spawn(async move {
+                                let hs_timeout = std::time::Duration::from_millis(handshake_ms);
                                 tokio::select! {
-                                    res = handle_conn(stream, peer_addr, handler, timeout) => {
+                                    res = async move {
+                                        let framed = match crate::rpc::tls() {
+                                            Some(t) => {
+                                                let (tls, id) = tokio::time::timeout(hs_timeout, t.accept(stream)).await
+                                                    .map_err(|_| anyhow::anyhow!("TLS handshake timeout"))??;
+                                                debug!("TLS peer {} NodeID={}", peer_addr, id.short());
+                                                FramedStream::new(Box::new(tls) as BoxedIo, timeout).with_peer(id)
+                                            }
+                                            None => FramedStream::new(Box::new(stream) as BoxedIo, timeout),
+                                        };
+                                        handle_conn(framed, peer_addr, handler).await
+                                    } => {
                                         if let Err(e) = res {
                                             debug!("Connection {} closed: {}", peer_addr, e);
                                         }
@@ -215,12 +233,10 @@ impl Node {
 }
 
 async fn handle_conn(
-    stream:  TcpStream,
+    mut framed: FramedStream<BoxedIo>,
     peer:    SocketAddr,
     handler: RpcHandler,
-    timeout: u64,
 ) -> Result<()> {
-    let mut framed = FramedStream::new(stream, timeout);
     loop {
         match framed.recv_item().await {
             ReadItem::Frame(frame) => {

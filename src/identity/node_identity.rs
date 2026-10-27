@@ -66,6 +66,9 @@ impl NodeIdentity {
     }
 
     /// Canonical-encoded открытый ключ (32 байта compressed point).
+    /// Приватный ключ — только для построения TLS-сертификата узла.
+    pub(crate) fn signing_key(&self) -> &SigningKey { &self.signing_key }
+
     pub fn public_key_bytes(&self) -> [u8; 32] {
         self.public_key.to_bytes()
     }

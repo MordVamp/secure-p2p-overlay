@@ -27,7 +27,7 @@ use crate::config::NodeConfig;
 use crate::identity::node_identity::verify_node_id_bytes;
 use crate::protocol::payload::{self, *};
 use crate::transport::framing::{Frame, FrameFlags, MsgType};
-use crate::transport::connection::FramedStream;
+use crate::transport::connection::{BoxedIo, FramedStream};
 use crate::types::{Contact, NodeId, now_ms};
 use crate::dht::routing_table::RoutingTable;
 
@@ -41,9 +41,26 @@ pub fn new_request_id() -> [u8; 16] {
     Uuid::new_v4().into_bytes()
 }
 
-/// Открыть TCP-соединение с тайм-аутом (§5 CONNECT_TIMEOUT_MS).
+static TLS: std::sync::OnceLock<Arc<crate::security::tls::TlsSecurity>> = std::sync::OnceLock::new();
+
+/// Включить TLS 1.3 (mutual, Ed25519) для всех исходящих и входящих соединений процесса.
+/// Узел — один на процесс; без вызова (юнит-тесты) используется голый TCP.
+pub fn install_tls(t: Arc<crate::security::tls::TlsSecurity>) { let _ = TLS.set(t); }
+
+/// Установленный TLS-провайдер (если есть).
+pub fn tls() -> Option<&'static Arc<crate::security::tls::TlsSecurity>> { TLS.get() }
+
+/// Открыть соединение с тайм-аутом (§5 CONNECT_TIMEOUT_MS); при включённом TLS — с рукопожатием.
 pub async fn dial(addr: SocketAddr, connect_timeout_ms: u64, read_timeout_ms: u64)
-    -> Result<FramedStream<TcpStream>>
+    -> Result<FramedStream<BoxedIo>>
+{
+    dial_expect(addr, connect_timeout_ms, read_timeout_ms, None).await
+}
+
+/// То же, но с проверкой, что NodeID в сертификате пира совпадает с ожидаемым.
+pub async fn dial_expect(addr: SocketAddr, connect_timeout_ms: u64, read_timeout_ms: u64,
+                         expected: Option<&NodeId>)
+    -> Result<FramedStream<BoxedIo>>
 {
     let stream = timeout(
         Duration::from_millis(connect_timeout_ms),
@@ -51,7 +68,14 @@ pub async fn dial(addr: SocketAddr, connect_timeout_ms: u64, read_timeout_ms: u6
     ).await
         .map_err(|_| anyhow::anyhow!("connect timeout to {addr}"))?
         .map_err(|e| anyhow::anyhow!("TCP connect to {addr}: {e}"))?;
-    Ok(FramedStream::new(stream, read_timeout_ms))
+    match TLS.get() {
+        Some(t) => {
+            let (tls, peer) = timeout(Duration::from_millis(connect_timeout_ms), t.connect(stream, expected)).await
+                .map_err(|_| anyhow::anyhow!("TLS handshake timeout to {addr}"))??;
+            Ok(FramedStream::new(Box::new(tls) as BoxedIo, read_timeout_ms).with_peer(peer))
+        }
+        None => Ok(FramedStream::new(Box::new(stream) as BoxedIo, read_timeout_ms)),
+    }
 }
 
 /// E1-6 / E24-E26: Запустить фоновую задачу чтения ответов из исходящего соединения.
@@ -59,7 +83,7 @@ pub async fn dial(addr: SocketAddr, connect_timeout_ms: u64, read_timeout_ms: u6
 /// Читает кадры из `stream` и доставляет их в `pending` по `request_id`.
 /// Задача завершается при EOF или ошибке чтения.
 fn spawn_conn_reader(
-    mut stream: FramedStream<TcpStream>,
+    mut stream: FramedStream<BoxedIo>,
     pending:    Arc<PendingRpc>,
 ) {
     use crate::transport::framing::ReadItem;
@@ -373,6 +397,7 @@ impl RpcClient {
 
         // Dial → send → spawn reader task
         let mut stream = dial(addr, connect_timeout_ms, read_timeout_ms).await?;
+        let peer_tls_id = stream.peer_node_id().copied();
         stream.send(&frame).await.map_err(|e| anyhow::anyhow!("{e}"))?;
         spawn_conn_reader(stream.into_raw_stream(), self.pending.clone());
 
@@ -387,6 +412,13 @@ impl RpcClient {
         // A2 (аналог E22): ответчик обязан соответствовать своему NodeID
         if !verify_node_id_bytes(&pong.responder.node_id, &pong.responder.identity_public_key) {
             bail!("PONG: NodeID/pubkey mismatch from {addr}");
+        }
+        // TLS: ключ в сертификате должен принадлежать заявленному NodeID
+        if let Some(tls_id) = peer_tls_id {
+            if tls_id != pong.responder.node_id {
+                bail!("PONG: NodeID {} не совпадает с TLS-сертификатом {tls_id} ({addr})",
+                      pong.responder.node_id);
+            }
         }
         info!("PONG from {} rtt={}ms", pong.responder, now_ms() - ping.timestamp_ms);
         Ok(pong)
