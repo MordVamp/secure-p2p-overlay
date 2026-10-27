@@ -209,6 +209,12 @@ impl DhtNode {
                 Err(e) => tracing::debug!("STORE to {addr}: {e}"),
             }
         }
+        // §10.1: успех только при кворуме. Локальная копия остаётся (её подхватит republish).
+        let quorum = self.cfg.dht.store_quorum.min(self.cfg.dht.replication_factor).max(1);
+        if stored < quorum {
+            anyhow::bail!("STORE: подтверждено {stored} из {} реплик, нужно ≥{quorum}",
+                          self.cfg.dht.replication_factor);
+        }
         Ok(stored)
     }
 
@@ -245,11 +251,49 @@ impl DhtNode {
             .map(|(k, (v, t))| (*k, v.clone(), *t)).collect();
         let mut ok = 0;
         for (k, v, t) in items {
+            // NodeRecord пересоздаётся (новые issued_at/expires_at), а не повторяется как есть
+            if k == RecordKey(crate::identity::record::node_record_key(&identity.node_id)) { continue; }
             match self.put(identity, k, v, t).await {
                 Ok(n) => { ok += 1; tracing::debug!("republish {} → {} узлов", k.to_hex(), n); }
                 Err(e) => tracing::warn!("republish {} failed: {e}", k.to_hex()),
             }
         }
         ok
+    }
+}
+
+// ── §10.3: NodeRecord (адресная запись узла) ─────────────────────────────────
+use crate::identity::record::{node_record_key, NodeRecord};
+
+impl DhtNode {
+    /// Опубликовать/обновить свою подписанную адресную запись под ключом SHA-256("node:"||NodeID).
+    pub async fn publish_node_record(
+        &self,
+        identity: &crate::identity::node_identity::NodeIdentity,
+    ) -> Result<usize> {
+        let addr = self.own_contact.socket_addr()
+            .map_err(|e| anyhow::anyhow!("own address: {e}"))?;
+        let ttl = self.cfg.dht.ttl_seconds;
+        let rec = NodeRecord::new(
+            identity.node_id, identity.public_key_bytes(), vec![addr],
+            crate::types::now_ms(), ttl,
+            |b| identity.sign(b).to_bytes().to_vec(),
+        );
+        let key = RecordKey(node_record_key(&identity.node_id));
+        let res = self.put(identity, key, rec.to_value()?, ttl).await;
+        // свою запись пересоздаёт publish_node_record, а не republish_all
+        self.published.lock().await.remove(&key);
+        res
+    }
+
+    /// Найти адресную запись узла по NodeID и проверить её (подпись, TTL, привязка к ключу).
+    pub async fn resolve_node(&self, target: &NodeId) -> Result<NodeRecord> {
+        let key = RecordKey(node_record_key(target));
+        let dr = self.get(&key).await.ok_or_else(|| anyhow::anyhow!("NodeRecord не найден"))?;
+        let nr = NodeRecord::from_value(&dr.value)
+            .ok_or_else(|| anyhow::anyhow!("значение не является NodeRecord"))??;
+        nr.validate_for_key(&key.0).map_err(|e| anyhow::anyhow!("NodeRecord отвергнут: {e}"))?;
+        if nr.node_id != *target { anyhow::bail!("NodeRecord принадлежит другому узлу"); }
+        Ok(nr)
     }
 }

@@ -283,6 +283,19 @@ impl RpcHandler {
         if !record.verify() {
             bail!("STORE: подпись записи отсутствует или неверна");
         }
+        // §10.3: значение-NodeRecord принимается только валидным, от своего владельца,
+        // под своим ключом и без отката sequence_number
+        if let Some(parsed) = crate::identity::record::NodeRecord::from_value(&record.value) {
+            let nr = parsed.map_err(|e| anyhow::anyhow!("STORE: {e}"))?;
+            nr.validate_for_key(&key.0).map_err(|e| anyhow::anyhow!("STORE: NodeRecord отвергнут: {e}"))?;
+            if nr.node_id != publisher { bail!("STORE: NodeRecord чужого узла"); }
+            if let Some(ex) = self.store.find(&key).await {
+                if let Some(Ok(old)) = crate::identity::record::NodeRecord::from_value(&ex.value) {
+                    crate::identity::record::NodeRecord::pick_newer(&old, &nr)
+                        .map_err(|e| anyhow::anyhow!("STORE: {e}"))?;
+                }
+            }
+        }
         // first-writer-wins: чужой живой ключ не перезаписываем
         if let Some(ex) = self.store.find(&key).await {
             if ex.publisher != publisher { bail!("STORE: ключ принадлежит другому публикатору"); }

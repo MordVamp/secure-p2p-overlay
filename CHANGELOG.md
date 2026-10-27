@@ -4,6 +4,15 @@
 
 ---
 
+## [2026-10-27] feat: NodeRecord в DHT (§10.3) + кворум STORE (§10.1)
+- `NodeRecord` (node_id, pubkey, addresses, sequence_number, issued_at, expires_at, подпись) теперь реально используется: хранится в DHT под `SHA-256("node:"||NodeID)`, значение `NREC1`+msgpack.
+- `DhtNode::publish_node_record` (после bootstrap и при каждом republish, с новыми issued_at/expires_at) и `resolve_node` (подпись, TTL, привязка к ключу, совпадение NodeID).
+- `handle_store`: NodeRecord принимается только валидным, от владельца, под своим ключом, без отката `sequence_number`.
+- Кворум: `dht.store_quorum` (по умолчанию 2) — `put` возвращает ошибку, если подтверждено меньше 2 реплик из R=3.
+- Тесты: `tests/test_node_record.rs` (11): подмена адреса/ключа, чужой ключ DHT, истёкшая запись, issued_at из будущего, откат sequence, кворум.
+- Проверено живой приёмкой N=13: все критерии ✅; 12/13 узлов опубликовали запись (первый узел при пустой сети получает 1/3 и обновляет запись при следующем цикле).
+- Ограничение: чужой публикатор может занять ключ `node:<victim>` данными без префикса NREC1 (first-writer-wins); смягчается TTL.
+
 ## [2026-10-27] feat: DHT §10.1/§10.3 — TTL-очистка, переопубликование, sequence
 - `evict_expired` теперь вызывается периодически (каждые 10 с) — раньше нигде не вызывался.
 - Переопубликование: узел хранит свои записи (`DhtNode::published`) и раз в `republish_interval_seconds` публикует их заново с новым sequence.

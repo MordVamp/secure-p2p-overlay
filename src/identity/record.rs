@@ -136,8 +136,36 @@ impl NodeRecord {
     }
 }
 
+/// Префикс значения DHT-записи, содержащей NodeRecord (отличает её от прикладных данных).
+pub const NODE_RECORD_MAGIC: &[u8] = b"NREC1";
+
+impl NodeRecord {
+    /// Значение для DHT: MAGIC || msgpack(NodeRecord).
+    pub fn to_value(&self) -> anyhow::Result<Vec<u8>> {
+        let mut v = NODE_RECORD_MAGIC.to_vec();
+        v.extend(rmp_serde::to_vec_named(self).map_err(|e| anyhow::anyhow!("encode NodeRecord: {e}"))?);
+        Ok(v)
+    }
+
+    /// Разобрать значение DHT. `None` — это не NodeRecord (нет префикса);
+    /// `Some(Err)` — префикс есть, но содержимое испорчено.
+    pub fn from_value(value: &[u8]) -> Option<anyhow::Result<NodeRecord>> {
+        let body = value.strip_prefix(NODE_RECORD_MAGIC)?;
+        Some(rmp_serde::from_slice(body).map_err(|e| anyhow::anyhow!("decode NodeRecord: {e}")))
+    }
+
+    /// Проверить запись целиком: подпись/TTL (`validate`) и привязку к ключу DHT.
+    pub fn validate_for_key(&self, key: &[u8; 32]) -> Result<(), RecordError> {
+        self.validate()?;
+        if &node_record_key(&self.node_id) != key { return Err(RecordError::WrongKey); }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum RecordError {
+    #[error("record stored under a key that does not belong to its node_id")]
+    WrongKey,
     #[error("invalid Ed25519 public key")]
     InvalidKey,
     #[error("node_id does not match public key")]

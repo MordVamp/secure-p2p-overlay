@@ -103,9 +103,15 @@ impl Node {
         {
             let dht  = self.dht.clone();
             let addrs = self.resolve_bootstrap();
+            let id   = self.identity.clone();
             tokio::spawn(async move {
                 if let Err(e) = dht.join(&addrs).await {
                     error!("Bootstrap error: {e}");
+                }
+                // §10.3: публикуем свою адресную запись (NodeRecord)
+                match dht.publish_node_record(&id).await {
+                    Ok(n) => info!("NodeRecord опубликован на {n} репликах"),
+                    Err(e) => warn!("NodeRecord: {e}"),
                 }
             });
         }
@@ -185,7 +191,11 @@ impl Node {
                 t.tick().await;
                 loop {
                     tokio::select! {
-                        _ = t.tick() => { let n = dht.republish_all(&id).await; if n > 0 { info!("Republished {n} records"); } }
+                        _ = t.tick() => {
+                            let n = dht.republish_all(&id).await;
+                            if n > 0 { info!("Republished {n} records"); }
+                            if let Err(e) = dht.publish_node_record(&id).await { warn!("NodeRecord refresh: {e}"); }
+                        }
                         _ = rx.changed() => break,
                     }
                 }

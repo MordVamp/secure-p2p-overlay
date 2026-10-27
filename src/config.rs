@@ -44,6 +44,9 @@ pub struct DhtConfig {
     pub k_bucket_size:             usize,
     pub alpha:                     usize,
     pub replication_factor:        usize,
+    /// §10.1: STORE считается успешным при подтверждении не менее `store_quorum` реплик из R.
+    #[serde(default = "default_store_quorum")]
+    pub store_quorum:              usize,
     pub ttl_seconds:               u64,
     pub republish_interval_seconds: u64,
     pub refresh_interval_seconds:  u64,
@@ -53,6 +56,8 @@ pub struct DhtConfig {
     pub rpc_timeout_ms:            u64,
 }
 
+fn default_store_quorum() -> usize { 2 }
+
 impl Default for DhtConfig {
     fn default() -> Self {
         Self {
@@ -60,6 +65,7 @@ impl Default for DhtConfig {
             k_bucket_size:              3,
             alpha:                      3,
             replication_factor:         3,
+            store_quorum:               2,
             ttl_seconds:                180,
             republish_interval_seconds: 80,
             refresh_interval_seconds:   60,

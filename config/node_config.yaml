@@ -8,6 +8,7 @@ dht:
   k_bucket_size:              3       # simplified=3 / advanced=4
   alpha:                      3
   replication_factor:         3
+  store_quorum:               2       # STORE успешен при ≥2 из R=3 реплик (§10.1)
   ttl_seconds:                180
   republish_interval_seconds: 80
   refresh_interval_seconds:   60
