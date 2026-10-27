@@ -161,6 +161,37 @@ impl Node {
             });
         }
 
+        // ── §10.1: TTL-очистка хранилища и переопубликование своих записей ─
+        {
+            let dht = self.dht.clone();
+            let mut rx = shutdown_rx.clone();
+            tokio::spawn(async move {
+                let mut t = tokio::time::interval(std::time::Duration::from_secs(10));
+                loop {
+                    tokio::select! {
+                        _ = t.tick() => { dht.store.evict_expired().await; }
+                        _ = rx.changed() => break,
+                    }
+                }
+            });
+        }
+        {
+            let dht = self.dht.clone();
+            let id  = self.identity.clone();
+            let secs = self.cfg.dht.republish_interval_seconds.max(1);
+            let mut rx = shutdown_rx.clone();
+            tokio::spawn(async move {
+                let mut t = tokio::time::interval(std::time::Duration::from_secs(secs));
+                t.tick().await;
+                loop {
+                    tokio::select! {
+                        _ = t.tick() => { let n = dht.republish_all(&id).await; if n > 0 { info!("Republished {n} records"); } }
+                        _ = rx.changed() => break,
+                    }
+                }
+            });
+        }
+
         // ── Accept loop ───────────────────────────────────────────────────
         let mut rx_accept = shutdown_rx.clone();
         loop {

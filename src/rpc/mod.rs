@@ -279,6 +279,7 @@ impl RpcHandler {
         let mut record = DhtRecord::new(key, req.value, publisher, ttl);
         record.publisher_key = publisher_key;
         record.signature     = req.signature;
+        record.sequence      = req.sequence;
         if !record.verify() {
             bail!("STORE: подпись записи отсутствует или неверна");
         }
@@ -321,6 +322,7 @@ impl RpcHandler {
                 ttl_remaining_secs: Some(r.remaining_ttl_secs()),
                 publisher_key: r.publisher_key.clone(),
                 signature: r.signature.clone(),
+                sequence: r.sequence,
             },
             None => {
                 let contacts = self.routing.lock().await
@@ -333,6 +335,7 @@ impl RpcHandler {
                     ttl_remaining_secs: None,
                     publisher_key: vec![],
                     signature: None,
+                    sequence: 0,
                 }
             }
         };
@@ -478,11 +481,12 @@ impl RpcClient {
         value: Vec<u8>,
         ttl_seconds: u64,
         signature: Option<Vec<u8>>,
+        sequence: u64,
     ) -> Result<StoreResponse> {
         let request_id = new_request_id();
         let req = StoreRequest {
             sender: own.clone(), key: key.to_vec(),
-            value, ttl_seconds, signature,
+            value, ttl_seconds, signature, sequence,
         };
         let frame = Frame {
             version: crate::protocol::PROTOCOL_VERSION, msg_type: MsgType::StoreRequest,

@@ -28,6 +28,8 @@ pub struct DhtNode {
     pub store:       Arc<crate::dht::storage::DhtStore>,
     /// Метрики (C4)
     pub metrics:     Arc<crate::metrics::MetricsCollector>,
+    /// Записи, опубликованные этим узлом (для переопубликования, §10.1).
+    pub published:   Mutex<std::collections::HashMap<RecordKey, (Vec<u8>, u64)>>,
 }
 
 impl DhtNode {
@@ -43,7 +45,8 @@ impl DhtNode {
         );
 
         Self { own_contact, routing, pending, rpc_client, cfg,
-               store: Arc::new(crate::dht::storage::DhtStore::new(1024)), metrics }
+               store: Arc::new(crate::dht::storage::DhtStore::new(1024)), metrics,
+               published: Mutex::new(std::collections::HashMap::new()) }
     }
 
     /// Процедура bootstrap (§22.2):
@@ -186,16 +189,20 @@ impl DhtNode {
                 anyhow::bail!("ключ принадлежит другому публикатору");
             }
         }
-        let rec = DhtRecord::new_signed(identity, key, value.clone(), ttl);
+        // sequence строго растёт: не меньше предыдущего+1 и не меньше текущего времени (мс)
+        let seq = self.store.find(&key).await.map(|r| r.sequence + 1).unwrap_or(0)
+            .max(crate::types::now_ms());
+        let rec = DhtRecord::new_signed_seq(identity, key, value.clone(), ttl, seq);
         let sig = rec.signature.clone();
-        self.store.store(rec).await;
+        if !self.store.store(rec).await { anyhow::bail!("локальная запись отклонена (откат версии?)"); }
+        self.published.lock().await.insert(key, (value.clone(), ttl));
         let mut stored = 1;
         let lk = self.find_node(&crate::types::NodeId(key.0)).await?;
         for c in lk.closest.iter().take(self.cfg.dht.replication_factor) {
             let Ok(addr) = c.socket_addr() else { continue };
             match self.rpc_client.store_value(
                 addr, self.cfg.transport.connect_timeout_ms, self.cfg.transport.read_timeout_ms,
-                &self.own_contact, &key.0, value.clone(), ttl, sig.clone(),
+                &self.own_contact, &key.0, value.clone(), ttl, sig.clone(), seq,
             ).await {
                 Ok(r) if r.stored => stored += 1,
                 Ok(_) => {}
@@ -222,9 +229,27 @@ impl DhtNode {
             let mut rec = DhtRecord::new(*key, v, publisher, resp.ttl_remaining_secs.unwrap_or(1));
             rec.publisher_key = resp.publisher_key;
             rec.signature = Some(sig);
+            rec.sequence = resp.sequence;
             if rec.verify() { return Some(rec); }
             tracing::warn!("FIND_VALUE: запись от {addr} с неверной подписью отброшена");
         }
         None
+    }
+}
+
+// ── §10.1: переопубликование и TTL-очистка ───────────────────────────────────
+impl DhtNode {
+    /// Переопубликовать все свои записи (новый sequence, свежий TTL). Возвращает число успешных.
+    pub async fn republish_all(&self, identity: &crate::identity::node_identity::NodeIdentity) -> usize {
+        let items: Vec<_> = self.published.lock().await.iter()
+            .map(|(k, (v, t))| (*k, v.clone(), *t)).collect();
+        let mut ok = 0;
+        for (k, v, t) in items {
+            match self.put(identity, k, v, t).await {
+                Ok(n) => { ok += 1; tracing::debug!("republish {} → {} узлов", k.to_hex(), n); }
+                Err(e) => tracing::warn!("republish {} failed: {e}", k.to_hex()),
+            }
+        }
+        ok
     }
 }

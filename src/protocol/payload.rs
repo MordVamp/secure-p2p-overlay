@@ -115,6 +115,9 @@ pub struct StoreRequest {
     pub value:       Vec<u8>,
     pub ttl_seconds: u64,
     pub signature:   Option<Vec<u8>>,
+    /// §10.3: номер версии записи (подписан).
+    #[serde(default)]
+    pub sequence:    u64,
 }
 
 /// `STORE_RESPONSE` payload (0x06):
@@ -145,6 +148,8 @@ pub struct FindValueResponse {
     /// A7: публичный ключ публикатора и подпись записи (проверяются клиентом).
     pub publisher_key: Vec<u8>,
     pub signature:     Option<Vec<u8>>,
+    #[serde(default)]
+    pub sequence:      u64,
 }
 
 // ── Tunnel payloads (Фаза 6) ─────────────────────────────────────────────────

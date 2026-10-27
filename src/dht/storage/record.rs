@@ -38,6 +38,9 @@ pub struct DhtRecord {
     /// A7: публичный ключ публикатора (NodeID = hash(ключ) проверяется в `verify`).
     #[serde(default)]
     pub publisher_key: Vec<u8>,
+    /// §10.3: монотонный номер версии (входит в подпись); откат на меньший отвергается.
+    #[serde(default)]
+    pub sequence: u64,
 }
 
 impl DhtRecord {
@@ -48,15 +51,17 @@ impl DhtRecord {
             ttl_seconds,
             signature: None,
             publisher_key: Vec::new(),
+            sequence: 0,
         }
     }
 
     /// A7: байты для подписи: домен || key || publisher || value.
     /// TTL и время не подписываются — их ограничивает/назначает принимающий узел.
-    pub fn signing_bytes(key: &RecordKey, publisher: &NodeId, value: &[u8]) -> Vec<u8> {
-        let mut b = b"P2P-DHT-RECORD-v1".to_vec();
+    pub fn signing_bytes(key: &RecordKey, publisher: &NodeId, sequence: u64, value: &[u8]) -> Vec<u8> {
+        let mut b = b"P2P-DHT-RECORD-v2".to_vec();
         b.extend_from_slice(&key.0);
         b.extend_from_slice(&publisher.0);
+        b.extend_from_slice(&sequence.to_be_bytes());
         b.extend_from_slice(value);
         b
     }
@@ -64,8 +69,15 @@ impl DhtRecord {
     /// A7: создать запись, подписанную идентичностью узла.
     pub fn new_signed(id: &crate::identity::node_identity::NodeIdentity,
                       key: RecordKey, value: Vec<u8>, ttl_seconds: u64) -> Self {
-        let sig = id.sign(&Self::signing_bytes(&key, &id.node_id, &value));
+        Self::new_signed_seq(id, key, value, ttl_seconds, now_ms())
+    }
+
+    /// То же с явным номером версии (§10.3).
+    pub fn new_signed_seq(id: &crate::identity::node_identity::NodeIdentity,
+                      key: RecordKey, value: Vec<u8>, ttl_seconds: u64, sequence: u64) -> Self {
+        let sig = id.sign(&Self::signing_bytes(&key, &id.node_id, sequence, &value));
         let mut r = Self::new(key, value, id.node_id, ttl_seconds);
+        r.sequence = sequence;
         r.publisher_key = id.public_key_bytes().to_vec();
         r.signature = Some(sig.to_bytes().to_vec());
         r
@@ -82,7 +94,7 @@ impl DhtRecord {
             <[u8; 64]>::try_from(sig.as_slice()),
         ) else { return false };
         let Ok(vk) = VerifyingKey::from_bytes(&pk) else { return false };
-        verify_signature(&vk, &Self::signing_bytes(&self.key, &self.publisher, &self.value),
+        verify_signature(&vk, &Self::signing_bytes(&self.key, &self.publisher, self.sequence, &self.value),
                          &Signature::from_bytes(&sb))
     }
 

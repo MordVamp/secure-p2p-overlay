@@ -4,6 +4,13 @@
 
 ---
 
+## [2026-10-27] feat: DHT §10.1/§10.3 — TTL-очистка, переопубликование, sequence
+- `evict_expired` теперь вызывается периодически (каждые 10 с) — раньше нигде не вызывался.
+- Переопубликование: узел хранит свои записи (`DhtNode::published`) и раз в `republish_interval_seconds` публикует их заново с новым sequence.
+- `DhtRecord.sequence` входит в подпись (домен `P2P-DHT-RECORD-v2`); передаётся в STORE и FIND_VALUE. Откат версии и подмена sequence отвергаются.
+- Тесты: `tests/test_dht_records.rs` (5).
+- Не сделано: полноценный `NodeRecord` с `issued_at/expires_at`; критерий «STORE успешен при ≥2 из 3».
+
 ## [2026-10-27] feat: воспроизводимая приёмка этапов 1–2
 - `p2p-orchestrator acceptance` + `scripts/run_acceptance.sh`: N узлов, сходимость, выгрузка таблиц, контрольные lookup (цель вне таблицы), отказ bootstrap, FIND_VALUE — реальные измерения в `experiments/results/accept_*/`
 - lookup: трассировка опрошенных узлов по итерациям, `target_known_before`, `found_target`

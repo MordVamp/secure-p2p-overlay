@@ -29,6 +29,17 @@ impl DhtStore {
             debug!("DhtStore full ({} records), rejecting {}", self.max_records, record.key.to_hex());
             return false;
         }
+        // §10.3: откат версии отвергается; равный sequence допустим только как refresh той же записи
+        if let Some(old) = map.get(&record.key) {
+            if !old.is_expired() && old.publisher == record.publisher {
+                if record.sequence < old.sequence
+                    || (record.sequence == old.sequence && record.value != old.value) {
+                    debug!("DhtStore: rollback rejected key={} seq {} < {}",
+                           record.key.to_hex(), record.sequence, old.sequence);
+                    return false;
+                }
+            }
+        }
         debug!("DhtStore: stored key={} ttl={}s", record.key.to_hex(), record.ttl_seconds);
         map.insert(record.key, record);
         true
