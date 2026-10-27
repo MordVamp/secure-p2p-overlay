@@ -54,7 +54,7 @@ Distributed lookup должен быть **нетривиальным**: ини�
 | Скрипты запуска стенда | ✅ |
 | Тесты (автоматические) | ✅ 20 тестов |
 | **Экспорт routing table (JSON/CSV)** | ✅ `experiments/results/accept_*/routing_tables/` |
-| **Логи контрольного запуска** | ✅ `accept_*/logs/` |
+| **Логи контрольного запуска** | ✅ `logs/accept_*/` (локально, каталог логов в .gitignore) |
 | **Результаты lookup (JSON/CSV)** | ✅ `accept_*/lookups_*.csv/json` |
 | **Краткий отчёт** | ✅ `docs/defense/Report_Etapy_1-2.md` |
 

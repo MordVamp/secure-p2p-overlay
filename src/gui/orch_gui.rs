@@ -22,6 +22,8 @@ pub struct Orchestrator {
     config:   PathBuf,
     /// Каталог state/metrics/logs запускаемых узлов.
     work_dir: PathBuf,
+    /// Каталог логов узлов (вне results: логи в git не коммитятся).
+    log_dir:  PathBuf,
 }
 
 fn node_binary() -> PathBuf {
@@ -30,10 +32,10 @@ fn node_binary() -> PathBuf {
 }
 
 impl Orchestrator {
-    pub fn new(config: PathBuf) -> Arc<Self> { Self::new_in(config, PathBuf::from(".")) }
+    pub fn new(config: PathBuf) -> Arc<Self> { Self::new_in(config, PathBuf::from("."), PathBuf::from("logs")) }
 
-    pub fn new_in(config: PathBuf, work_dir: PathBuf) -> Arc<Self> {
-        Arc::new(Self { nodes: Mutex::new(Vec::new()), config, work_dir })
+    pub fn new_in(config: PathBuf, work_dir: PathBuf, log_dir: PathBuf) -> Arc<Self> {
+        Arc::new(Self { nodes: Mutex::new(Vec::new()), config, work_dir, log_dir })
     }
 
     pub async fn ports(&self) -> Vec<u16> { self.nodes.lock().await.iter().map(|n| n.port).collect() }
@@ -52,8 +54,8 @@ impl Orchestrator {
                 .ok_or("нет свободных портов")?;
             // bootstrap = самый первый узел (seed), кроме самого первого
             let w = &self.work_dir;
-            std::fs::create_dir_all(w.join("logs")).map_err(|e| format!("mkdir logs: {e}"))?;
-            let log = std::fs::File::create(w.join("logs").join(format!("node-{port}.log")))
+            std::fs::create_dir_all(&self.log_dir).map_err(|e| format!("mkdir logs: {e}"))?;
+            let log = std::fs::File::create(self.log_dir.join(format!("node-{port}.log")))
                 .map_err(|e| format!("log file: {e}"))?;
             let log_err = log.try_clone().map_err(|e| format!("log file: {e}"))?;
             let mut cmd = Command::new(&bin);

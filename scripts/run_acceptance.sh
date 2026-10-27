@@ -7,4 +7,4 @@ N=${1:-13}; L=${2:-30}
 cargo build --bins
 OUT="experiments/results/accept_$(date +%Y%m%d_%H%M%S)"
 ./target/debug/p2p-orchestrator acceptance --nodes "$N" --lookups "$L" --out "$OUT"
-echo "Результаты: $OUT (summary.md, lookups_*.csv/json, routing_tables/, routing_summary.csv)"
+echo "Результаты: $OUT (summary.md, lookups_*.csv/json, routing_tables/, routing_summary.csv); логи узлов: logs/$(basename "$OUT")/"

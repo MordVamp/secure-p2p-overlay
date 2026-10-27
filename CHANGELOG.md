@@ -8,7 +8,7 @@
 - `p2p-orchestrator acceptance` + `scripts/run_acceptance.sh`: N узлов, сходимость, выгрузка таблиц, контрольные lookup (цель вне таблицы), отказ bootstrap, FIND_VALUE — реальные измерения в `experiments/results/accept_*/`
 - lookup: трассировка опрошенных узлов по итерациям, `target_known_before`, `found_target`
 - независимые тест-векторы `docs/test_vectors/`, краткий отчёт `docs/defense/Report_Etapy_1-2.md`
-- удалены сценарии 02–09, писавшие случайные данные (`$RANDOM`) — нарушение ТЗ §22
+- сценарии 02–09 писали случайные данные (`$RANDOM`) — нарушение ТЗ §22: оставлены как отключённые каркасы (`exit 2`), не удалены; логи узлов приёмки — в `logs/` (вне git)
 
 ## [2026-10-26] fix: A4–A8 (чат, relay-пересылка, подписи DHT)
 - A4/A5: `Messenger` подключён к `Node`; TUNNEL_DATA пересылается relay по цепочке (`next_hop`, `TunnelRoutes`), конечный узел отдаёт данные в Messenger

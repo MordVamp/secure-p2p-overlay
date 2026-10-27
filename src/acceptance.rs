@@ -186,7 +186,10 @@ fn git_commit() -> String {
 pub async fn run(p: Params) -> Result<bool> {
     if p.nodes < 5 { bail!("минимум 5 узлов (ТЗ §25.1)"); }
     std::fs::create_dir_all(&p.out)?;
-    let orch = Orchestrator::new_in(p.config.clone(), p.out.clone());
+    // Логи узлов — в общий каталог logs/ (в git не коммитятся), рядом с логами тестов
+    let run_name = p.out.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "run".into());
+    let log_dir = PathBuf::from("logs").join(&run_name);
+    let orch = Orchestrator::new_in(p.config.clone(), p.out.clone(), log_dir.clone());
     let started_ms = now_ms();
     println!("== Приёмка: N={} lookups={} out={}", p.nodes, p.lookups, p.out.display());
 
@@ -311,6 +314,6 @@ pub async fn run(p: Params) -> Result<bool> {
     // Закрытые ключи узлов НЕ должны попасть в репозиторий (ТЗ §22): удаляем state/
     let _ = std::fs::remove_dir_all(p.out.join("state"));
     println!("{md}");
-    println!("== Данные: {}", p.out.display());
+    println!("== Данные: {}  Логи узлов: {}", p.out.display(), log_dir.display());
     Ok(all_ok)
 }
