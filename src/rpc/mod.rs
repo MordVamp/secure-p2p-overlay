@@ -562,6 +562,14 @@ impl RpcHandler {
         if !verify_node_id_bytes(&req.initiator.node_id, &req.initiator.identity_public_key) {
             anyhow::bail!("TUNNEL_BUILD: initiator NodeID/pubkey mismatch");
         }
+        // §12: ограничение длины цепочки и корректность индексов
+        let max_hops = self.cfg.tunnel.max_hops;
+        if req.total_hops == 0 || req.total_hops > max_hops {
+            anyhow::bail!("TUNNEL_BUILD: total_hops={} вне диапазона 1..={max_hops}", req.total_hops);
+        }
+        if req.hop_index >= req.total_hops {
+            anyhow::bail!("TUNNEL_BUILD: hop_index {} >= total_hops {}", req.hop_index, req.total_hops);
+        }
         let tid_hex = hex::encode(&req.tunnel_id[..4.min(req.tunnel_id.len())]);
         tracing::info!(
             "← TUNNEL_BUILD id={} hop={}/{} from={}",
@@ -572,11 +580,19 @@ impl RpcHandler {
             if next.node_id == self.own_contact.node_id {
                 anyhow::bail!("TUNNEL_BUILD: next_hop указывает на этот же узел");
             }
+            // §12: путь не может возвращаться к инициатору (петля)
+            if next.node_id == req.initiator.node_id {
+                anyhow::bail!("TUNNEL_BUILD: next_hop указывает на инициатора (петля)");
+            }
             if !verify_node_id_bytes(&next.node_id, &next.identity_public_key) {
                 anyhow::bail!("TUNNEL_BUILD: next_hop NodeID/pubkey mismatch");
             }
             let tid: [u8; 16] = req.tunnel_id.as_slice().try_into()
                 .map_err(|_| anyhow::anyhow!("bad tunnel_id length"))?;
+            // §12: tunnel_id уникален — повторный BUILD не перезаписывает чужой маршрут
+            if self.routes.contains(&tid).await {
+                anyhow::bail!("TUNNEL_BUILD: tunnel_id уже используется");
+            }
             let ttl = req.ttl_seconds.min(self.cfg.tunnel.ttl_seconds);
             if !self.routes.insert(tid, next.socket_addr()?, ttl).await {
                 anyhow::bail!("TUNNEL_BUILD: таблица маршрутов переполнена");
@@ -608,6 +624,10 @@ impl RpcHandler {
         }
 
         if let Some(next) = self.routes.next_hop(&tid).await {
+            // §12: защита от петель — relay пересылает не более max_hops+1 раз
+            if p.hops_left == 0 {
+                bail!("TUNNEL_DATA: hops_left исчерпан (возможна петля), кадр отброшен");
+            }
             let mut stream = dial(next, self.cfg.transport.connect_timeout_ms,
                                   self.cfg.transport.read_timeout_ms).await?;
             let fwd = Frame {
@@ -615,7 +635,10 @@ impl RpcHandler {
                 msg_type:   MsgType::TunnelData,
                 flags:      FrameFlags::empty(),
                 request_id: new_request_id(),
-                payload:    frame.payload.clone(),
+                payload:    Bytes::from(payload::encode(&TunnelDataPayload {
+                    tunnel_id: p.tunnel_id.clone(), seq: p.seq, data: p.data.clone(),
+                    hops_left: p.hops_left - 1,
+                })?),
             };
             stream.send(&fwd).await.map_err(|e| anyhow::anyhow!("{e}"))?;
             let ack = timeout(Duration::from_millis(self.cfg.tunnel.ack_timeout_ms), stream.recv()).await

@@ -47,6 +47,9 @@ impl TunnelBuilder {
     /// Возвращает готовую `TunnelSession` в состоянии ACTIVE.
     pub async fn build(&self, target: &NodeId) -> Result<TunnelSession> {
         let min_relays = self.cfg.tunnel.min_relays;
+        if min_relays > self.cfg.tunnel.max_hops {
+            bail!("min_relays={} превышает max_hops={}", min_relays, self.cfg.tunnel.max_hops);
+        }
         let max_attempts = 3;
 
         for attempt in 1..=max_attempts {
@@ -66,6 +69,9 @@ impl TunnelBuilder {
             let own_id = *rt.own_id();
             let mut c = rt.find_closest(target, min_relays + 5);
             c.retain(|x| x.node_id != own_id && x.node_id != *target);
+            // §12: каждый узел в пути не более одного раза (без петель)
+            let mut seen = std::collections::HashSet::new();
+            c.retain(|x| seen.insert(x.node_id));
             c.into_iter().take(min_relays).collect()
         };
 

@@ -116,6 +116,8 @@ impl TunnelForwarder {
                 tunnel_id: tunnel_id.to_vec(),
                 seq:       seq as u64,
                 data:      chunk.to_vec(),
+                // max_hops промежуточных узлов + запас 1 на доставку получателю
+                hops_left: (self.cfg.tunnel.max_hops + 1).min(u8::MAX as usize) as u8,
             };
             let request_id = crate::rpc::new_request_id();
             let frame = Frame {

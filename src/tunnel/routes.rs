@@ -31,6 +31,11 @@ impl TunnelRoutes {
         true
     }
 
+    /// Есть ли живой маршрут для этого tunnel_id (защита от повторного/дублирующего BUILD).
+    pub async fn contains(&self, tid: &[u8; 16]) -> bool {
+        self.next_hop(tid).await.is_some()
+    }
+
     pub async fn next_hop(&self, tid: &[u8; 16]) -> Option<SocketAddr> {
         let m = self.map.read().await;
         m.get(tid).filter(|(_, exp)| *exp > now_ms()).map(|(a, _)| *a)

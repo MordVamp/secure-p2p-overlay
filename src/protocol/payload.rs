@@ -181,6 +181,10 @@ pub struct TunnelDataPayload {
     pub tunnel_id:  Vec<u8>,
     pub seq:        u64,
     pub data:       Vec<u8>,
+    /// §12: счётчик оставшихся пересылок; relay уменьшает его на 1 и отбрасывает
+    /// кадр при 0 (защита от петель в таблицах пересылки). Нет поля → 0 → не пересылается.
+    #[serde(default)]
+    pub hops_left:  u8,
 }
 
 /// `TUNNEL_ACK` payload (0x14).
