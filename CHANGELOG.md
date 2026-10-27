@@ -4,6 +4,10 @@
 
 ---
 
+## [2026-10-27] docs: README, USERGUIDE, THREAT_MODEL, analyze.py
+- Новые `USERGUIDE.md`, `docs/THREAT_MODEL.md` (с остаточными рисками); README переписан.
+- `scripts/analyze.py`: графики и stats.md из CSV приёмки; вызывается из `run_acceptance.sh`.
+
 ## [2026-10-27] feat: APP_ACK (подтверждение доставки) + диагностика маршрута; fix: получатель из lookup
 - `APP_ACK` (§13.1): получатель после расшифровки и проверки подписи шлёт подписанное, E2E-зашифрованное подтверждение (`MessageKind::Ack`, payload = message_id). `Messenger::send_text_acked` ждёт его; ACK засчитывается только от адресата, подделка/повтор отвергаются, на ACK ACK не шлётся, в inbox ACK не попадает.
 - GUI: `/api/send` возвращает `delivered` и `rtt_ms`; новый `/api/route?target=…` — диагностика маршрута (туннель, цепочка relay, живость hop, давность последнего ACK).

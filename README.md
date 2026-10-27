@@ -1,135 +1,92 @@
-# Secure P2P Overlay — Курсовая работа
+# Secure P2P Overlay — курсовая работа
 
-> 📚 **Документация:** [docs/README.md](docs/README.md) — ТЗ, архитектура, протокол, план  
-> 📋 **Требования:** [ТЗ 1-2](docs/requirements/TZ_Etapy_1-2.md) · [Устные](docs/requirements/Ustnie_Trebovaniya.md)
+Узел защищённой оверлейной P2P-сети: **Kademlia DHT** + **TLS 1.3 (mutual, Ed25519)** + **туннели через relay** + **сквозное шифрование сообщений**.
 
-Узел защищённой оверлейной P2P-сети на основе Kademlia DHT.  
-**Язык:** Rust 2021 | **Транспорт:** TCP | **DHT:** Kademlia | **Уровень:** Simplified (N=12–15, K=3)
+**Язык:** Rust 2021 · **Транспорт:** TCP + TLS 1.3 · **DHT:** Kademlia (k=3, α=3, R=3) · **Уровень:** simplified
+
+> 📚 [Документация](docs/README.md) · 📖 [USERGUIDE](USERGUIDE.md) · 🛡️ [Модель угроз](docs/THREAT_MODEL.md) · 🧭 [Архитектурные решения](docs/dev/ARCHITECTURE_DECISIONS.md) · 📝 [CHANGELOG](CHANGELOG.md)
 
 ---
+
+## Одна команда: сеть → приёмка → результаты
+
+```bash
+bash scripts/run_acceptance.sh 13 30     # N=13 узлов, 30 контрольных lookup
+```
+
+Скрипт собирает проект, поднимает N узлов (первый — seed, остальные знают только его адрес), ждёт сходимости, выгружает таблицы маршрутизации, делает контрольные lookup, **останавливает bootstrap-узел и повторяет lookup**, затем строит графики.
+
+| Что | Где |
+|---|---|
+| Сводка и критерии ✅/❌ | `experiments/results/accept_*/summary.md` |
+| Сырые данные lookup | `lookups_before.csv/json`, `lookups_after_bootstrap_loss.csv/json` |
+| Таблицы маршрутизации | `routing_tables/`, `routing_summary.csv` |
+| Статистика и графики | `stats.md`, `plots/*.png` (`python3 scripts/analyze.py [каталог]`) |
+| Логи узлов (**не в git**) | `logs/accept_*/` |
+
+Все числа — реальные измерения прогона; в `summary.md` записаны коммит и параметры. Отчёт: [docs/defense/Report_Etapy_1-2.md](docs/defense/Report_Etapy_1-2.md).
 
 ## Быстрый старт
 
-### 1. Сборка
-
 ```bash
-cargo build
-# или в оптимизированном режиме:
-cargo build --release
+cargo build --bins                 # требуется Rust 1.75+, Linux/macOS
+cargo test                         # 100+ тестов, включая негативные (TLS, E2E, записи DHT, петли)
+
+# один узел с веб-панелью
+cargo run --bin p2p-node -- --port 7001 --gui-port 8001      # http://127.0.0.1:8001/
+
+# второй узел, bootstrap к первому
+cargo run --bin p2p-node -- --port 7002 -b 127.0.0.1:7001 --gui-port 8002 \
+    --state-dir state/n2 --metrics-dir metrics/n2
+
+# кластер с веб-интерфейсом оркестратора
+cargo run --bin p2p-orchestrator -- --gui-port 8080          # http://127.0.0.1:8080/
 ```
 
-### 2. Запуск одного узла (seed)
+Подробно — в [USERGUIDE.md](USERGUIDE.md).
 
-```bash
-cargo run --bin p2p-node -- --config config/nodes/node-01.yaml
-```
+## Что реализовано
 
-### 3. Запуск стенда из 5 узлов (Star bootstrap)
+| Область | Реализация |
+|---|---|
+| Кадры и протокол | заголовок 24 Б, MessagePack, лимит payload 64 КиБ, проверка версии → [PROTOCOL](docs/implementation/PROTOCOL.md) |
+| Идентичность | Ed25519; `NodeID = SHA-256(0x01‖pubkey)`, пара NodeID/pubkey проверяется везде |
+| DHT | k-buckets, итеративный lookup (α=3), bootstrap, refresh; STORE/FIND_VALUE с R=3 и кворумом ≥2; TTL-очистка и republish |
+| Записи | подпись публикатора, `sequence` (откат отвергается), `NodeRecord` (issued_at/expires_at) |
+| Канал | **TLS 1.3**, mutual auth, NodeID из SPKI сертификата, без 0-RTT и TLS 1.2 |
+| Туннели | построение через ≥2 relay, `max_hops`, `hops_left` (защита от петель), уникальность `tunnel_id` |
+| Сообщения | **E2E** (X25519 + HKDF + AES-256-GCM), подпись Ed25519, anti-replay, **APP_ACK**, диагностика маршрута |
+| Метрики | CSV/JSON по lookup, туннелям; экспорт таблиц маршрутизации |
+| GUI | локальная веб-панель узла и оркестратор (без внешних зависимостей, только `127.0.0.1`) |
 
-```bash
-bash scripts/run_star.sh
-# Логи: logs/node-0{1..5}.log
-```
-
-### 4. Ring bootstrap
-
-```bash
-bash scripts/run_ring.sh
-```
-
-### 5. Запуск тестов
-
-```bash
-cargo test
-# T1.1–T1.10 (транспорт), T2.1–T2.9, T2.11 (DHT + identity)
-```
-
----
-
-## Параметры запуска
-
-```
-p2p-node [OPTIONS]
-
-Options:
-  -c, --config <PATH>       YAML-файл конфигурации [default: config/node_config.yaml]
-  -p, --port <PORT>         Переопределить LISTEN_PORT
-  -b, --bootstrap <ADDR>    Добавить bootstrap-пир (IP:PORT), можно несколько раз
-  -h, --help
-```
-
-### Переменные среды
-
-```bash
-RUST_LOG=p2p_overlay=debug  # уровень логирования
-```
-
----
+Что **не** реализовано или с ограничениями — см. [модель угроз](docs/THREAT_MODEL.md#остаточные-риски) и [COMPLIANCE](docs/requirements/COMPLIANCE_2026-10-26.md).
 
 ## Структура проекта
 
 ```
 src/
-  config.rs          — конфигурация (YAML)
-  types.rs           — NodeId, Contact
-  protocol/          — payload-структуры, MessagePack кодеки
-  transport/         — кадрирование TCP, FrameReader, FramedStream
-  identity/          — Ed25519 ключи, NodeId = SHA-256(pubkey)
-  dht/               — k-bucket, RoutingTable, итеративный lookup, DhtNode
-  rpc/               — PING/PONG, FIND_NODE обработчики, PendingRpc
-  node/              — TCP-сервер, диспетчер сообщений
-  bootstrap/         — Star и Ring схемы
-  security/          — TLS 1.3 (Фаза 3)
-tests/
-  test_framing.rs    — T1.1–T1.10
-  test_identity.rs   — T2.1–T2.5
-  test_routing.rs    — T2.6–T2.9, T2.11
-config/
-  node_config.yaml   — конфиг по умолчанию
-  nodes/             — конфиги для 5 узлов
-scripts/
-  run_star.sh        — Star bootstrap стенд
-  run_ring.sh        — Ring bootstrap стенд
-docs/
-  PLAN.md            — план выполнения
-  GAP_Etapy_1_2.md   — что было недостающим
-  protocol_spec.md   — спецификация протокола
+  config.rs, types.rs      — конфигурация (YAML), NodeId, Contact
+  protocol/, transport/    — payload-структуры (MessagePack), кадрирование, FramedStream
+  identity/                — Ed25519, NodeID, NodeRecord
+  security/                — tls.rs (TLS 1.3), e2e.rs (сквозное шифрование)
+  dht/                     — routing table, lookup, DhtNode, хранилище записей
+  rpc/                     — PING/FIND_NODE/STORE/FIND_VALUE, TUNNEL_*, dial()
+  tunnel/                  — builder, session, forwarder, routes, manager
+  app/                     — Messenger (E2E-сообщения, APP_ACK)
+  node/, gui/, metrics/    — сервер узла, веб-панель, сбор метрик
+  acceptance.rs, orchestrator.rs — приёмочный прогон и оркестратор кластера
+tests/                     — unit/интеграционные и негативные тесты
+config/                    — node_config.yaml и примеры
+scripts/                   — run_acceptance.sh, analyze.py, run_star.sh, run_ring.sh, run_tests.sh
+experiments/               — сценарии (этапы 3+) и результаты приёмки
+docs/                      — ТЗ, архитектура, протокол, защита, dev-заметки
 ```
 
----
+## Безопасность в двух словах
 
-## Формат кадра (§7 ТЗ)
+- Весь трафик между узлами — TLS 1.3 с взаимной аутентификацией; ключ в сертификате = identity-ключ узла.
+- Relay видят только зашифрованный контейнер; получатель проверяет подпись отправителя.
+- Приватные ключи лежат в `state/` — каталог в `.gitignore`, в репозиторий не попадает.
+- Логи узлов — в `logs/` (тоже вне git).
 
-| Смещение | Поле            | Размер | Описание                    |
-|:--------:|-----------------|:------:|-----------------------------|
-| 0        | `version`       | 1 B    | Должно быть `1`             |
-| 1        | `type`          | 1 B    | Тип сообщения               |
-| 2        | `flags`         | 2 B    | Флаги (0 на этапах 1–2)     |
-| 4        | `request_id`    | 16 B   | UUID v4 (CSPRNG)            |
-| 20       | `payload_length`| 4 B    | 0..65536 (big-endian)       |
-| 24       | `payload`       | var    | MessagePack                 |
-
-## Типы сообщений (§8 ТЗ)
-
-| Код    | Тип                  |
-|--------|----------------------|
-| `0x01` | `PING`               |
-| `0x02` | `PONG`               |
-| `0x03` | `FIND_NODE_REQUEST`  |
-| `0x04` | `FIND_NODE_RESPONSE` |
-| `0x7F` | `ERROR`              |
-
----
-
-## Требования
-
-- Rust 1.75+
-- Linux/macOS
-
-
-## Приёмка этапов 1–2 (одна команда)
-```bash
-bash scripts/run_acceptance.sh 13 30    # N=13 узлов, 30 контрольных lookup
-```
-Результаты (реальные измерения): `experiments/results/accept_*/` — `summary.md`, `lookups_*.csv/json`, `routing_tables/`, `routing_summary.csv`. Логи узлов — в `logs/accept_*/` (не в git).
-Отчёт: [docs/defense/Report_Etapy_1-2.md](docs/defense/Report_Etapy_1-2.md). Веб-интерфейс: [docs/dev/GUI.md](docs/dev/GUI.md).
+Подробно и честно про пробелы: [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md).
