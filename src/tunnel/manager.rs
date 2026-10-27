@@ -46,6 +46,11 @@ impl TunnelManager {
 
     /// Получить активный туннель к `target` или построить новый.
     pub async fn get_or_build(&self, target: &NodeId) -> anyhow::Result<()> {
+        self.get_or_build_with(target, None).await
+    }
+
+    /// То же с явным контактом получателя (из результата lookup).
+    pub async fn get_or_build_with(&self, target: &NodeId, hint: Option<&crate::types::Contact>) -> anyhow::Result<()> {
         let key = target.to_hex();
 
         // Проверяем наличие пригодного туннеля
@@ -62,7 +67,7 @@ impl TunnelManager {
 
         // Строим новый
         info!("Building tunnel to {}", target.short());
-        let session = self.builder.build(target).await?;
+        let session = self.builder.build_with(target, hint).await?;
 
         // A4: задача-отправитель — забирает очередь сессии и шлёт данные первому hop
         let first_hop = session.hops.first()
@@ -152,6 +157,28 @@ impl TunnelManager {
     }
 
     /// Экспорт состояния всех туннелей в JSON (для метрик).
+    /// Диагностика маршрута до `target`: состояние туннеля и цепочка relay (None — туннеля нет).
+    pub async fn route_json(&self, target: &NodeId) -> Option<serde_json::Value> {
+        let tunnels = self.tunnels.read().await;
+        let t = tunnels.get(&target.to_hex())?;
+        let now = crate::types::now_ms();
+        let hops: Vec<_> = t.hops.iter().map(|h| serde_json::json!({
+            "index":     h.hop_index,
+            "node_id":   h.relay.node_id.to_hex(),
+            "addr":      format!("{}:{}", h.relay.host, h.relay.port),
+            "confirmed": h.confirmed,
+            "alive":     h.is_alive(self.cfg.tunnel.ack_timeout_ms.max(1) * 12),
+            "last_ack_age_ms": if h.last_ack_ms == 0 { serde_json::Value::Null }
+                               else { serde_json::json!(now.saturating_sub(h.last_ack_ms)) },
+        })).collect();
+        Some(serde_json::json!({
+            "tunnel_id": t.id_hex(),
+            "state":     format!("{:?}", t.state().await),
+            "uptime_ms": t.uptime_ms(),
+            "hops":      hops,
+        }))
+    }
+
     pub async fn export_json(&self) -> serde_json::Value {
         let tunnels = self.tunnels.read().await;
         let list: Vec<serde_json::Value> = futures::future::join_all(

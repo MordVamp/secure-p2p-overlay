@@ -46,6 +46,12 @@ impl TunnelBuilder {
     /// Построить туннель к `target` через `min_relays` промежуточных узлов.
     /// Возвращает готовую `TunnelSession` в состоянии ACTIVE.
     pub async fn build(&self, target: &NodeId) -> Result<TunnelSession> {
+        self.build_with(target, None).await
+    }
+
+    /// То же, но адрес получателя можно передать явно (результат lookup): таблица
+    /// маршрутизации с малым k может не удержать его, хотя lookup его нашёл.
+    pub async fn build_with(&self, target: &NodeId, target_hint: Option<&Contact>) -> Result<TunnelSession> {
         let min_relays = self.cfg.tunnel.min_relays;
         if min_relays > self.cfg.tunnel.max_hops {
             bail!("min_relays={} превышает max_hops={}", min_relays, self.cfg.tunnel.max_hops);
@@ -54,7 +60,7 @@ impl TunnelBuilder {
 
         for attempt in 1..=max_attempts {
             debug!("[builder] attempt {}/{}", attempt, max_attempts);
-            match self.try_build(target, min_relays).await {
+            match self.try_build(target, min_relays, target_hint).await {
                 Ok(session) => return Ok(session),
                 Err(e) => warn!("[builder] attempt {} failed: {}", attempt, e),
             }
@@ -62,7 +68,7 @@ impl TunnelBuilder {
         bail!("Failed to build tunnel to {} after {} attempts", target.short(), max_attempts)
     }
 
-    async fn try_build(&self, target: &NodeId, min_relays: usize) -> Result<TunnelSession> {
+    async fn try_build(&self, target: &NodeId, min_relays: usize, target_hint: Option<&Contact>) -> Result<TunnelSession> {
         // Выбираем relay-кандидатов из таблицы маршрутизации
         let candidates: Vec<Contact> = {
             let rt = self.routing.lock().await;
@@ -80,9 +86,17 @@ impl TunnelBuilder {
         }
 
         // A5: адрес получателя нужен последнему relay (для финальной пересылки)
-        let target_contact = {
-            let rt = self.routing.lock().await;
-            rt.find_closest(target, 1).into_iter().find(|c| c.node_id == *target)
+        // (адрес из lookup приоритетнее таблицы; пара NodeID/pubkey обязана сходиться)
+        let from_hint = target_hint
+            .filter(|c| c.node_id == *target
+                && crate::identity::node_identity::verify_node_id_bytes(&c.node_id, &c.identity_public_key))
+            .cloned();
+        let target_contact = match from_hint {
+            Some(c) => Some(c),
+            None => {
+                let rt = self.routing.lock().await;
+                rt.find_closest(target, 1).into_iter().find(|c| c.node_id == *target)
+            }
         }.ok_or_else(|| anyhow::anyhow!("target {} unknown — сначала lookup", target.short()))?;
 
         let tunnel_id: TunnelId = Uuid::new_v4().into_bytes();

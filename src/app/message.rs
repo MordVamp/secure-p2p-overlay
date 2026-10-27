@@ -54,6 +54,19 @@ impl AppMessage {
         }
     }
 
+    /// APP_ACK: подтверждение доставки сообщения `acked_id` (payload = его message_id).
+    pub fn new_ack(from: NodeId, to: NodeId, acked_id: &[u8]) -> Self {
+        Self {
+            message_id:   uuid::Uuid::new_v4().into_bytes().to_vec(),
+            kind:         MessageKind::Ack,
+            from, to,
+            timestamp_ms: now_ms(),
+            payload:      acked_id.to_vec(),
+            signature:    vec![],
+            sender_pubkey: vec![],
+        }
+    }
+
     /// Сериализовать для подписи/верификации (без поля signature).
     pub fn signing_bytes(&self) -> Vec<u8> {
         let mut buf = Vec::new();

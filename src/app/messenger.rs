@@ -16,10 +16,10 @@ use std::sync::Arc;
 use std::collections::VecDeque;
 
 use anyhow::{Result, bail};
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{Mutex, mpsc, oneshot};
 use tracing::{info, warn};
 
-use crate::app::message::AppMessage;
+use crate::app::message::{AppMessage, MessageKind};
 use crate::config::NodeConfig;
 use crate::dht::node::DhtNode;
 use crate::identity::node_identity::NodeIdentity;
@@ -27,7 +27,7 @@ use crate::metrics::MetricsCollector;
 use crate::protocol::payload::{encode, decode};
 use crate::tunnel::manager::TunnelManager;
 use crate::tunnel::forwarder::TunnelForwarder;
-use crate::types::NodeId;
+use crate::types::{NodeId, now_ms};
 
 /// Входящие подтверждённые сообщения для UI.
 pub type MessageRx = mpsc::Receiver<AppMessage>;
@@ -43,6 +43,8 @@ pub struct Messenger {
     inbox:      Mutex<VecDeque<AppMessage>>,
     /// Анти-replay: ID уже принятых сообщений (ограниченный набор).
     seen:       Mutex<std::collections::HashSet<Vec<u8>>>,
+    /// APP_ACK: message_id → (кому отправили, канал пробуждения отправителя).
+    waiting:    Mutex<std::collections::HashMap<Vec<u8>, (NodeId, oneshot::Sender<()>)>>,
 }
 
 impl Messenger {
@@ -54,40 +56,103 @@ impl Messenger {
         metrics:   Arc<MetricsCollector>,
         cfg:       Arc<NodeConfig>,
     ) -> Self {
-        Self { identity, dht, tunnels, forwarder, metrics, cfg, inbox: Mutex::new(VecDeque::new()), seen: Mutex::new(Default::default()) }
+        Self { identity, dht, tunnels, forwarder, metrics, cfg, inbox: Mutex::new(VecDeque::new()), seen: Mutex::new(Default::default()), waiting: Mutex::new(Default::default()) }
     }
 
-    /// Отправить текстовое сообщение узлу `target`.
-    pub async fn send_text(&self, target: NodeId, text: &str) -> Result<()> {
-        if text.len() > crate::tunnel::forwarder::MAX_SEGMENT_SIZE {
-            bail!("Message too large: {} > {}", text.len(), crate::tunnel::forwarder::MAX_SEGMENT_SIZE);
+    /// Собрать и подписать текстовое сообщение.
+    fn build_text(&self, target: NodeId, text: &str) -> Result<AppMessage> {
+        if text.len() > crate::tunnel::forwarder::MAX_SEGMENT_SIZE - 1024 {
+            bail!("Message too large: {} > {}", text.len(), crate::tunnel::forwarder::MAX_SEGMENT_SIZE - 1024);
         }
-
-        // 1. Узнать адрес получателя (A5: последний relay должен знать, куда пересылать)
-        if let Err(e) = self.dht.find_node(&target).await {
-            warn!("lookup {} failed: {e}", target.short());
-        }
-        self.tunnels.get_or_build(&target).await?;
-
-        // 2. Сформировать и подписать сообщение
         let mut msg = AppMessage::new_text(self.identity.node_id, target, text);
+        self.sign(&mut msg);
+        Ok(msg)
+    }
+
+    fn sign(&self, msg: &mut AppMessage) {
         msg.sender_pubkey = self.identity.public_key_bytes().to_vec();
-        let sig = self.identity.sign(&msg.signing_bytes());
-        msg.signature = sig.to_bytes().to_vec();
+        msg.signature = self.identity.sign(&msg.signing_bytes()).to_bytes().to_vec();
+    }
 
-        // 3. Сериализовать и зашифровать для получателя (relay видят только Envelope)
-        let pk = self.recipient_pubkey(&target).await?;
-        let data = crate::security::e2e::seal(&target, &pk, &encode(&msg)?)?;
+    /// Доставить подписанное сообщение: lookup → туннель → E2E-шифрование → отправка.
+    /// `pubkey_hint` — ключ получателя, если он уже известен (например, из входящего сообщения).
+    async fn deliver(&self, target: NodeId, pubkey_hint: Option<&[u8]>, msg: &AppMessage) -> Result<()> {
+        // Узнать адрес получателя (A5: последний relay должен знать, куда пересылать)
+        // Контакт получателя берём из результата lookup, а не только из таблицы
+        // маршрутизации: при малом k корзина может быть полна и не удержать найденный узел.
+        let found = match self.dht.find_node(&target).await {
+            Ok(lk) => lk.closest.into_iter().find(|c| c.node_id == target),
+            Err(e) => { warn!("lookup {} failed: {e}", target.short()); None }
+        };
+        self.tunnels.get_or_build_with(&target, found.as_ref()).await?;
+        let pk = match (pubkey_hint, &found) {
+            (Some(k), _) => k.to_vec(),
+            (None, Some(c)) => c.identity_public_key.clone(),
+            (None, None) => self.recipient_pubkey(&target).await?,
+        };
+        // Relay видят только Envelope
+        let data = crate::security::e2e::seal(&target, &pk, &encode(msg)?)?;
+        self.tunnels.send(&target, data).await
+    }
 
-        // 4. Отправить через туннель (в текущей реализации через send())
-        self.tunnels.send(&target, data).await?;
-
+    /// Отправить текстовое сообщение узлу `target` (без ожидания подтверждения).
+    pub async fn send_text(&self, target: NodeId, text: &str) -> Result<()> {
+        let msg = self.build_text(target, text)?;
+        self.deliver(target, None, &msg).await?;
         info!("→ msg {} to {} ({} bytes)", msg.message_id_hex(), target.short(), text.len());
         Ok(())
     }
 
+    /// Зарегистрировать ожидание APP_ACK на сообщение `id`, отправленное узлу `target`.
+    pub async fn register_ack_wait(&self, id: Vec<u8>, target: NodeId) -> oneshot::Receiver<()> {
+        let (tx, rx) = oneshot::channel();
+        self.waiting.lock().await.insert(id, (target, tx));
+        rx
+    }
+
+    /// Отправить и дождаться APP_ACK от получателя. Ok(rtt_ms) — сообщение доставлено и прочитано.
+    pub async fn send_text_acked(&self, target: NodeId, text: &str, wait: std::time::Duration) -> Result<u64> {
+        let msg = self.build_text(target, text)?;
+        let id = msg.message_id.clone();
+        let rx = self.register_ack_wait(id.clone(), target).await;
+        let t0 = now_ms();
+        if let Err(e) = self.deliver(target, None, &msg).await {
+            self.waiting.lock().await.remove(&id);
+            return Err(e);
+        }
+        info!("→ msg {} to {} ({} bytes), ждём APP_ACK", msg.message_id_hex(), target.short(), text.len());
+        match tokio::time::timeout(wait, rx).await {
+            Ok(Ok(())) => Ok(now_ms().saturating_sub(t0)),
+            _ => {
+                self.waiting.lock().await.remove(&id);
+                bail!("нет подтверждения доставки за {} мс", wait.as_millis())
+            }
+        }
+    }
+
+    /// Отправить APP_ACK на принятое сообщение (в фоне; сбой не влияет на приём).
+    async fn send_ack(&self, to: NodeId, to_pubkey: Vec<u8>, acked_id: Vec<u8>) {
+        let mut ack = AppMessage::new_ack(self.identity.node_id, to, &acked_id);
+        self.sign(&mut ack);
+        if let Err(e) = self.deliver(to, Some(&to_pubkey), &ack).await {
+            warn!("APP_ACK to {} не отправлен: {e}", to.short());
+        }
+    }
+
+    /// Диагностика маршрута до `target` (туннель, цепочка relay, живость hop).
+    pub async fn route_diag(&self, target: &NodeId) -> serde_json::Value {
+        let in_table = self.dht.routing.lock().await
+            .find_closest(target, self.cfg.dht.k_bucket_size.max(8))
+            .iter().any(|c| c.node_id == *target);
+        serde_json::json!({
+            "target": target.to_hex(),
+            "in_routing_table": in_table,
+            "tunnel": self.tunnels.route_json(target).await,
+        })
+    }
+
     /// Обработать входящий TunnelMessage → проверить подпись → положить в inbox.
-    pub async fn handle_incoming(&self, raw: Vec<u8>) -> Result<()> {
+    pub async fn handle_incoming(self: &Arc<Self>, raw: Vec<u8>) -> Result<()> {
         // E2E: открытый (нешифрованный) AppMessage не принимаем
         let plain = crate::security::e2e::open(&self.identity, &raw)?;
         let msg: AppMessage = decode(&plain)
@@ -109,9 +174,35 @@ impl Messenger {
             }
         }
 
-        let mut inbox = self.inbox.lock().await;
-        if inbox.len() >= 100 { inbox.pop_front(); }
-        inbox.push_back(msg);
+        match msg.kind {
+            // APP_ACK: будим отправителя, только если подтверждение пришло от адресата
+            MessageKind::Ack => {
+                let mut w = self.waiting.lock().await;
+                match w.get(&msg.payload) {
+                    Some((target, _)) if *target == msg.from => {
+                        if let Some((_, tx)) = w.remove(&msg.payload) { let _ = tx.send(()); }
+                    }
+                    Some(_) => warn!("APP_ACK от неожиданного узла {} отброшен", msg.from.short()),
+                    None => tracing::debug!("APP_ACK на неизвестное сообщение"),
+                }
+                return Ok(());
+            }
+            MessageKind::Text => {
+                let (from, pk, id) = (msg.from, msg.sender_pubkey.clone(), msg.message_id.clone());
+                {
+                    let mut inbox = self.inbox.lock().await;
+                    if inbox.len() >= 100 { inbox.pop_front(); }
+                    inbox.push_back(msg);
+                }
+                let me = self.clone();
+                tokio::spawn(async move { me.send_ack(from, pk, id).await });
+            }
+            _ => {
+                let mut inbox = self.inbox.lock().await;
+                if inbox.len() >= 100 { inbox.pop_front(); }
+                inbox.push_back(msg);
+            }
+        }
         Ok(())
     }
 

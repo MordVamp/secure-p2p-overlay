@@ -102,10 +102,17 @@ async fn route(node: Arc<Node>, req: Request) -> Response {
                 Ok(t) => t, Err(e) => return Response::error(400, &e),
             };
             let Some(text) = req.query.get("text").filter(|t| !t.is_empty()) else { return Response::error(400, "text пуст"); };
-            match node.messenger.send_text(target, text).await {
-                Ok(()) => Response::json(json!({ "ok": true })),
-                Err(e) => Response::json(json!({ "ok": false, "error": e.to_string() })),
+            // ждём APP_ACK: «доставлено» = получатель расшифровал, проверил подпись и подтвердил
+            match node.messenger.send_text_acked(target, text, std::time::Duration::from_secs(8)).await {
+                Ok(rtt) => Response::json(json!({ "ok": true, "delivered": true, "rtt_ms": rtt })),
+                Err(e)  => Response::json(json!({ "ok": false, "delivered": false, "error": e.to_string() })),
             }
+        }
+        ("/api/route", false) => {
+            let target = match parse_node_id(req.query.get("target").map(|s| s.as_str()).unwrap_or("")) {
+                Ok(t) => t, Err(e) => return Response::error(400, &e),
+            };
+            Response::json(node.messenger.route_diag(&target).await)
         }
         ("/api/inbox", false) => {
             let msgs: Vec<_> = node.messenger.recent().await.iter().map(|m| json!({
