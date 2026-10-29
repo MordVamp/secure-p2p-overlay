@@ -1,0 +1,82 @@
+{
+ "scenario": "05_lookup_failure",
+ "commit": "d6df77f42a3e25686137750d3036a4277f94ccc1",
+ "worktree_dirty": true,
+ "worktree_diff_sha256": "931a242434d769c378db47d3dcaf02b4ed0e82b16ebe816cd2a1deec90623236",
+ "started_at": "2026-10-29T00:17:49+0300",
+ "timebase": "длительности: time.monotonic() оркестратора; *_ms из API — часы узла (unix ms)",
+ "seed": 1,
+ "N": 12,
+ "k": 3,
+ "alpha": 3,
+ "R": 3,
+ "timeouts_ms": {
+  "ping_timeout_ms": 5000,
+  "rpc_timeout_ms": 5000,
+  "connect_timeout_ms": 3000,
+  "read_timeout_ms": 5000,
+  "build_timeout_ms": 15000,
+  "ack_timeout_ms": 5000
+ },
+ "tunnel": {
+  "min_relays": 2,
+  "max_hops": 5,
+  "ttl_seconds": 600,
+  "pool_size": 1,
+  "build_timeout_ms": 15000,
+  "ack_timeout_ms": 5000
+ },
+ "bootstrap_graph": "star",
+ "config_file": "config/node_config.yaml",
+ "config": {
+  "level": "simplified",
+  "dht": {
+   "node_id_bits": 256,
+   "k_bucket_size": 3,
+   "alpha": 3,
+   "replication_factor": 3,
+   "store_quorum": 2,
+   "ttl_seconds": 180,
+   "republish_interval_seconds": 80,
+   "refresh_interval_seconds": 60,
+   "ping_timeout_ms": 5000,
+   "rpc_timeout_ms": 5000
+  },
+  "transport": {
+   "max_frame_payload": 65536,
+   "protocol_version": 1,
+   "connect_timeout_ms": 3000,
+   "read_timeout_ms": 5000
+  },
+  "node": {
+   "state_dir": "./state/node-01",
+   "listen_host": "0.0.0.0",
+   "listen_port": 7001,
+   "bootstrap_peers": "[]",
+   "log_level": "INFO",
+   "metrics_dir": "./metrics/node-01"
+  },
+  "tunnel": {
+   "min_relays": 2,
+   "max_hops": 5,
+   "ttl_seconds": 600,
+   "pool_size": 1,
+   "build_timeout_ms": 15000,
+   "ack_timeout_ms": 5000
+  },
+  "security": {
+   "session_id_ttl_seconds": 3600
+  }
+ },
+ "params": {
+  "fail_fractions": [
+   0,
+   0.2,
+   0.4
+  ],
+  "lookups_per_level": 30,
+  "wait_after_kill_s": 2
+ },
+ "netem": null,
+ "finished_at": "2026-10-29T00:18:02+0300"
+}
