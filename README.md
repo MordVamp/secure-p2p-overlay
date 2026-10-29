@@ -26,11 +26,18 @@ bash scripts/run_acceptance.sh 13 30     # N=13 узлов, 30 контроль�
 
 Все числа — реальные измерения прогона; в `summary.md` записаны коммит и параметры. Отчёт: [docs/defense/Report_Etapy_1-2.md](docs/defense/Report_Etapy_1-2.md).
 
+Сценарии эксперимента 01–09 (ТЗ §15.1) и проверка отсутствия открытого текста в трафике:
+
+```bash
+bash experiments/run_all.sh          # → experiments/results/<сценарий>/<время>/{results.csv,summary.md,meta.json}
+python3 scripts/scenarios.py pcap    # dumpcap на lo + положительный контроль
+```
+
 ## Быстрый старт
 
 ```bash
 cargo build --bins                 # требуется Rust 1.75+, Linux/macOS
-cargo test                         # 100+ тестов, включая негативные (TLS, E2E, записи DHT, петли)
+cargo test                         # 113 тестов, включая негативные (TLS, E2E, записи DHT, петли, туннели)
 
 # один узел с веб-панелью
 cargo run --bin p2p-node -- --port 7001 --gui-port 8001      # http://127.0.0.1:8001/
@@ -41,7 +48,12 @@ cargo run --bin p2p-node -- --port 7002 -b 127.0.0.1:7001 --gui-port 8002 \
 
 # кластер с веб-интерфейсом оркестратора
 cargo run --bin p2p-orchestrator -- --gui-port 8080          # http://127.0.0.1:8080/
+
+# настольное приложение (чаты, контакты, @псевдонимы, сеть, журнал) — само запускает свой узел
+cargo run -p p2p-desktop
 ```
+
+![Настольное приложение](docs/img/desktop_chat.png)
 
 Подробно — в [USERGUIDE.md](USERGUIDE.md).
 
@@ -54,10 +66,10 @@ cargo run --bin p2p-orchestrator -- --gui-port 8080          # http://127.0.0.1:
 | DHT | k-buckets, итеративный lookup (α=3), bootstrap, refresh; STORE/FIND_VALUE с R=3 и кворумом ≥2; TTL-очистка и republish |
 | Записи | подпись публикатора, `sequence` (откат отвергается), `NodeRecord` (issued_at/expires_at) |
 | Канал | **TLS 1.3**, mutual auth, NodeID из SPKI сертификата, без 0-RTT и TLS 1.2 |
-| Туннели | построение через ≥2 relay, `max_hops`, `hops_left` (защита от петель), уникальность `tunnel_id` |
-| Сообщения | **E2E** (X25519 + HKDF + AES-256-GCM), подпись Ed25519, anti-replay, **APP_ACK**, диагностика маршрута |
-| Метрики | CSV/JSON по lookup, туннелям; экспорт таблиц маршрутизации |
-| GUI | локальная веб-панель узла и оркестратор (без внешних зависимостей, только `127.0.0.1`) |
+| Туннели | построение через ≥2 relay, `max_hops`, `hops_left` (защита от петель), уникальность `tunnel_id`; контроль доступности по сквозному TUNNEL_ACK, при отказе relay — новый маршрут без него в той же отправке |
+| Сообщения | **E2E** (X25519 + HKDF + AES-256-GCM), подпись Ed25519, anti-replay, **APP_ACK**, диагностика маршрута, локальная история (`history.jsonl`), **подписанные псевдонимы** `@имя → NodeID` |
+| Метрики | CSV/JSON по lookup, туннелям; экспорт таблиц маршрутизации; сценарии 01–09 с `meta.json` |
+| GUI | локальная веб-панель узла и оркестратор (только `127.0.0.1`); **настольное приложение** `p2p-desktop` (egui) |
 
 Что **не** реализовано или с ограничениями — см. [модель угроз](docs/THREAT_MODEL.md#остаточные-риски) и [COMPLIANCE](docs/requirements/COMPLIANCE_2026-10-26.md).
 
@@ -72,13 +84,14 @@ src/
   dht/                     — routing table, lookup, DhtNode, хранилище записей
   rpc/                     — PING/FIND_NODE/STORE/FIND_VALUE, TUNNEL_*, dial()
   tunnel/                  — builder, session, forwarder, routes, manager
-  app/                     — Messenger (E2E-сообщения, APP_ACK)
+  app/                     — Messenger (E2E-сообщения, APP_ACK), история
   node/, gui/, metrics/    — сервер узла, веб-панель, сбор метрик
   acceptance.rs, orchestrator.rs — приёмочный прогон и оркестратор кластера
+desktop/                   — настольное приложение p2p-desktop (egui), только через HTTP API узла
 tests/                     — unit/интеграционные и негативные тесты
 config/                    — node_config.yaml и примеры
-scripts/                   — run_acceptance.sh, analyze.py, run_star.sh, run_ring.sh, run_tests.sh
-experiments/               — сценарии (этапы 3+) и результаты приёмки
+scripts/                   — run_acceptance.sh, scenarios.py, analyze.py, run_star.sh, run_ring.sh, run_tests.sh
+experiments/               — сценарии 01–09 и результаты (приёмка, сценарии, pcap)
 docs/                      — ТЗ, архитектура, протокол, защита, dev-заметки
 ```
 

@@ -127,9 +127,12 @@ bash scripts/run_ring.sh 13
 ## Эксперименты
 
 ```bash
-# Все 9 сценариев подряд
+# Все 9 сценариев подряд (реальные процессы, драйвер scripts/scenarios.py)
 bash experiments/run_all.sh
-bash experiments/run_all.sh 5   # N узлов
+bash experiments/run_all.sh --nodes 5 --seed 2   # N узлов, seed
+
+# Отсутствие открытого текста в трафике (dumpcap/tcpdump с правом захвата на lo)
+python3 scripts/scenarios.py pcap
 
 # Отдельные сценарии
 bash experiments/scenarios/01_cold_start.sh
@@ -142,8 +145,8 @@ bash experiments/scenarios/07_relay_failure.sh
 bash experiments/scenarios/08_negative_crypto.sh
 bash experiments/scenarios/09_bootstrap_compare.sh
 
-# Логи → logs/<scenario>/<timestamp>/
-# Результаты → experiments/results/ (CSV/JSON)
+# Логи узлов → logs/scenarios/<сценарий>_<unix>/ (вне git)
+# Результаты → experiments/results/<сценарий>/<timestamp>/{results.csv,summary.md,meta.json}
 ```
 
 ---
