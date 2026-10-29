@@ -26,11 +26,13 @@ trap cleanup EXIT INT TERM
 
 PORT_BASE=7001
 
+# Каждому узлу — свой каталог состояния (иначе общий identity.key → один NodeID на всех)
 # Seed node-01
-mkdir -p "state/node-01"
+mkdir -p "state/star/node-01"
 RUST_LOG=p2p_overlay=info "$BINARY" \
     --config config/nodes/node-01.yaml \
     --port $PORT_BASE \
+    --state-dir state/star/node-01 --metrics-dir metrics/star/node-01 \
     > "$LOG_DIR/node-01.log" 2>&1 &
 PIDS+=($!)
 echo "  node-01 started (seed) pid=${PIDS[-1]}"
@@ -40,10 +42,11 @@ sleep 0.8
 for i in $(seq 2 $N); do
     PORT=$((PORT_BASE + i - 1))
     NODE="node-$(printf '%02d' $i)"
-    mkdir -p "state/$NODE"
+    mkdir -p "state/star/$NODE"
     RUST_LOG=p2p_overlay=info "$BINARY" \
         --port "$PORT" \
         --bootstrap "127.0.0.1:$PORT_BASE" \
+        --state-dir "state/star/$NODE" --metrics-dir "metrics/star/$NODE" \
         > "$LOG_DIR/$NODE.log" 2>&1 &
     PIDS+=($!)
     echo "  $NODE started port=$PORT pid=${PIDS[-1]}"

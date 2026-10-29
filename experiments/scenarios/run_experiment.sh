@@ -12,7 +12,7 @@ set -euo pipefail
 N_NODES=${1:-5}
 N_LOOKUPS=${2:-30}
 BINARY="./target/debug/p2p-node"
-LOG_DIR="$LOG_DIR/run_experiment/$(date +%Y%m%d_%H%M%S)"
+LOG_DIR="logs/run_experiment/$(date +%Y%m%d_%H%M%S)"
 mkdir -p "$LOG_DIR"
 RESULTS_DIR="experiments/results/$(date +%Y-%m-%d_%H-%M)"
 

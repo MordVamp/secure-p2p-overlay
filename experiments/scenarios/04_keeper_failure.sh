@@ -1,48 +1,8 @@
 #!/usr/bin/env bash
-# ⛔ ЗАГЛУШКА (ТЗ §22): прежняя версия писала в CSV случайные/константные значения.
-# Реальные измерения — `p2p-orchestrator acceptance`. Сценарий будет переписан на реальные метрики.
-echo "SCENARIO NOT IMPLEMENTED: нет реальных измерений (синтетические данные запрещены ТЗ §22)" >&2
-exit 2
-# Сценарий 04: Keeper failure — узел, хранящий значение, падает.
-# Ожидаем: FIND_VALUE находит реплику на другом узле.
-# ≥ 5 инъекций падений.
-
+# Сценарий 04 (ТЗ §15.1): Отключение хранителя и повторный FIND_VALUE (≥5 инъекций).
+# Реальные процессы p2p-node, измерения — scripts/scenarios.py; результаты:
+# experiments/results/04_keeper_failure/<timestamp>/{results.csv,summary.md,meta.json}
+# Аргументы передаются драйверу: --nodes N --n OBS --runs R --inj I --seed S
 set -euo pipefail
-N=${1:-5}
-BINARY="./target/debug/p2p-node"
-LOG_DIR="$LOG_DIR/04_keeper_failure/$(date +%Y%m%d_%H%M%S)"
-mkdir -p "$LOG_DIR"
-OUT="experiments/results/04_keeper_failure"
-mkdir -p "$OUT" logs state
-
-[ -f "$BINARY" ] || cargo build
-
-PORT_BASE=7500
-PIDS=()
-
-"$BINARY" --port $PORT_BASE > "$LOG_DIR/kf_n01.log" 2>&1 & PIDS+=($!); sleep 0.5
-for i in $(seq 2 $N); do
-  "$BINARY" --port $((PORT_BASE + i - 1)) --bootstrap "127.0.0.1:$PORT_BASE" \
-    > "$LOG_DIR/kf_n$(printf '%02d' $i).log" 2>&1 &
-  PIDS+=($!); sleep 0.2
-done
-sleep 3
-
-echo "ts_ms,injection_n,killed_node,key,found_after_kill,recovery_ms" > "$OUT/results.csv"
-for inj in $(seq 1 5); do
-  # Убиваем случайный не-seed узел
-  IDX=$((inj % (N - 1) + 1))
-  VICTIM_PID=${PIDS[$IDX]}
-  TS=$(date +%s%3N)
-  kill "$VICTIM_PID" 2>/dev/null || true
-  sleep 1
-  echo "$TS,$inj,node-$(printf '%02d' $((IDX+1))),key_$inj,1,$(( RANDOM % 500 + 100 ))" >> "$OUT/results.csv"
-  # Перезапуск жертвы
-  "$BINARY" --port $((PORT_BASE + IDX)) --bootstrap "127.0.0.1:$PORT_BASE" \
-    > "$LOG_DIR/kf_n$(printf '%02d' $((IDX+1)))_restart.log" 2>&1 &
-  PIDS[$IDX]=$!
-  sleep 1
-done
-
-kill "${PIDS[@]}" 2>/dev/null || true
-echo "=== Scenario 04 done. Results: $OUT/results.csv ==="
+cd "$(dirname "$0")/../.."
+exec python3 scripts/scenarios.py 04 "$@"

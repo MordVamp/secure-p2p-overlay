@@ -29,15 +29,17 @@ PORT_BASE=7101
 for i in $(seq 1 $N); do
     PORT=$((PORT_BASE + i - 1))
     NODE="node-$(printf '%02d' $i)"
-    mkdir -p "state/$NODE"
+    # каждому узлу — свой каталог состояния (иначе общий identity.key → один NodeID на всех)
+    mkdir -p "state/ring/$NODE"
+    DIRS=(--state-dir "state/ring/$NODE" --metrics-dir "metrics/ring/$NODE")
     if [ $i -eq 1 ]; then
         RUST_LOG=p2p_overlay=info "$BINARY" \
-            --port "$PORT" \
+            --port "$PORT" "${DIRS[@]}" \
             > "$LOG_DIR/$NODE.log" 2>&1 &
     else
         PREV_PORT=$((PORT_BASE + i - 2))
         RUST_LOG=p2p_overlay=info "$BINARY" \
-            --port "$PORT" \
+            --port "$PORT" "${DIRS[@]}" \
             --bootstrap "127.0.0.1:$PREV_PORT" \
             > "$LOG_DIR/$NODE.log" 2>&1 &
     fi

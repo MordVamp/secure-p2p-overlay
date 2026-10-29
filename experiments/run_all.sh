@@ -1,35 +1,11 @@
 #!/usr/bin/env bash
-# experiments/run_all.sh — запуск всех 9 сценариев эксперимента.
-# Результаты сохраняются в experiments/results/<scenario>/results.csv
+# experiments/run_all.sh — все сценарии 01–09 (ТЗ §15.1) на реальных процессах.
+# Результаты: experiments/results/<сценарий>/<timestamp>/; логи узлов — logs/scenarios/ (вне git).
 #
 # Использование:
-#   bash experiments/run_all.sh [N_NODES]
-
+#   bash experiments/run_all.sh [--nodes N] [--n OBS] [--runs R] [--inj I] [--seed S]
+# Проверка отсутствия открытого текста в трафике (нужен dumpcap/tcpdump с правом захвата на lo):
+#   python3 scripts/scenarios.py pcap
 set -euo pipefail
-N=${1:-5}
-SCENARIOS_DIR="$(dirname "$0")/scenarios"
-
-echo "================================================================"
-echo " P2P Overlay Network Experiment Suite"
-echo " N_NODES=$N"
-echo " $(date)"
-echo "================================================================"
-
-cargo build 2>&1 | tail -1
-mkdir -p logs
-SUITE_LOG="logs/run_all_$(date +%Y%m%d_%H%M%S).log"
-echo "Suite log: $SUITE_LOG"
-
-
-for script in "$SCENARIOS_DIR"/0*.sh; do
-  name=$(basename "$script" .sh)
-  echo ""
-  echo "--- Running $name ---"
-  bash "$script" "$N" 2>&1 | tee -a "$SUITE_LOG" || echo "WARNING: $name exited with error" | tee -a "$SUITE_LOG"
-done
-
-echo ""
-echo "================================================================"
-echo " All scenarios complete. Results in experiments/results/"
-echo "================================================================"
-ls -la experiments/results/ 2>/dev/null || true
+cd "$(dirname "$0")/.."
+exec python3 scripts/scenarios.py all "$@"
