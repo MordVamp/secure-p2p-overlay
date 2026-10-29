@@ -4,6 +4,12 @@ version = "0.1.0"
 edition = "2021"
 description = "[Coursework] Secure decentralised P2P overlay: Kademlia DHT + TLS 1.3 tunnels"
 
+# Desktop-клиент (egui) — отдельный пакет workspace; `cargo build` в корне его не собирает:
+#   cargo run -p p2p-desktop
+[workspace]
+members = [".", "desktop"]
+default-members = ["."]
+
 # ── Основные зависимости ───────────────────────────────────────────────────────
 [dependencies]
 # Async runtime
