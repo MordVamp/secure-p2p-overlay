@@ -93,6 +93,11 @@ pub fn seal(to: &NodeId, recipient_ed_pub: &[u8], plaintext: &[u8]) -> Result<Ve
     rmp_serde::to_vec_named(&env).map_err(|e| anyhow!("encode envelope: {e}"))
 }
 
+/// Адресат контейнера (поле `to` открыто) без расшифровки; None — это не Envelope.
+pub fn recipient(bytes: &[u8]) -> Option<NodeId> {
+    rmp_serde::from_slice::<Envelope>(bytes).ok().filter(|e| e.v == VERSION).map(|e| e.to)
+}
+
 /// Расшифровать контейнер своим identity. Любое несоответствие → Err.
 pub fn open(me: &NodeIdentity, bytes: &[u8]) -> Result<Vec<u8>> {
     let env: Envelope = rmp_serde::from_slice(bytes).map_err(|e| anyhow!("E2E: не Envelope: {e}"))?;

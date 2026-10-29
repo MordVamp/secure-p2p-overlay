@@ -89,3 +89,52 @@ async fn t6_6_illegal_transition_no_panic() {
     // Состояние не изменилось — осталось Dead
     assert_eq!(session.state().await, TunnelState::Dead);
 }
+
+fn active_session(cfg: Arc<NodeConfig>) -> TunnelSession {
+    let mut h0 = TunnelHop::new(make_contact(0x01, 7001), 0);
+    let mut h1 = TunnelHop::new(make_contact(0x02, 7002), 1);
+    h0.mark_confirmed(); h1.mark_confirmed();
+    let (s, rx) = TunnelSession::new(vec![h0, h1], cfg);
+    futures::executor::block_on(async { s.attach_outbox(rx).await; s.transition(TunnelState::Active).await; });
+    s
+}
+
+// T6.7: простаивающий туннель не «умирает» по таймеру (раньше: DEAD через ~20 с без трафика)
+#[tokio::test]
+async fn t6_7_idle_tunnel_stays_usable() {
+    let s = active_session(make_cfg());
+    s.refresh_state().await;
+    s.refresh_state().await;
+    assert_eq!(s.state().await, TunnelState::Active);
+    assert_eq!(s.alive_hops(), 2);
+}
+
+// T6.8: неподтверждённая отправка (нет TUNNEL_ACK) переводит туннель в DEAD, дальше отправка невозможна
+#[tokio::test]
+async fn t6_8_send_failure_marks_dead() {
+    let s = active_session(make_cfg());
+    s.health().mark_dead("test").await;
+    assert_eq!(s.state().await, TunnelState::Dead);
+    assert!(s.send(b"x".to_vec()).await.is_err());
+}
+
+// T6.9: туннель заменяется до истечения маршрута на relay (TTL)
+#[tokio::test]
+async fn t6_9_expired_tunnel_goes_dead() {
+    let mut cfg = NodeConfig::default();
+    cfg.tunnel.ttl_seconds = 0;
+    let s = active_session(Arc::new(cfg));
+    assert!(s.is_expired());
+    assert!(s.send(b"x".to_vec()).await.is_err());
+    s.refresh_state().await;
+    assert_eq!(s.state().await, TunnelState::Dead);
+}
+
+// T6.10: успешная отправка (ACK) возвращает DEGRADED → ACTIVE
+#[tokio::test]
+async fn t6_10_ack_restores_active() {
+    let s = active_session(make_cfg());
+    s.transition(TunnelState::Degraded).await;
+    s.health().mark_ack().await;
+    assert_eq!(s.state().await, TunnelState::Active);
+}

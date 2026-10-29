@@ -1,7 +1,13 @@
 //! tunnel/session.rs — Активная сессия туннеля.
+//!
+//! Контроль доступности: relay подтверждает TUNNEL_DATA только после ACK
+//! следующего hop (rpc::handle_tunnel_data), поэтому TUNNEL_ACK от первого
+//! relay означает, что кадр прошёл всю цепочку до получателя. Успешная
+//! отправка обновляет `last_ack_ms`, ошибка переводит туннель в DEAD.
 
 use std::sync::Arc;
-use tokio::sync::{Mutex, mpsc};
+use std::sync::atomic::{AtomicU64, Ordering};
+use tokio::sync::{Mutex, mpsc, oneshot};
 use tracing::{info, warn};
 use uuid::Uuid;
 
@@ -14,11 +20,44 @@ use crate::types::now_ms;
 pub type TunnelId = [u8; 16];
 
 /// Данные для передачи через туннель.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct TunnelData {
     pub tunnel_id: TunnelId,
     pub payload:   Vec<u8>,
     pub sent_ms:   u64,
+    /// Куда сообщить результат отправки (None — без ожидания).
+    pub done:      Option<oneshot::Sender<anyhow::Result<()>>>,
+}
+
+/// Разделяемая часть сессии для задачи-отправителя: отметка ACK и отказ.
+#[derive(Clone)]
+pub struct SessionHealth {
+    id:          TunnelId,
+    state:       Arc<Mutex<TunnelState>>,
+    last_ack_ms: Arc<AtomicU64>,
+}
+
+impl SessionHealth {
+    /// Кадр подтверждён всей цепочкой: туннель жив.
+    pub async fn mark_ack(&self) {
+        self.last_ack_ms.store(now_ms(), Ordering::Relaxed);
+        let mut s = self.state.lock().await;
+        if *s == TunnelState::Degraded {
+            info!("[tunnel-{}] {} → {} (ACK)", hex::encode(&self.id[..4]), *s, TunnelState::Active);
+            *s = TunnelState::Active;
+        }
+    }
+
+    /// Отправка не подтверждена: туннель непригоден, его заменит новый маршрут.
+    pub async fn mark_dead(&self, reason: &str) {
+        let mut s = self.state.lock().await;
+        if s.can_transition_to(&TunnelState::Dead) {
+            warn!("[tunnel-{}] {} → {} ({reason})", hex::encode(&self.id[..4]), *s, TunnelState::Dead);
+            *s = TunnelState::Dead;
+        }
+    }
+
+    pub async fn is_dead(&self) -> bool { *self.state.lock().await == TunnelState::Dead }
 }
 
 /// Активный туннель: маршрут + состояние + канал для данных.
@@ -31,6 +70,8 @@ pub struct TunnelSession {
     pub tx:       mpsc::Sender<TunnelData>,
     /// Время создания (unix ms).
     pub created_ms: u64,
+    /// Последнее сквозное подтверждение (TUNNEL_ACK через всю цепочку или BUILD_OK).
+    last_ack_ms:  Arc<AtomicU64>,
     /// B6: приёмник исходящей очереди. Раньше отбрасывался (`_rx`), и `send()`
     /// падал с "channel closed". Теперь живёт в сессии до `take_outbox()`.
     outbox:       Arc<Mutex<Option<mpsc::Receiver<TunnelData>>>>,
@@ -48,13 +89,15 @@ impl TunnelSession {
         -> (Self, mpsc::Receiver<TunnelData>)
     {
         let (tx, rx) = mpsc::channel(64);
+        let now = now_ms();
         let s = Self {
             id,
             hops,
             state:      Arc::new(Mutex::new(TunnelState::Building)),
             cfg,
             tx,
-            created_ms: now_ms(),
+            created_ms: now,
+            last_ack_ms: Arc::new(AtomicU64::new(now)),
             outbox:     Arc::new(Mutex::new(None)),
         };
         (s, rx)
@@ -68,6 +111,10 @@ impl TunnelSession {
     /// Забрать приёмник исходящей очереди (один раз) для задачи-отправителя.
     pub async fn take_outbox(&self) -> Option<mpsc::Receiver<TunnelData>> {
         self.outbox.lock().await.take()
+    }
+
+    pub fn health(&self) -> SessionHealth {
+        SessionHealth { id: self.id, state: self.state.clone(), last_ack_ms: self.last_ack_ms.clone() }
     }
 
     pub async fn state(&self) -> TunnelState {
@@ -87,41 +134,67 @@ impl TunnelSession {
         }
     }
 
-    /// Отправить данные через туннель (не блокирует).
+    /// Отправить данные через туннель (не блокирует, результат не ждём).
     pub async fn send(&self, payload: Vec<u8>) -> anyhow::Result<()> {
+        self.enqueue(payload, None).await
+    }
+
+    /// Отправить и дождаться TUNNEL_ACK (= кадр прошёл цепочку до получателя).
+    pub async fn send_confirmed(&self, payload: Vec<u8>) -> anyhow::Result<oneshot::Receiver<anyhow::Result<()>>> {
+        let (tx, rx) = oneshot::channel();
+        self.enqueue(payload, Some(tx)).await?;
+        Ok(rx)
+    }
+
+    async fn enqueue(&self, payload: Vec<u8>, done: Option<oneshot::Sender<anyhow::Result<()>>>) -> anyhow::Result<()> {
         let state = self.state().await;
         if !state.is_usable() {
             anyhow::bail!("tunnel not usable (state={state})");
+        }
+        if self.is_expired() {
+            anyhow::bail!("tunnel TTL expired");
         }
         self.tx.send(TunnelData {
             tunnel_id: self.id,
             payload,
             sent_ms: now_ms(),
+            done,
         }).await.map_err(|e| anyhow::anyhow!("tunnel send: {e}"))?;
         Ok(())
     }
 
-    /// Число живых hop-ов (для оценки Degraded).
-    pub fn alive_hops(&self) -> usize {
-        let t = self.cfg.tunnel.ack_timeout_ms;
-        self.hops.iter().filter(|h| h.is_alive(t)).count()
+    /// Окно, в течение которого последнее подтверждение считается свежим.
+    fn liveness_window_ms(&self) -> u64 { self.cfg.tunnel.ack_timeout_ms.max(1) * 12 }
+
+    pub fn last_ack_age_ms(&self) -> u64 {
+        now_ms().saturating_sub(self.last_ack_ms.load(Ordering::Relaxed))
     }
 
-    /// Обновить состояние на основе живости hop-ов.
+    /// Маршрут на relay живёт `tunnel.ttl_seconds`: туннель заменяется заранее (на 90% TTL),
+    /// иначе relay с истёкшим маршрутом примет кадр как адресованный себе.
+    pub fn is_expired(&self) -> bool {
+        self.uptime_ms() >= self.cfg.tunnel.ttl_seconds.saturating_mul(900)
+    }
+
+    /// Число hop-ов, подтверждённых недавно (сквозной ACK подтверждает все hop сразу).
+    pub fn alive_hops(&self) -> usize {
+        if self.last_ack_age_ms() < self.liveness_window_ms() {
+            self.hops.iter().filter(|h| h.confirmed).count()
+        } else { 0 }
+    }
+
+    /// Периодическая проверка: TTL истёк → DEAD; давно нет подтверждений → DEGRADED
+    /// (туннель остаётся пригодным: отказ всё равно обнаружится при следующей отправке).
     pub async fn refresh_state(&self) {
-        let min = self.cfg.tunnel.min_relays;
-        let alive = self.alive_hops();
         let current = self.state().await;
+        if current.is_usable() && self.is_expired() {
+            self.transition(TunnelState::Dead).await;
+            return;
+        }
+        let stale = self.last_ack_age_ms() >= self.liveness_window_ms();
         match current {
-            TunnelState::Active if alive < min => {
-                self.transition(TunnelState::Degraded).await;
-            }
-            TunnelState::Degraded if alive >= min => {
-                self.transition(TunnelState::Active).await;
-            }
-            TunnelState::Degraded if alive == 0 => {
-                self.transition(TunnelState::Dead).await;
-            }
+            TunnelState::Active if stale => { self.transition(TunnelState::Degraded).await; }
+            TunnelState::Degraded if !stale => { self.transition(TunnelState::Active).await; }
             _ => {}
         }
     }

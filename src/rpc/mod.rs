@@ -649,6 +649,12 @@ impl RpcHandler {
             }
             debug!("TUNNEL_DATA relayed tunnel={} → {next}", hex::encode(&tid[..4]));
         } else {
+            // Маршрута нет → кадр должен быть адресован этому узлу. Иначе это relay, потерявший
+            // маршрут (перезапуск, истёкший TTL): ERROR вместо ACK, чтобы отправитель перестроил туннель.
+            if crate::security::e2e::recipient(&p.data) != Some(self.own_contact.node_id) {
+                bail!("TUNNEL_DATA: неизвестный tunnel {} и конверт адресован не этому узлу",
+                      hex::encode(&tid[..4]));
+            }
             let sink = self.app_sink.as_ref()
                 .ok_or_else(|| anyhow::anyhow!("no local consumer for TUNNEL_DATA"))?;
             sink.try_send(p.data).map_err(|_| anyhow::anyhow!("app inbox full"))?;

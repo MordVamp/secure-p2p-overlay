@@ -6,7 +6,7 @@
 //!  2. Последовательно отправляем TUNNEL_BUILD к каждому relay.
 //!  3. Ждём ACK за build_timeout_ms.
 //!  4. Если все relay подтвердили → туннель ACTIVE.
-//!  5. Иначе → DEAD (и пробуем с другими кандидатами, до 3 попыток).
+//!  5. Иначе → DEAD и новая попытка без отказавшего relay (до 3 попыток).
 
 use std::sync::Arc;
 use std::net::SocketAddr;
@@ -57,10 +57,12 @@ impl TunnelBuilder {
             bail!("min_relays={} превышает max_hops={}", min_relays, self.cfg.tunnel.max_hops);
         }
         let max_attempts = 3;
+        // relay, отказавшие в предыдущих попытках, больше не выбираются
+        let mut excluded = std::collections::HashSet::new();
 
         for attempt in 1..=max_attempts {
             debug!("[builder] attempt {}/{}", attempt, max_attempts);
-            match self.try_build(target, min_relays, target_hint).await {
+            match self.try_build(target, min_relays, target_hint, &mut excluded).await {
                 Ok(session) => return Ok(session),
                 Err(e) => warn!("[builder] attempt {} failed: {}", attempt, e),
             }
@@ -68,13 +70,15 @@ impl TunnelBuilder {
         bail!("Failed to build tunnel to {} after {} attempts", target.short(), max_attempts)
     }
 
-    async fn try_build(&self, target: &NodeId, min_relays: usize, target_hint: Option<&Contact>) -> Result<TunnelSession> {
+    async fn try_build(&self, target: &NodeId, min_relays: usize, target_hint: Option<&Contact>,
+                       excluded: &mut std::collections::HashSet<NodeId>) -> Result<TunnelSession> {
+        let t0 = now_ms();
         // Выбираем relay-кандидатов из таблицы маршрутизации
         let candidates: Vec<Contact> = {
             let rt = self.routing.lock().await;
             let own_id = *rt.own_id();
-            let mut c = rt.find_closest(target, min_relays + 5);
-            c.retain(|x| x.node_id != own_id && x.node_id != *target);
+            let mut c = rt.find_closest(target, min_relays + 5 + excluded.len());
+            c.retain(|x| x.node_id != own_id && x.node_id != *target && !excluded.contains(&x.node_id));
             // §12: каждый узел в пути не более одного раза (без петель)
             let mut seen = std::collections::HashSet::new();
             c.retain(|x| seen.insert(x.node_id));
@@ -114,6 +118,7 @@ impl TunnelBuilder {
                 }
                 Err(e) => {
                     warn!("[tunnel-{}] hop {} failed ({}): {}", hex::encode(&tunnel_id[..4]), idx, relay, e);
+                    excluded.insert(relay.node_id);
                     bail!("Hop {} failed: {}", idx, e);
                 }
             }
@@ -124,9 +129,11 @@ impl TunnelBuilder {
         session.attach_outbox(rx).await;
         session.transition(TunnelState::Active).await;
 
+        // журнал фактической последовательности узлов (§12)
+        let path: Vec<String> = session.hops.iter().map(|h| h.relay.node_id.short()).collect();
         info!(
-            "[tunnel-{}] ACTIVE — {} hops, build took {}ms",
-            session.id_hex(), total_hops, session.uptime_ms()
+            "[tunnel-{}] ACTIVE — {} hops [{} → {}], build took {}ms",
+            session.id_hex(), total_hops, path.join(" → "), target.short(), now_ms().saturating_sub(t0)
         );
         Ok(session)
     }

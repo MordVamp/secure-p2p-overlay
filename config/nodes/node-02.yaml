@@ -27,9 +27,12 @@ node:
   metrics_dir:     ./metrics/node-02
 
 tunnel:
-  min_relays: 2
-  max_hops:   5
-  pool_size:  1
+  min_relays:       2
+  max_hops:         5
+  ttl_seconds:      600
+  pool_size:        1
+  build_timeout_ms: 15000
+  ack_timeout_ms:   5000
 
 security:
   session_id_ttl_seconds: 3600

@@ -144,6 +144,10 @@ impl TunnelForwarder {
             ).await
                 .map_err(|_| anyhow::anyhow!("ACK timeout for seq={seq}"))??;
 
+            // relay отвечает ERROR, если не смог переслать кадр дальше по цепочке
+            if ack_frame.msg_type != MsgType::TunnelAck || ack_frame.request_id != request_id {
+                anyhow::bail!("seq={seq}: ожидался TUNNEL_ACK, получен {:?}", ack_frame.msg_type);
+            }
             let _ack: TunnelAckPayload = decode(&ack_frame.payload)?;
             let rtt = now_ms() - t0;
             rtts.push(rtt);

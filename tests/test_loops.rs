@@ -168,3 +168,30 @@ async fn routing_cycle_terminates() {
     let n = hits.load(std::sync::atomic::Ordering::SeqCst);
     assert!(n <= hops as usize, "число пересылок {n} ограничено hops_left={hops}");
 }
+
+/// Узел без маршрута для tunnel_id (например, relay после перезапуска) не должен
+/// подтверждать чужой кадр как доставленный: иначе отправитель не узнает об обрыве.
+#[tokio::test]
+async fn unknown_tunnel_with_foreign_envelope_is_not_acked() {
+    let (h, _, _) = relay("r9");
+    let other = ident("o9");
+    let env = p2p_overlay::security::e2e::seal(&other.node_id, &other.public_key_bytes(), b"secret").unwrap();
+    let d = payload::encode(&TunnelDataPayload { tunnel_id: vec![13; 16], seq: 0, data: env, hops_left: 3 }).unwrap();
+    assert!(h.handle_tunnel_data(&frame(MsgType::TunnelData, d)).await.is_err());
+}
+
+#[tokio::test]
+async fn unknown_tunnel_with_own_envelope_is_delivered() {
+    let id = ident("d9");
+    let me = contact(&id, 7400);
+    let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+    let h = RpcHandler::new(
+        me.clone(), Arc::new(Mutex::new(RoutingTable::new(me.node_id, 3))),
+        Arc::new(PendingRpc::new()), Arc::new(NodeConfig::default()),
+    ).with_services(Arc::new(Default::default()), Arc::new(TunnelRoutes::new()), Some(tx));
+    let env = p2p_overlay::security::e2e::seal(&id.node_id, &id.public_key_bytes(), b"hi").unwrap();
+    let d = payload::encode(&TunnelDataPayload { tunnel_id: vec![14; 16], seq: 0, data: env.clone(), hops_left: 3 }).unwrap();
+    let resp = h.handle_tunnel_data(&frame(MsgType::TunnelData, d)).await.unwrap();
+    assert_eq!(resp.msg_type, MsgType::TunnelAck);
+    assert_eq!(rx.try_recv().unwrap(), env);
+}
