@@ -1,5 +1,6 @@
 //! gui/node_gui.rs — веб-панель одного узла: статус, routing table, туннели,
-//! DHT-хранилище + действия PING / FIND_NODE / TUNNEL / STORE / FIND_VALUE.
+//! DHT-хранилище + действия PING / FIND_NODE / TUNNEL / STORE / FIND_VALUE,
+//! сообщения (NodeID или `@псевдоним`), история, псевдонимы.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -17,6 +18,14 @@ fn parse_node_id(s: &str) -> Result<NodeId, String> {
     let b = hex::decode(s.trim()).map_err(|_| "target: ожидается hex".to_string())?;
     let arr: [u8; 32] = b.try_into().map_err(|_| "target: нужно 64 hex-символа".to_string())?;
     Ok(NodeId(arr))
+}
+
+/// Получатель: 64 hex NodeID либо `@псевдоним` (разрешается через DHT).
+async fn resolve_target(node: &Node, s: &str) -> Result<NodeId, String> {
+    match s.trim().strip_prefix('@') {
+        Some(alias) => node.dht.resolve_alias(alias).await.map_err(|e| e.to_string()),
+        None => parse_node_id(s),
+    }
 }
 
 pub async fn run(node: Arc<Node>, port: u16) -> anyhow::Result<()> {
@@ -40,6 +49,9 @@ async fn route(node: Arc<Node>, req: Request) -> Response {
                 "routing": routing,
                 "tunnels": tunnels,
                 "store":   store,
+                "bootstrap": node.dht.bootstrap_json(),
+                // что умеет узел: клиенты (desktop-приложение) включают только поддержанные разделы
+                "features": { "messages": true, "aliases": true, "history": true, "files": false, "calls": false },
                 "now_ms":  now_ms(),
             }))
         }
@@ -75,7 +87,7 @@ async fn route(node: Arc<Node>, req: Request) -> Response {
                 Ok(t) => t, Err(e) => return Response::error(400, &e),
             };
             match node.tunnel_mgr.get_or_build(&target).await {
-                Ok(()) => Response::json(json!({ "ok": true })),
+                Ok(built) => Response::json(json!({ "ok": true, "reused": built.is_none(), "build_ms": built })),
                 Err(e) => Response::json(json!({ "ok": false, "error": e.to_string() })),
             }
         }
@@ -98,18 +110,41 @@ async fn route(node: Arc<Node>, req: Request) -> Response {
             }
         }
         ("/api/send", true) => {
-            let target = match parse_node_id(req.query.get("target").map(|s| s.as_str()).unwrap_or("")) {
-                Ok(t) => t, Err(e) => return Response::error(400, &e),
-            };
             let Some(text) = req.query.get("text").filter(|t| !t.is_empty()) else { return Response::error(400, "text пуст"); };
+            let target = match resolve_target(&node, req.query.get("target").map(|s| s.as_str()).unwrap_or("")).await {
+                Ok(t) => t, Err(e) => return Response::json(json!({ "ok": false, "delivered": false, "error": e })),
+            };
             // ждём APP_ACK: «доставлено» = получатель расшифровал, проверил подпись и подтвердил
             match node.messenger.send_text_acked(target, text, std::time::Duration::from_secs(8)).await {
-                Ok(rtt) => Response::json(json!({ "ok": true, "delivered": true, "rtt_ms": rtt })),
+                Ok(r) => Response::json(json!({
+                    "ok": true, "delivered": true, "target": target.to_hex(), "message_id": r.message_id, "rtt_ms": r.rtt_ms,
+                    "lookup_ms": r.lookup_ms, "tunnel_reused": r.tunnel_build_ms.is_none(),
+                    "tunnel_build_ms": r.tunnel_build_ms, "tunnel_send_ms": r.tunnel_send_ms,
+                    "rebuilt_after_failure": r.rebuilt_after_failure,
+                })),
                 Err(e)  => Response::json(json!({ "ok": false, "delivered": false, "error": e.to_string() })),
             }
         }
+        ("/api/history", false) => {
+            let limit = req.query.get("limit").and_then(|l| l.parse().ok()).unwrap_or(100usize).min(10_000);
+            Response::json(json!({ "entries": node.messenger.history(limit).await }))
+        }
+        ("/api/alias", true) => {
+            let Some(name) = req.query.get("name") else { return Response::error(400, "нужен name"); };
+            match node.dht.publish_alias(&node.identity, name).await {
+                Ok(n)  => Response::json(json!({ "ok": true, "alias": name, "stored_on": n })),
+                Err(e) => Response::json(json!({ "ok": false, "error": e.to_string() })),
+            }
+        }
+        ("/api/resolve", false) => {
+            let Some(name) = req.query.get("alias") else { return Response::error(400, "нужен alias"); };
+            match node.dht.resolve_alias(name).await {
+                Ok(id) => Response::json(json!({ "ok": true, "alias": name, "node_id": id.to_hex() })),
+                Err(e) => Response::json(json!({ "ok": false, "error": e.to_string() })),
+            }
+        }
         ("/api/route", false) => {
-            let target = match parse_node_id(req.query.get("target").map(|s| s.as_str()).unwrap_or("")) {
+            let target = match resolve_target(&node, req.query.get("target").map(|s| s.as_str()).unwrap_or("")).await {
                 Ok(t) => t, Err(e) => return Response::error(400, &e),
             };
             Response::json(node.messenger.route_diag(&target).await)

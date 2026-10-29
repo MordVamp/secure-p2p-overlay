@@ -30,6 +30,9 @@ pub struct DhtNode {
     pub metrics:     Arc<crate::metrics::MetricsCollector>,
     /// Записи, опубликованные этим узлом (для переопубликования, §10.1).
     pub published:   Mutex<std::collections::HashMap<RecordKey, (Vec<u8>, u64)>>,
+    /// Создание узла (unix ms) и завершение bootstrap (0 — ещё идёт) — метрика холодного старта.
+    pub created_ms:  u64,
+    pub joined_ms:   std::sync::atomic::AtomicU64,
 }
 
 impl DhtNode {
@@ -46,7 +49,18 @@ impl DhtNode {
 
         Self { own_contact, routing, pending, rpc_client, cfg,
                store: Arc::new(crate::dht::storage::DhtStore::new(1024)), metrics,
-               published: Mutex::new(std::collections::HashMap::new()) }
+               published: Mutex::new(std::collections::HashMap::new()),
+               created_ms: crate::types::now_ms(), joined_ms: Default::default() }
+    }
+
+    /// Время bootstrap: от создания узла до завершения join (PING bootstrap + self-lookup).
+    pub fn bootstrap_json(&self) -> serde_json::Value {
+        let j = self.joined_ms.load(std::sync::atomic::Ordering::Relaxed);
+        serde_json::json!({
+            "started_ms": self.created_ms,
+            "joined_ms":  if j == 0 { None } else { Some(j) },
+            "join_ms":    if j == 0 { None } else { Some(j.saturating_sub(self.created_ms)) },
+        })
     }
 
     /// Процедура bootstrap (§22.2):
@@ -54,6 +68,12 @@ impl DhtNode {
     ///  2. Self-lookup
     ///  3. Журнал размера таблицы
     pub async fn join(&self, bootstrap_addrs: &[SocketAddr]) -> Result<()> {
+        let r = self.join_inner(bootstrap_addrs).await;
+        self.joined_ms.store(crate::types::now_ms(), std::sync::atomic::Ordering::Relaxed);
+        r
+    }
+
+    async fn join_inner(&self, bootstrap_addrs: &[SocketAddr]) -> Result<()> {
         if bootstrap_addrs.is_empty() {
             info!("No bootstrap peers — running as seed node");
             return Ok(());
@@ -295,5 +315,33 @@ impl DhtNode {
         nr.validate_for_key(&key.0).map_err(|e| anyhow::anyhow!("NodeRecord отвергнут: {e}"))?;
         if nr.node_id != *target { anyhow::bail!("NodeRecord принадлежит другому узлу"); }
         Ok(nr)
+    }
+}
+
+// ── §13.1: подписанный псевдоним (alias → NodeID) ────────────────────────────
+use crate::identity::alias::{alias_key, alias_value, owner_of, valid_alias};
+
+impl DhtNode {
+    /// Опубликовать псевдоним этого узла. Занятый другим узлом псевдоним не перезаписывается.
+    pub async fn publish_alias(
+        &self,
+        identity: &crate::identity::node_identity::NodeIdentity,
+        alias: &str,
+    ) -> Result<usize> {
+        if !valid_alias(alias) { anyhow::bail!("псевдоним: 1–32 символа [a-z0-9_-]"); }
+        if let Ok(owner) = self.resolve_alias(alias).await {
+            if owner != identity.node_id {
+                anyhow::bail!("псевдоним «{alias}» уже занят узлом {}", owner.short());
+            }
+        }
+        self.put(identity, alias_key(alias), alias_value(alias), self.cfg.dht.ttl_seconds).await
+    }
+
+    /// Разрешить псевдоним в NodeID владельца (подпись записи проверяется).
+    pub async fn resolve_alias(&self, alias: &str) -> Result<NodeId> {
+        if !valid_alias(alias) { anyhow::bail!("псевдоним: 1–32 символа [a-z0-9_-]"); }
+        let rec = self.get(&alias_key(alias)).await
+            .ok_or_else(|| anyhow::anyhow!("псевдоним «{alias}» не найден"))?;
+        owner_of(alias, &rec).map_err(|e| anyhow::anyhow!("псевдоним «{alias}»: {e}"))
     }
 }
