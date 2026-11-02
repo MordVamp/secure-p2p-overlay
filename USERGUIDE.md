@@ -15,7 +15,7 @@
 ```bash
 cargo build --bins             # узел p2p-node и оркестратор p2p-orchestrator
 cargo build -p p2p-desktop     # настольное приложение (отдельно: тянет egui)
-cargo test                     # все тесты узла (113)
+cargo test                     # все тесты узла (114)
 bash scripts/run_tests.sh      # то же, с записью в logs/tests/
 ```
 
@@ -64,9 +64,9 @@ cargo run -p p2p-desktop -- --profile bob     # второй пользоват�
 |---|---|
 | 💬 **Чаты** | Список бесед (история + адресная книга), счётчик непрочитанного. Новый чат — NodeID (64 hex) или `@псевдоним`. Статус сообщения: ⏳ отправляется, ✔✔ доставлено с APP_ACK (рядом RTT), ✖ не доставлено (причина — во всплывающей подсказке). Подсказка над доставленным сообщением показывает разбивку: lookup получателя, построение туннеля (или «уже был установлен»), проход по цепочке relay. Кнопка **Маршрут** рисует цепочку `Вы → relay → relay → получатель` с состоянием туннеля. |
 | 👥 **Контакты и профиль** | Ваш NodeID (кнопка копирования — его и нужно передать собеседнику), адрес узла, публикация **псевдонима** (подписанная запись в DHT; занятое другим узлом имя не перезаписывается). Адресная книга: имя → NodeID, добавить по NodeID или `@псевдониму`. |
-| 🗀 **Файлы** | Интерфейс передачи файлов. **Функция узла ещё не реализована** (план: §3 `docs/dev/plannow.md`); вкладка помечена жёлтой точкой, элементы неактивны, пока узел не сообщит `features.files = true`. |
-| 📞 **Звонки** | Интерфейс группового голосового звонка (участники, микрофон, завершение). **Функция узла запланирована** (§5 плана), элементы неактивны до `features.calls = true`. |
-| 🌐 **Сеть** | Счётчики (контакты, бакеты, туннели, записи DHT, время bootstrap), инструменты PING / FIND_NODE / маршрут / STORE / FIND_VALUE, таблицы туннелей, маршрутизации и хранилища DHT. |
+| 🗀 **Файлы** | Отправка файла: получатель (NodeID, `@псевдоним` или из контактов) и путь — вручную или перетаскиванием файла в окно. Список передач с прогрессом по блокам и статусом (доставлен / получен / отклонён — причина во всплывающей подсказке); после доставки — goodput и служебная доля трафика. Полученные файлы — в `<state>/downloads/` (путь показан на вкладке). |
+| 📞 **Звонки** | Интерфейс группового голосового звонка (участники, микрофон, завершение). **Функция узла запланирована** (§5 `docs/dev/plannow.md`); элементы неактивны, пока узел не сообщит `features.calls = true`. |
+| 🌐 **Сеть** | Счётчики (контакты, бакеты, туннели, записи DHT, время bootstrap), инструменты PING / FIND_NODE / маршрут / STORE / FIND_VALUE, туннели с ролью в пуле (основной / резерв), **профили ретрансляторов** (оценка, успехи, отказы, отказы подряд, EMA задержки) и стратегия выбора, таблица маршрутизации, хранилище DHT. |
 | 🕘 **Журнал** | Локальная история отправки и приёма узла (`history.jsonl`) с фильтрами «исходящие / входящие / ошибки». Переживает перезапуск. |
 | ⚙ **Подключение** | Режим (запустить свой узел / подключиться к работающему), путь к `p2p-node` (по умолчанию ищется рядом с приложением и в `target/`), порты, bootstrap-пиры, каталог состояния, автозапуск; журнал запущенного узла. |
 
@@ -106,6 +106,11 @@ cargo run --bin p2p-node -- [ОПЦИИ]
 | `--gui-port <PORT>` | включить веб-панель и HTTP API на `127.0.0.1:<PORT>` (без флага выключены) |
 | `--state-dir <DIR>` | каталог состояния (приватный ключ, история сообщений) |
 | `--metrics-dir <DIR>` | каталог метрик |
+| `--host <IP>` | адрес узла (переопределяет `LISTEN_HOST`): слушает и соединяется с него, напр. `127.0.1.5` |
+| `--channel <tls\|ake>` | канал между узлами: TLS 1.3 (по умолчанию) или собственное рукопожатие (§11.3); вся сеть — одинаково |
+| `--relay-selection <closest\|random\|rating>` | стратегия выбора ретрансляторов |
+| `--pool-size <N>` | размер пула туннелей к одному получателю |
+| `--fault-drop <P>`, `--fault-delay-ms <D>` | **только эксперименты**: узел как ретранслятор с вероятностью P отказывает / задерживает пересылку |
 | `--export-routing <FILE>` | выгрузить таблицу маршрутизации в JSON и выйти |
 
 Первый узел запускается без `-b` (seed), остальные — с `-b <адрес seed>`. **Каждому узлу нужны свой порт и свой
@@ -140,10 +145,13 @@ PING, FIND_NODE, построение туннеля, STORE/FIND, отправк
 | `POST /api/tunnel?target=<NodeID>` | построить туннель: `reused`, `build_ms` |
 | `POST /api/store?key=...&value=...` | подписанная запись DHT с репликацией (R=3, кворум ≥2) |
 | `GET /api/find?key=...` | поиск записи (проверяется подпись публикатора) |
-| `POST /api/send?target=<NodeID или @псевдоним>&text=...` | отправить и **дождаться APP_ACK**: `delivered`, `message_id`, `rtt_ms`, `lookup_ms` (null — не понадобился), `tunnel_reused`, `tunnel_build_ms`, `tunnel_send_ms`, `rebuilt_after_failure` |
+| `POST /api/send?target=<NodeID или @псевдоним>&text=...` | отправить и **дождаться APP_ACK**: `delivered`, `message_id`, `rtt_ms`, `lookup_ms` (null — не понадобился), `tunnel_reused`, `tunnel_build_ms`, `tunnel_send_ms`, `rebuilt_after_failure`, `failover` (доставлено по резервному туннелю пула), `detect_ms`, `switch_ms`, `wire_bytes` |
 | `GET /api/history?limit=N` | локальная история: `dir` (out/in), `peer`, `status` (delivered/sent/failed/received), `text`, `rtt_ms`, `error`, разбивка задержки |
 | `POST /api/alias?name=<имя>` | опубликовать свой псевдоним (`[a-z0-9_-]`, 1–32 символа) |
 | `GET /api/resolve?alias=<имя>` | псевдоним → NodeID владельца (подпись проверяется) |
+| `POST /api/send_file?target=<NodeID или @псевдоним>&path=<путь>` | отправить файл и дождаться проверки SHA-256 получателем → `report`: `goodput_mib_s`, `overhead_share`, `bytes_out/in`, `retransmits`, `duration_ms` |
+| `GET /api/files` | передачи файлов (входящие и исходящие, прогресс, статус) и каталог загрузок |
+| `GET /api/relays` | профили ретрансляторов этого узла (по убыванию оценки) |
 | `GET /api/inbox` | последние входящие (в памяти) |
 | `GET /api/route?target=<NodeID или @псевдоним>` | диагностика маршрута: туннель, цепочка relay, состояние, давность последнего ACK |
 
@@ -173,14 +181,22 @@ cargo build --bins && cargo run --bin p2p-orchestrator -- --gui-port 8080
 
 ```bash
 bash scripts/run_acceptance.sh [N=13] [LOOKUPS=30]     # приёмка этапов 1–2 (Rust-оркестратор)
-bash experiments/run_all.sh                            # сценарии 01–09 ТЗ §15.1 (~6 мин)
-python3 scripts/scenarios.py 06 --nodes 12 --seed 2    # один сценарий
-python3 scripts/scenarios.py pcap                      # в захвате трафика нет открытого текста
-python3 scripts/analyze.py [experiments/results/accept_...]   # графики приёмки
+bash experiments/run_all.sh                            # упрощённый уровень: сценарии 01–09 + pcap, N=15 (~5 мин)
+bash experiments/run_advanced.sh                       # продвинутый: N=21, k=4, 3 relay, пул 3 — 01–09 (09: star/ring/tree/multi-seed),
+                                                       #   failover, strategy, files, channel (~15 мин)
+sudo -v && bash experiments/run_advanced.sh --with-root   # + сценарий 10 (tc/netem) и underlay (nftables)
+./target/debug/p2p-orchestrator scenario files         # передача файлов: goodput и служебная доля (100 КиБ, 1 МиБ, 10 МиБ × 5)
+./target/debug/p2p-orchestrator scenario channel       # TLS 1.3 против собственного рукопожатия
+./target/release/p2p-orchestrator scenario channel     # то же на release-сборке (криптография оптимизирована)
+./target/debug/p2p-orchestrator scenario 06 --seed 2   # один сценарий (флаги: --nodes --n --runs --inj --seed)
+./target/debug/p2p-orchestrator scenario pcap          # в захвате трафика нет открытого текста
+./target/debug/p2p-orchestrator plot <каталог>         # перестроить графики (SVG) из сохранённых CSV
+# запасной вариант на Python (тот же метод): python3 scripts/python/scenarios.py 06; графики — scripts/python/analyze.py
 ```
 
 Результат каждого сценария — `experiments/results/<сценарий>/<время>/`: `results.csv` (сырые наблюдения), `summary.md`
-(n/min/max/медиана/среднее, p95 при n ≥ 20), `meta.json` (коммит, конфигурация, seed, N/k/α/R, тайм-ауты, граф bootstrap).
+(n/min/max/медиана/среднее, p95 при n ≥ 20), `meta.json` (коммит, конфигурация, seed, N/k/α/R, тайм-ауты, граф bootstrap),
+`plots/*.svg` (графики из `results.csv`), `node_logs/` (журналы узлов прогона).
 Подробно — [experiments/README.md](experiments/README.md). Логи узлов — `logs/` (вне git).
 
 ## 8. Конфигурация
@@ -197,6 +213,12 @@ python3 scripts/analyze.py [experiments/results/accept_...]   # графики �
 | `tunnel.min_relays` / `max_hops` | 2 / 5 | длина цепочки relay |
 | `tunnel.ttl_seconds` | 600 | срок жизни маршрута на relay; туннель заменяется заранее, на 90% |
 | `tunnel.ack_timeout_ms` | 5000 | тайм-аут TUNNEL_ACK; ×12 — окно «свежего» подтверждения (дольше — DEGRADED) |
+| `tunnel.pool_size` / `relay_selection` | 1 / closest | пул туннелей к получателю и стратегия выбора relay (продвинутый: 3 / rating) |
+| `security.channel` | tls | канал между узлами: `tls` или `ake` (собственное рукопожатие) |
+| `files.max_bytes` / `block_size` / `window` / `incomplete_timeout_s` | 64 МиБ / 40 КиБ / 8 / 60 | передача файлов |
+
+Продвинутый уровень целиком — `config/node_config_advanced.yaml` (k = 4, 3 relay, пул 3, `rating`):
+`p2p-node -c config/node_config_advanced.yaml …`, сценарии — с `--node-config config/node_config_advanced.yaml --nodes 21`.
 
 Параметры меняются без правки кода; CLI-флаги `-p/-b/--state-dir` переопределяют файл.
 
@@ -206,6 +228,8 @@ python3 scripts/analyze.py [experiments/results/accept_...]   # графики �
 |---|---|---|
 | Приватный ключ узла (= NodeID) | `<state-dir>/identity.key` (права 0600) | **нет** (`state/` в `.gitignore`) |
 | История сообщений (тексты!) | `<state-dir>/history.jsonl` (права 0600) | нет |
+| Принятые message_id (анти-replay, 10 мин) | `<state-dir>/replay.log` | нет |
+| Полученные файлы | `<state-dir>/downloads/` (неполные — `downloads/.partial/`, удаляются через 60 с без блоков) | нет |
 | Настройки и адресная книга приложения | `~/.config/p2p-overlay-desktop/` | нет |
 | Логи узлов и тестов | `logs/`, у приложения — `<state-dir>/node.log` | нет |
 | Метрики узла | `<metrics-dir>/` | нет |
@@ -228,4 +252,7 @@ python3 scripts/analyze.py [experiments/results/accept_...]   # графики �
 | `STORE: подтверждено 1 из 3 реплик` | в сети слишком мало узлов для кворума (нужно ≥2 реплик) |
 | окно приложения не открывается под Wayland | попробуйте `WAYLAND_DISPLAY= ./target/debug/p2p-desktop` (X11 через XWayland) |
 | графики не строятся | `pip install matplotlib` |
-| `python3 scripts/scenarios.py pcap`: нет прав на захват | установите wireshark-cli и добавьте пользователя в группу `wireshark` (или запустите через `sudo`) |
+| сценарий `10` или `underlay`: «нужны права root» | выполните `sudo -v` и запустите снова (драйвер вызывает `sudo -n tc/nft`; правила снимаются сами) |
+| файл «отклонён» | имя с `/`, `..`, ведущей точкой; файл больше `files.max_bytes`; причина — в подсказке на вкладке «Файлы» и в `/api/files` |
+| узлы не соединяются после смены `--channel` | вся сеть должна использовать один канал: TLS-узел не понимает AKE и наоборот |
+| `scenario pcap`: нет прав на захват | установите wireshark-cli и добавьте пользователя в группу `wireshark` (или запустите через `sudo`) |

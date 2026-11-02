@@ -1,112 +1,162 @@
-# ARCHITECTURE.md — Архитектура узла P2P оверлейной сети
+# ARCHITECTURE.md — Архитектура узла P2P-оверлея
 
-> **Навигация:** [docs/README.md](../README.md)  
-> **Требования:** [ТЗ этапов 1-2](../requirements/TZ_Etapy_1-2.md) · [Неформальные требования](../requirements/Ustnie_Trebovaniya.md)  
-> **Смежные:** [PROTOCOL.md](PROTOCOL.md) · [DESIGN_DECISIONS.md](DESIGN_DECISIONS.md)
+> **Навигация:** [docs/README.md](../README.md) · [PROTOCOL.md](PROTOCOL.md) · [DESIGN_DECISIONS.md](DESIGN_DECISIONS.md) ·
+> [журнал решений ADR-01…33](../dev/ARCHITECTURE_DECISIONS.md) · [модель угроз](../THREAT_MODEL.md)
 
----
+## 1. Обзор
 
-## Обзор
+Сеть — набор независимых процессов `p2p-node`. У каждого собственный identity-ключ Ed25519 (NodeID = хэш ключа),
+TCP-порт, таблица маршрутизации Kademlia, DHT-хранилище, журнал и метрики. Центрального каталога нет: узлу при старте
+известен только адрес bootstrap-узла.
 
-Система состоит из независимых Rust-процессов (узлов), каждый из которых:
-- слушает TCP-порт
-- поддерживает таблицу маршрутизации Kademlia (k-bucket)
-- выполняет RPC: PING/PONG, FIND_NODE, STORE, FIND_VALUE
-- присоединяется к сети через bootstrap-узел (Star или Ring)
-- выполняет итеративный lookup (α=3 параллельных)
-- строит многопереходные туннели (min_relays=2)
-- передаёт E2E подписанные сообщения через туннель
-
-## Модульная структура
+Цепочка возможностей (Ustnie_Trebovaniya §7):
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│ main.rs — CLI, загрузка конфига, старт Node                         │
-├────────────┬────────────────┬────────────────┬──────────────────────┤
-│ node/      │ dht/           │ identity/      │ security/            │
-│ TCP-сервер │ RoutingTable   │ Ed25519 ключи  │ TLS 1.3 (rustls)    │
-│ Диспетчер  │ IterativeLookup│ NodeId=SHA-256 │ SessionTracker       │
-│ Bootstrap  │ DhtNode.join() │ load_or_create │ replay-защита        │
-├────────────┼────────────────┼────────────────┼──────────────────────┤
-│ rpc/       │ protocol/      │ transport/     │ bootstrap/           │
-│ RpcHandler │ Payload structs│ FrameReader    │ StarBootstrap        │
-│ RpcClient  │ MessagePack    │ FramedStream   │ RingBootstrap        │
-│ PendingRpc │ Error codes    │ Кадр 24B       │ BootstrapScheme trait│
-├────────────┼────────────────┼────────────────┼──────────────────────┤
-│ tunnel/                     │ app/           │ metrics/             │
-│ TunnelState (машина сост.)  │ AppMessage     │ MetricsCollector     │
-│ TunnelSession + hop         │ Messenger      │ CSV: ping/lookup/    │
-│ TunnelBuilder (TUNNEL_BUILD)│ Ed25519 E2E sig│   tunnel/routing     │
-│ TunnelManager (пул, rebuild)│                │ JSON snapshots       │
-│ TunnelForwarder (DATA/ACK)  │                │                      │
-├─────────────────────────────┴────────────────┴──────────────────────┤
-│ dht/storage/ — DhtStore: STORE/FIND_VALUE + TTL + eviction          │
-├─────────────────────────────────────────────────────────────────────┤
-│ config.rs — NodeConfig (YAML)  ·  types.rs — NodeId, Contact        │
-└─────────────────────────────────────────────────────────────────────┘
+TCP + кадр 24 Б (TLS 1.3)  →  Kademlia DHT (поиск, подписанные записи, R=3)
+   →  туннель через ≥2 relay (TUNNEL_BUILD/DATA/ACK, восстановление)  →  E2E-сообщения с APP_ACK
+      →  эксперимент (сценарии 01–09, сырые данные, графики)
 ```
 
-## Ключевые инженерные решения
+Рядом с узлом работают три программы, которые общаются с ним только через локальный HTTP API:
+`p2p-orchestrator` (приёмка, сценарии, графики, веб-оркестратор), веб-панель узла и настольное приложение `p2p-desktop`.
 
-### Транспорт (§6 ТЗ)
-
-**Решение:** Один TCP-сервер (`TcpListener`), каждое входящее соединение обрабатывается в отдельной `tokio::spawn` задаче. Для исходящих RPC новое соединение открывается на каждый вызов — это упрощает логику и соответствует требованиям этапа 1–2.
-
-**Кадрирование:** `FrameReader` реализован как конечный автомат с буфером (`BytesMut`). Не предполагает, что одно `read()` = один кадр. Поддерживает:
-- частичный заголовок → ждёт
-- склеенные кадры (TCP coalescing) → разбивает
-- размер payload проверяется до выделения буфера (защита от OOM)
-
-### NodeID и идентичность (§14–15 ТЗ)
+## 2. Модули узла
 
 ```
-NodeID = SHA-256(0x01 || pubkey_bytes)
+┌──────────────────────────────────────────────────────────────────────────────────┐
+│ main.rs — CLI, конфиг (YAML + флаги), identity, запуск Node и HTTP API          │
+├──────────────────────────────────────────────────────────────────────────────────┤
+│ node/ — accept-цикл (TLS-рукопожатие → FramedStream → RpcHandler), фоновые задачи: │
+│         bootstrap, bucket refresh, TTL-очистка, republish, монитор туннелей       │
+├───────────────┬───────────────────┬────────────────────┬─────────────────────────┤
+│ transport/    │ rpc/              │ dht/               │ tunnel/                 │
+│ FrameReader   │ RpcHandler (сервер│ RoutingTable       │ TunnelBuilder (BUILD,   │
+│ FramedStream  │  всех типов)      │ IterativeLookup    │  выбор relay)           │
+│ кадр 24 Б     │ RpcClient (PING,  │ DhtNode: join,     │ TunnelManager (пул,     │
+│               │  FIND_*, STORE)   │  put/get, NodeRecord│  резервный, DEAD)      │
+│               │ PendingRpc,       │  псевдонимы        │ profile.rs (профили,    │
+│               │ dial_expect()     │ storage/DhtStore   │  стратегии), routes     │
+├───────────────┼───────────────────┼────────────────────┼─────────────────────────┤
+│ security/     │ identity/         │ app/               │ gui/ · metrics/         │
+│ tls.rs  TLS1.3│ Ed25519, NodeID   │ Messenger (E2E,    │ HTTP API + веб-панель   │
+│ ake.rs  AKE   │ NodeRecord        │  APP_ACK, сессия)  │ оркестратор (веб)       │
+│ e2e.rs  E2E   │ alias.rs          │ files.rs, replay.rs│ CSV-метрики узла        │
+│               │                   │ history.rs (JSONL) │                         │
+├───────────────┴───────────────────┴────────────────────┴─────────────────────────┤
+│ protocol/ — payload-структуры (MessagePack) · config.rs — NodeConfig · types.rs  │
+└──────────────────────────────────────────────────────────────────────────────────┘
 ```
-- Алгоритм: Ed25519 (ed25519-dalek)
-- Ключ хранится в `{STATE_DIR}/identity.key.pem` с правами 0600
-- Загрузка при рестарте: тот же NodeID
-- Закрытые ключи никогда не попадают в репозиторий (`.gitignore`)
 
-### Таблица маршрутизации (§18 ТЗ)
+Вне узла: `src/acceptance.rs` (приёмка этапов 1–2), `src/experiment/` (сценарии 01–09, pcap, графики SVG),
+`src/orchestrator.rs` (CLI), `desktop/` (egui-клиент). Модуль `bootstrap/` — трейт-заготовка схем; схема на практике
+задаётся тем, какие адреса переданы узлу флагом `-b` (star, ring, tree, multi-seed — `experiment/net.rs`).
+`security/session_tracker.rs` — не подключённая заготовка: защиту от повторов дают канал (TLS 1.3 без 0-RTT или счётчики
+записей AKE) и окно `message_id` с метками времени в `app/replay.rs`.
 
-**Реализация:** 256 фиксированных k-bucket по индексу старшего бита XOR-расстояния.
+## 3. Взаимодействие подсистем
 
-**LRU-порядок:** Голова = наименее недавний (LRU), хвост = самый свежий. При обновлении — `push_back`, при вытеснении — `pop_front`.
+### 3.1. Входящее соединение
 
-**PING перед вытеснением:** При заполнении bucket возвращается `Option<Contact>` (LRU) для PING-проверки. Только при тайм-ауте — `evict_lru_and_insert`.
+`TcpListener::accept` → TLS-рукопожатие (тайм-аут `connect_timeout_ms`; NodeID пира — из сертификата) → `FramedStream`
+→ цикл: кадр → проверка версии → `RpcHandler::handle` → ответный кадр. Ошибка формата или версии → ERROR и закрытие;
+процесс продолжает работать.
 
-### RPC-корреляция (§7, §19.3 ТЗ)
+### 3.2. Исходящий RPC
 
-`PendingRpc`: `HashMap<[u8;16], oneshot::Sender<Frame>>`.
-- Инициатор: `register(request_id)` → получает `Receiver`
-- Получатель ответа: `deliver(request_id, frame)` → пробуждает `Receiver`
-- Тайм-аут управляется через `tokio::time::timeout` снаружи
+`rpc::dial_expect(addr, ожидаемый NodeID)` → TCP (с адреса узла, если он задан) + рукопожатие канала (TLS или AKE) со
+сверкой NodeID → `PendingRpc::register(request_id)` → отправка → задача-читатель доставляет ответ в
+`oneshot` по `request_id` → тайм-аут `rpc_timeout_ms` (ADR-01). Соединение на каждый запрос, без пула.
 
-### Итеративный lookup (§21 ТЗ)
+### 3.3. Поиск и хранение
 
-1. Начало: α=3 ближайших из локальной таблицы
-2. Параллельные FIND_NODE к α неопрошенным кандидатам (`tokio::spawn`)
-3. Объединение ответов, добавление новых кандидатов
-4. Остановка при отсутствии прогресса (ближайший кандидат не улучшился)
-5. Возврат K ближайших найденных
+`DhtNode::find_node` → `IterativeLookup` (α параллельных `RpcClient::find_node`, first-K-wins, без себя) → каждый ответ
+обновляет таблицу маршрутизации (`RoutingTable::update`: LRU, полный бакет → PING старейшего).
+`put` = подпись → локальная копия → lookup ключа → STORE на R ближайших → кворум. `get` = локально → lookup → FIND_VALUE
+к ближайшим → проверка подписи.
 
-### Bootstrap (§22 ТЗ)
+### 3.4. Сообщение от A к B
 
-1. PING каждому bootstrap-адресу
-2. Self-lookup: `FIND_NODE(own_id)`
-3. Журнал размера таблицы после bootstrap
+```
+GUI/API ─► Messenger::send_text_acked
+  ├─ туннель к B пригоден и ключ B известен? ── нет ─► lookup(B) → TunnelManager::get_or_build_with
+  │                                                     └─ TunnelBuilder: TUNNEL_BUILD → relay1, relay2
+  ├─ AppMessage + подпись Ed25519 → e2e::seal(B) → TunnelManager::send (основной туннель пула)
+  │      └─ задача-отправитель: TUNNEL_DATA → relay1 → relay2 → B; ждёт TUNNEL_ACK (= кадр у B)
+  │            ошибка → сессия DEAD, профиль виновного relay ↓ → тот же кадр по резервному туннелю пула
+  │            пригодных не осталось → Messenger: lookup → новый туннель без отказавшего relay → повтор
+  └─ ожидание APP_ACK (oneshot по message_id)
+B: RpcHandler::handle_tunnel_data (маршрута нет, конверт ему) → app_tx → Messenger::handle_incoming
+   → e2e::open → проверка from/ключа/подписи → анти-replay → inbox + history → APP_ACK по своему туннелю к A
+```
 
-**Star:** node-01 — seed, все остальные bootstrap через node-01.  
-**Ring:** node-i bootstrap через node-(i-1).
+### 3.5. Фоновые задачи узла
 
-### Сериализация (§9 ТЗ)
+| Задача | Период | Что делает |
+|---|---|---|
+| bootstrap | при старте | PING bootstrap-узлов → self-lookup → публикация NodeRecord; время пишется в `bootstrap.join_ms` |
+| bucket refresh | 60 с | lookup случайного ID в каждом непустом бакете |
+| TTL-очистка | 10 с | удаление истёкших записей хранилища |
+| republish | 80 с | повторная публикация своих записей и NodeRecord |
+| монитор туннелей | 10 с | ACTIVE ⇄ DEGRADED по свежести ACK, DEAD по TTL; удаление DEAD |
+| пополнение пула | после построения и переключения | резервные туннели до `pool_size` на непересекающихся relay |
+| неполные файлы | 10 с | удаление `downloads/.partial/*` без блоков дольше 60 с |
+| доставка в приложение | постоянно | `app_rx` → `Messenger::handle_incoming` |
 
-**Формат:** MessagePack (rmp-serde). Выбрали за: компактность, безопасность, строгую типизацию. Все поля именованы (`to_vec_named`) для совместимости при эволюции.
+Корректное завершение — по SIGINT/SIGTERM: задачи останавливаются, метрики сбрасываются на диск.
 
-## Расширяемость (§28 ТЗ)
+## 4. Графы стенда (ТЗ §20 п. 10)
 
-Архитектура позволяет добавить без рефакторинга:
-- **STORE/FIND_VALUE** (Фаза 4): новые `MsgType` в `[0x05, 0x08]`
-- **TLS 1.3** (Фаза 3): `FramedStream<TlsStream<TcpStream>>` — тот же generic
-- **Туннели** (Фаза 5): отдельный `TunnelManager`, типы `[0x10, 0x15]`
-- **Продвинутый уровень**: K=4, N=20-21 — только правка YAML конфига
+| Граф | Что это | В эксперименте |
+|---|---|---|
+| **underlay** | физическая связность | одна машина, loopback: любой узел достижим из любого по `127.0.0.1:порт` |
+| **bootstrap** | кто кого знает при старте | star (все → узел 0) или ring (узел i → узел i−1); задаётся флагом `-b` |
+| **DHT** | содержимое таблиц маршрутизации после сходимости | 5–11 контактов на узел при N−1 = 14 (k = 3); выгрузка — `routing_tables/` приёмки |
+| **туннельный** | цепочка конкретного туннеля | инициатор → 2 relay (ближайшие к получателю из таблицы инициатора) → получатель; журнал `[tunnel-…] ACTIVE — 2 hops [a → b → получатель]` и `/api/route` |
+
+Bootstrap-граф не выдаётся за физическую топологию (§22 ТЗ): все узлы физически на одном хосте.
+
+## 5. Ключевые решения
+
+| Решение | Почему | ADR |
+|---|---|---|
+| Rust + tokio, один процесс — один узел | безопасность памяти, async без потоков на соединение; TLS-контекст общий на процесс | — |
+| MessagePack, именованные поля | компактнее JSON, бинарные NodeID без base64, эволюция полей через `serde(default)` | DESIGN_DECISIONS |
+| `NodeID = SHA-256(0x01 ‖ pubkey)` и проверка пары везде | самосертификация без PKI | 02 |
+| TLS 1.3 mutual, ключ сертификата = identity-ключ | стандартный протокол канала; NodeID пира берётся из сертификата | 11 |
+| Подписанные записи с `sequence`, first-writer-wins, NodeRecord, кворум 2/3 | подмена и откат записи отвергаются хранителем | 07, 12–14 |
+| E2E sealed box поверх hop-by-hop TLS | relay не видят содержимое; без интерактивного рукопожатия поверх однонаправленного туннеля | 15 |
+| `hops_left` + проверки при BUILD | петли обрываются без знания полного пути на relay | 17 |
+| APP_ACK отдельным подписанным сообщением | доставка = получатель расшифровал и проверил | 18 |
+| Живость туннеля по сквозному TUNNEL_ACK, перестроение при отправке | нет ложных отказов при простое; отказ обнаруживается той же отправкой | 21 |
+| Установленная сессия без lookup | раздельные метрики первого сообщения и сессии (§15.2) | 22 |
+| История JSONL, псевдонимы как подписанные записи DHT | §13.1 без новых зависимостей и типов записей | 23–24 |
+| Сценарии и графики в оркестраторе на Rust, только реальные данные | устные требования §8, ТЗ §22; данные и графики воспроизводимы одной командой | 08, 20, 25 |
+| Lookup не возвращает инициатора | кворум STORE по различным узлам | 26 |
+| Собственное рукопожатие как вариант канала | §11.3; TLS остаётся по умолчанию | 27 |
+| Байтовые поля — MessagePack bin | без раздувания в 1,5 раза; блок файла влезает в сегмент | 28 |
+| Файлы поверх тех же подписанных E2E-сообщений | все гарантии без нового протокола | 29 |
+| Пул туннелей, профили, стратегии, определение виновного relay | переключение на резервный без перестроения; рейтинг различает узлы | 30 |
+| Сверка NodeID во всех соединениях, окно анти-replay на диске | закрыты остаточные риски | 32 |
+
+## 6. Конфигурация
+
+Все параметры — в `config/node_config.yaml` (§5, §14 ТЗ): `dht.k_bucket_size`, `alpha`, `replication_factor`,
+`store_quorum`, `ttl_seconds`, `republish_interval_seconds`, `refresh_interval_seconds`, тайм-ауты транспорта и RPC,
+`tunnel.min_relays`, `max_hops`, `ttl_seconds`, `pool_size`, `relay_selection`, `build_timeout_ms`, `ack_timeout_ms`,
+`security.channel`, `files.*`, `MAX_FRAME_PAYLOAD`. Продвинутый уровень — `config/node_config_advanced.yaml` (k = 4,
+3 relay, пул из 3, выбор `rating`). Флаги CLI `-p`, `-b`, `--host`, `--state-dir`, `--metrics-dir`, `--gui-port`,
+`--channel`, `--relay-selection`, `--pool-size` переопределяют файл; `--fault-drop` / `--fault-delay-ms` — только эксперименты.
+
+## 7. Данные узла
+
+| Что | Где |
+|---|---|
+| Закрытый ключ (PEM, 0600) | `<state_dir>/identity.key` |
+| История сообщений (0600) | `<state_dir>/history.jsonl` |
+| Принятые message_id (анти-replay, окно 10 мин) | `<state_dir>/replay.log` |
+| Полученные файлы / неполные | `<state_dir>/downloads/`, `downloads/.partial/` |
+| Метрики (CSV) | `<metrics_dir>/lookup_*.csv`, `ping_*.csv`, `tunnel_build_*.csv` |
+| Журнал | stdout/stderr процесса (оркестратор и сценарии пишут его в файл) |
+
+Таблица маршрутизации, DHT-хранилище, туннели и окно анти-replay живут в памяти и при перезапуске не сохраняются;
+сохраняются ключ (NodeID стабилен), история, окно анти-replay и полученные файлы.

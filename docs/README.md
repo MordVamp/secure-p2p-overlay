@@ -34,6 +34,10 @@
 | [defense/Theory.md](defense/Theory.md) | Теория (краткая): DHT, Kademlia, TLS, туннели, метрики |
 | [defense/Theory_Etapy_1-2.md](defense/Theory_Etapy_1-2.md) | **Подробная теория Этапов 1–2** — каждый термин, цели, архитектурные решения |
 | [defense/Defense_Etapy_1-2.md](defense/Defense_Etapy_1-2.md) | Что показывать и рассказывать на защите этапов 1–2 |
+| [defense/Zapiska.md](defense/Zapiska.md) | **Пояснительная записка** — 15 разделов по §20 ТЗ, 25 источников |
+| [defense/Presentation.pptx](defense/Presentation.pptx) · [PDF](defense/Presentation.pdf) | **Презентация** к защите, 12 слайдов; текст доклада — в заметках |
+| [defense/Doklad.md](defense/Doklad.md) | Текст доклада (7–10 мин) по слайдам |
+| [defense/Report_Etapy_1-2.md](defense/Report_Etapy_1-2.md) | Краткий отчёт по этапам 1–2 |
 
 ---
 
@@ -45,11 +49,12 @@
 | [dev/CROSSLINKS.md](dev/CROSSLINKS.md) | Все перекрёстные ссылки и причины их существования |
 | [dev/IMPROVEMENTS.md](dev/IMPROVEMENTS.md) | Аудит улучшений: критичные, технические, концептуальные |
 | [dev/COMMANDS.md](dev/COMMANDS.md) | Справочник всех команд (CLI, тесты, скрипты) |
-| [dev/ARCHITECTURE_DECISIONS.md](dev/ARCHITECTURE_DECISIONS.md) | Журнал архитектурных решений (ADR-01…25) |
+| [dev/ARCHITECTURE_DECISIONS.md](dev/ARCHITECTURE_DECISIONS.md) | Журнал архитектурных решений (ADR-01…33) |
 | [dev/GUI.md](dev/GUI.md) | Веб-панель узла, оркестратор, настольное приложение |
 | [dev/plannow.md](dev/plannow.md) | Текущий план: что сделано, что осталось |
 | [requirements/COMPLIANCE_2026-10-26.md](requirements/COMPLIANCE_2026-10-26.md) | Соответствие ТЗ по коду (обновляется) |
 | [THREAT_MODEL.md](THREAT_MODEL.md) | Модель угроз, остаточные риски, проверка pcap |
+| [defense/Report_Experiment.md](defense/Report_Experiment.md) | **Отчёт по эксперименту 01–09 (N=15) с выводами и графиками** |
 
 ---
 
@@ -57,14 +62,14 @@
 
 ```
 experiments/
-  scenarios/         ← 9 сценариев эксперимента (01–09), обёртки над scripts/scenarios.py
+  scenarios/         ← 9 сценариев эксперимента (01–09), обёртки над p2p-orchestrator scenario
   run_all.sh         ← запуск всех сценариев одной командой
   results/           ← приёмка (accept_*) и сценарии (NN_*/<время>/: results.csv, summary.md, meta.json)
 
 desktop/             ← настольное приложение p2p-desktop (egui), работает через HTTP API узла
 docs/img/            ← снимки экрана приложения (для USERGUIDE)
-tests/               ← 113 автоматических тестов, включая негативные
+tests/               ← 114 автоматических тестов, включая негативные
 config/nodes/        ← конфиги для 5 узлов
-scripts/             ← run_acceptance.sh, scenarios.py, analyze.py, run_star.sh, run_ring.sh
+scripts/             ← run_acceptance.sh, run_star.sh, run_ring.sh; python/ — запасные версии драйвера и графиков
 src/                 ← исходный код узла (Rust)
 ```

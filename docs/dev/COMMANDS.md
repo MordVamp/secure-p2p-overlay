@@ -127,12 +127,15 @@ bash scripts/run_ring.sh 13
 ## Эксперименты
 
 ```bash
-# Все 9 сценариев подряд (реальные процессы, драйвер scripts/scenarios.py)
+# Все 9 сценариев подряд + pcap (реальные процессы, драйвер p2p-orchestrator scenario, N=15)
 bash experiments/run_all.sh
 bash experiments/run_all.sh --nodes 5 --seed 2   # N узлов, seed
 
 # Отсутствие открытого текста в трафике (dumpcap/tcpdump с правом захвата на lo)
-python3 scripts/scenarios.py pcap
+./target/debug/p2p-orchestrator scenario pcap
+# Графики (SVG) и stats.md из сохранённых CSV
+./target/debug/p2p-orchestrator plot experiments/results/06_tunnel_message/<время>
+# Запасные версии на Python: scripts/python/scenarios.py, scripts/python/analyze.py
 
 # Отдельные сценарии
 bash experiments/scenarios/01_cold_start.sh

@@ -30,12 +30,12 @@
 | # | Угроза | Мера | Код | Тест |
 |---|---|---|---|---|
 | T1 | Чтение трафика | TLS 1.3 на каждом соединении; сообщения дополнительно E2E-шифруются | `security/tls.rs`, `security/e2e.rs`, `rpc::dial` | `test_tls`, `test_e2e` (шифртекст не содержит открытого текста) |
-| T2 | MITM на канале, подмена узла | взаимная аутентификация; NodeID из SPKI сертификата = `SHA-256(0x01‖pk)`; сверка NodeID в PING | `tls.rs::node_id_from_cert_der` | `tls_wrong_expected_node_id_rejected`, `tls_mutual_auth_yields_real_node_ids` |
-| T3 | Откат на TLS 1.2 / клиент без сертификата / не-TLS | только TLS 1.3, `client auth` обязателен | `tls.rs` | `tls12_only_client_rejected`, `tls_client_without_certificate_rejected`, `tls_plaintext_client_rejected`, `tls_garbage_bytes_rejected` |
+| T2 | MITM на канале, подмена узла | взаимная аутентификация (TLS 1.3 или AKE); NodeID пира — из его ключа; **ожидаемый NodeID сверяется в рукопожатии каждого исходящего соединения** (RPC к контактам, TUNNEL_BUILD, первый и следующий hop) | `tls.rs`, `ake.rs`, `rpc::dial_expect`, `tunnel/routes.rs` | `tls_wrong_expected_node_id_rejected`, `unexpected_node_id_rejected` (AKE) |
+| T3 | Откат на TLS 1.2 / клиент без сертификата / не-TLS; вмешательство в рукопожатие | TLS: только 1.3, client auth обязателен. AKE: подпись каждой стороны над транскриптом из всех полей (§11.3), подмена эфемерного ключа, nonce или session_id ломает подпись | `tls.rs`, `ake.rs` | `tls12_only_client_rejected`, `tls_client_without_certificate_rejected`, `modified_ephemeral_key_rejected`, `modified_handshake_field_rejected`, `substituted_identity_key_without_private_key_rejected` |
 | T4 | Подмена связки NodeID↔ключ | пара проверяется в PONG, контактах FIND_NODE, STORE, TUNNEL_BUILD, подписи сообщений | `verify_node_id_bytes` | `test_identity` (E22), `foreign_key_substitution_rejected` |
 | T5 | Relay читает/меняет сообщение | E2E: X25519 + HKDF + AES-256-GCM, AAD = получатель + эфемерный ключ | `e2e.rs` | `relay_or_third_party_cannot_open`, `tampered_ciphertext_rejected`, `eve_cannot_open_even_after_retargeting_envelope` |
 | T6 | Подделка отправителя | подпись Ed25519 внутри сообщения (sign-then-encrypt), ключ привязан к `from` | `messenger.rs` | `forged_ack_signature_rejected`, `test_audit2` (A6) |
-| T7 | Replay сообщений / ACK | `message_id` в множестве принятых (до 4096) | `Messenger::handle_incoming` | `replayed_ack_rejected` |
+| T7 | Replay сообщений / ACK / записей канала | прикладной уровень: окно 10 мин по подписанной метке времени + принятые `message_id` на диске (`replay.log`, переживает перезапуск); канал: TLS 1.3 без 0-RTT или монотонные счётчики записей AKE | `app/replay.rs`, `ake.rs` | `replayed_ack_rejected`, `replay_rejected_after_restart_and_outside_window`, `replayed_record_in_current_session_rejected`, `record_from_finished_session_rejected` |
 | T8 | Поддельный APP_ACK | засчитывается только от адресата, подписан и зашифрован | `messenger.rs` | `ack_from_wrong_node_is_ignored` |
 | T9 | Подмена DHT-записи | подпись публикатора; `sequence` входит в подпись | `dht/storage/record.rs` | `test_audit2` (A7), `tampered_sequence_breaks_signature` |
 | T10 | Откат версии записи | `sequence` монотонен; `NodeRecord.sequence_number` + `pick_newer` | `store.rs`, `identity/record.rs` | `sequence_rollback_rejected`, `sequence_rollback_rejected` (NodeRecord) |
@@ -47,6 +47,8 @@
 | T16 | Relay, потерявший маршрут (перезапуск, истёкший TTL), «принимает» кадр — отправитель считает его доставленным | без маршрута кадр подтверждается, только если E2E-конверт адресован этому узлу, иначе ERROR → туннель DEAD → новый маршрут | `rpc::handle_tunnel_data`, `e2e::recipient` | `unknown_tunnel_with_foreign_envelope_is_not_acked`; сценарий 07 (10/10 восстановлений) |
 | T17 | Отказ relay рвёт доставку надолго | нет TUNNEL_ACK → DEAD; повтор через новый туннель без отказавшего relay в той же отправке | `tunnel/manager.rs`, `tunnel/builder.rs`, `messenger::deliver` | `t6_8_send_failure_marks_dead`; сценарий 07 |
 | T18 | Подмена псевдонима (чужой NodeID под именем) | запись подписана владельцем, ключ и значение привязаны к имени; занятое имя не перезаписывается | `identity/alias.rs`, `dht::publish_alias` | `alias_record_with_forged_owner_rejected`, `alias_record_for_other_name_or_key_rejected` |
+| T19 | Вредоносный файл: обход каталога (`../x`), огромный размер, подмена блока, блок от чужого узла | безопасное имя, лимит `files.max_bytes`, проверка индекса, длины и отправителя блока, итоговый SHA-256 (не совпал — файл удаляется), запись только в `downloads/`, тайм-аут неполного файла | `app/files.rs` | `tests/test_files.rs` (8) |
+| T20 | Неисправный или злонамеренный ретранслятор (отказы, задержки) | пул туннелей с переключением на резервный; профиль кандидата и выбор по рейтингу; виновный определяется по цепочке ошибок | `tunnel/manager.rs`, `tunnel/profile.rs` | `tests/test_relay_profiles.rs`; сценарии `failover`, `strategy` |
 
 ## 4. Криптография
 
@@ -55,6 +57,7 @@
 | Идентичность, подписи | Ed25519 |
 | NodeID | SHA-256(0x01 ‖ pubkey) |
 | Канал | TLS 1.3 (rustls, провайдер `ring`) |
+| Канал (вариант `ake`, §11.3) | подписанный транскрипт Ed25519 + эфемерный X25519 → HKDF-SHA256 (ключи по направлениям) → AES-256-GCM, счётчик записей |
 | E2E | эфемерный X25519 → HKDF-SHA256 → AES-256-GCM, случайный 96-бит nonce |
 | Ключ получателя для E2E | выводится из его Ed25519 (Montgomery-форма / `SHA-512(seed)[..32]`) |
 
@@ -70,17 +73,19 @@
 | **Squatting псевдонима** | имя достаётся тому, кто опубликовал первым; при разделении сети его могут занять двое; после ухода владельца имя освобождается через TTL | сверять NodeID собеседника при первом контакте (TOFU) |
 | **История на диске** | `history.jsonl` хранит тексты открыто (права 0600), ротации нет | та же граница доверия, что у `identity.key`; шифрование и ротация — доработка |
 | **Forward secrecy E2E** | эфемерный ключ только у отправителя; компрометация долговременного ключа получателя раскрывает ранее перехваченные сообщения | двусторонний ratchet (не реализован) |
-| **Сверка NodeID в RPC** | ожидаемый NodeID проверяется только в PING; остальные RPC шифруются и аутентифицируют ключ, но без сверки с ожидаемым адресатом | протащить `expected` через сигнатуры RPC |
 | **TLS-контекст общий на процесс** | `rpc::install_tls` — один на процесс; допущение «один узел на процесс» | не запускать несколько узлов в одном процессе |
+| **Окно анти-replay зависит от часов** | сообщение принимается, если его метка времени не старше 10 мин и не опережает часы больше чем на 2 мин; сильно расходящиеся часы узлов ведут к отказам | синхронизация времени (NTP) |
+| **AKE не скрывает идентичность** | в собственном рукопожатии NodeID и ключи сторон передаются открыто (TLS 1.3 шифрует сертификаты) | вне задач работы |
+| **`/api/send_file` читает любой файл** | локальный API без аутентификации: процесс, достучавшийся до 127.0.0.1, может отправить любой файл, доступный узлу | не пробрасывать порт API; токен — доработка |
+| **Флаги внесения отказов** | `--fault-drop`, `--fault-delay-ms` делают узел неисправным ретранслятором — только для экспериментов; узел предупреждает в журнале | не использовать вне стенда |
 | **Веб-панель без аутентификации** | `127.0.0.1`, без логина; любой локальный процесс может отправлять сообщения от имени узла | не пробрасывать порт; рассматривать токен |
 | **Хранение ключа** | приватный ключ лежит файлом без шифрования паролем | права на каталог `state/`; шифрование ключа — доработка |
-| **Replay за пределами окна** | множество `seen` сбрасывается при 4096 записях и не переживает перезапуск; повтор старого сообщения после этого пройдёт | окно по `timestamp_ms` (не реализовано) |
 | **DoS** | нет ограничения скорости запросов на один узел | не заявляется |
 | **Совместимость** | форматы подписи записей (`v2`) и `TUNNEL_DATA` менялись; старые узлы несовместимы | обновлять сеть целиком |
 
 ## 5. Проверка захватом трафика (pcap)
 
-`python3 scripts/scenarios.py pcap`: `dumpcap -i lo` на портах оверлея во время 5 сообщений и 5 DHT STORE с уникальным маркером;
+`p2p-orchestrator scenario pcap`: `dumpcap -i lo` на портах оверлея во время 5 сообщений и 5 DHT STORE с уникальным маркером;
 маркер в захвате **не найден**, весь полезный трафик — TLS (в ServerHello согласован TLS 1.3). Положительный контроль: тот же
 маркер находится в открытом localhost-HTTP панели узла — метод поиска работает. Результат — `experiments/results/pcap_no_plaintext/`.
 Ограничение: проверяется только отсутствие известной строки, а не стойкость шифрования; метаданные (размеры, время) видны.

@@ -1,116 +1,338 @@
 # Спецификация протокола
 
-## Формат кадра
-Заголовок: 24 байта, big-endian.
+> **Навигация:** [docs/README.md](../README.md) · [ARCHITECTURE.md](ARCHITECTURE.md) · [журнал решений](../dev/ARCHITECTURE_DECISIONS.md)
+>
+> Описывает протокол в том виде, в каком он реализован в коде (`src/transport/framing.rs`, `src/protocol/payload.rs`,
+> `src/rpc/`, `src/tunnel/`, `src/security/e2e.rs`, `src/app/`). Версия протокола — 1.
+
+## 1. Транспорт
+
+- **Канал — один из двух вариантов** (`security.channel`, флаг `--channel`; вся сеть использует один):
+  - `tls` (по умолчанию) — **TLS 1.3** на каждом соединении (`rustls`, только TLS 1.3, без 0-RTT). Аутентификация взаимная:
+    у каждой стороны самоподписанный сертификат на её identity-ключе Ed25519. Сертификат проверяется не по цепочке доверия,
+    а по привязке: NodeID пира вычисляется из ключа сертификата (SPKI) и сравнивается с ожидаемым (`security/tls.rs`, ADR-02);
+  - `ake` — **собственное рукопожатие** (ТЗ §11.3, `security/ake.rs`, §1.1 ниже).
+- **Ожидаемый NodeID сверяется в рукопожатии каждого исходящего соединения**, где он известен: FIND_NODE / STORE /
+  FIND_VALUE к контакту, TUNNEL_BUILD к выбранному relay, TUNNEL_DATA к первому hop и relay → следующему hop (NodeID
+  следующего hop запоминается при TUNNEL_BUILD). Если по адресу отвечает другой узел, соединение отвергается.
+- **Одно соединение на запрос.** Запрос и ответ — по одному кадру в одном соединении; ответ сопоставляется с запросом
+  по `request_id` (`rpc/pending.rs`).
+- Узел слушает `LISTEN_HOST:LISTEN_PORT` (по умолчанию `0.0.0.0`) и анонсирует пирам `127.0.0.1:PORT`, если слушает на `0.0.0.0`.
+  С конкретным адресом (`--host 127.0.1.5`) узел и слушает, и соединяется с этого адреса (сценарий ограниченного underlay).
+
+### 1.1. Собственное рукопожатие (AKE, `security.channel: ake`)
+
+```text
+I → R  Hello  {version, NodeID_I, IK_I, EK_I, nonce_I(32)}
+R → I  Reply  {version, NodeID_R, IK_R, EK_R, nonce_R(32), session_id(16), sig_R = Ed25519(IK_R, "p2p-ake-v1 responder signature" ‖ T)}
+I → R  Finish {sig_I = Ed25519(IK_I, "p2p-ake-v1 initiator signature" ‖ T)}       — уходит одним сегментом с первой записью
+T = "p2p-ake-v1" ‖ version ‖ 0x01 ‖ 0x02 ‖ NodeID_I ‖ NodeID_R ‖ IK_I ‖ IK_R ‖ EK_I ‖ EK_R ‖ nonce_I ‖ nonce_R ‖ session_id
+k_I→R ‖ k_R→I = HKDF-SHA256(salt = SHA-256(T), ikm = X25519(EK_I, EK_R), info = "p2p-ake-v1 keys")   (2 × 32 байта)
+```
+
+- IK — identity-ключ Ed25519, EK — эфемерный X25519 (новый на каждое соединение), session_id выбирает ответчик.
+- Обе стороны проверяют длины полей, `NodeID = SHA-256(0x01 ‖ IK)`, что пир не выдаёт себя за другую сторону, ожидаемый
+  NodeID (инициатор) и подпись пира над **своим** транскриптом. Подмена EK, nonce, session_id или ключа меняет T —
+  подпись не сходится. Разные метки подписей не дают отразить подпись одной роли как подпись другой.
+- Сообщения рукопожатия: `len(u32 BE) ‖ msgpack` (≤ 4096 байт).
+- **Записи:** `len(u32) ‖ counter(u64) ‖ AES-256-GCM(k_dir, nonce = 0⁴ ‖ counter, aad = "p2p-ake-rec" ‖ session_id ‖ dir ‖ counter)`,
+  открытый текст ≤ 16 КиБ. Счётчик каждого направления строго растёт с 0: повтор или перестановка записи в текущей сессии
+  отвергаются, запись другой (завершённой) сессии не проходит проверку подлинности (другие ключи и session_id). Ключи
+  сессии обнуляются при закрытии (`Zeroizing`).
+- Транскрипт содержит всё, что требует §11.3: версию, роли, оба NodeID, оба identity-ключа, оба эфемерных ключа, обе
+  случайные величины и session_id.
+
+## 2. Формат кадра
+
+Заголовок — 24 байта, все поля big-endian; кадры передаются внутри TLS-записей.
 
 ```
 Offset  Size  Field           Description
-0       1     version         Версия протокола (= 1)
-1       1     msg_type        Тип сообщения (таблица ниже)
-2       2     flags           Битовые флаги (IS_RESPONSE=0x1, IS_ERROR=0x2, MORE_FRAGS=0x4)
-4       16    request_id      UUID v4 — сопоставление запрос/ответ, дедупликация
-20      4     payload_length  Длина payload в байтах (0..65536), BE
-24      var   payload         MessagePack-сериализованные данные
+0       1     version         версия протокола (= 1); иная → ERROR BAD_VERSION и закрытие соединения
+1       1     msg_type        тип сообщения (§3)
+2       2     flags           IS_RESPONSE=0x0001, IS_ERROR=0x0002, MORE_FRAGS=0x0004 (зарезервирован, не используется)
+4       16    request_id      UUID v4 из CSPRNG — сопоставление запроса и ответа
+20      4     payload_length  длина payload, 0..65536
+24      var   payload         MessagePack (rmp-serde, именованные поля; байтовые поля — тип bin)
 ```
 
-`payload_length` проверяется до выделения буфера. При превышении MAX_FRAME_PAYLOAD=65536 → ERROR-кадр.
+Байтовые поля (`Vec<u8>`: ключи, подписи, шифртекст, блоки файлов) кодируются как MessagePack **bin**. По умолчанию
+rmp-serde пишет их массивом чисел, и байт ≥ 128 занимает 2 байта, то есть данные раздуваются ≈ в 1,5 раза. Декодер
+принимает оба представления.
 
-## Таблица типов сообщений
+`payload_length` проверяется **до** выделения буфера: больше `MAX_FRAME_PAYLOAD = 65536` → ошибка, соединение закрывается.
+`FrameReader` — конечный автомат: частичные и склеенные чтения TCP не нарушают границ кадров (тесты T1.x).
 
-| Hex  | Константа             | Payload-структура |
-|------|-----------------------|-------------------|
-| 0x01 | PING                  | `{nonce: u64}` |
-| 0x02 | PONG                  | `{nonce: u64}` |
-| 0x03 | FIND_NODE_REQUEST     | `{target: [u8;32], alpha: u8}` |
-| 0x04 | FIND_NODE_RESPONSE    | `{contacts: [Contact]}` |
-| 0x05 | STORE_REQUEST         | `{key: [u8;32], record: NodeRecord}` |
-| 0x06 | STORE_RESPONSE        | `{ok: bool, reason: Option<str>}` |
-| 0x07 | FIND_VALUE_REQUEST    | `{key: [u8;32]}` |
-| 0x08 | FIND_VALUE_RESPONSE   | `{value: Option<NodeRecord>, contacts: [Contact]}` |
-| 0x10 | TUNNEL_BUILD          | `{tunnel_id: [u8;16], route: [NodeId], ttl: u32}` |
-| 0x11 | TUNNEL_BUILD_OK       | `{tunnel_id: [u8;16]}` |
-| 0x12 | TUNNEL_BUILD_FAIL     | `{tunnel_id: [u8;16], reason: str}` |
-| 0x13 | TUNNEL_DATA           | `{tunnel_id: [u8;16], seq: u64, ciphertext: bytes}` |
-| 0x14 | TUNNEL_ACK            | `{tunnel_id: [u8;16], seq: u64}` |
-| 0x15 | TUNNEL_CLOSE          | `{tunnel_id: [u8;16]}` |
-| 0x20 | APP_MESSAGE           | `{message_id: [u8;16], to: NodeId, ciphertext: bytes}` |
-| 0x21 | APP_ACK               | `{message_id: [u8;16], ok: bool}` |
-| 0x7F | ERROR                 | `{code: u16, description: str}` |
+## 3. Типы сообщений
 
-## Ключ DHT-записи
+| Hex | Тип | Направление | Payload | Статус |
+|---|---|---|---|---|
+| 0x01 | PING | запрос | `PingPayload {sender: Contact, timestamp_ms}` | ✅ |
+| 0x02 | PONG | ответ | `PongPayload {responder: Contact, ping_timestamp_ms, responder_timestamp_ms}` | ✅ |
+| 0x03 | FIND_NODE_REQUEST | запрос | `{sender: Contact, target_node_id: [u8;32]}` | ✅ |
+| 0x04 | FIND_NODE_RESPONSE | ответ | `{responder: Contact, target_node_id, contacts: [Contact] (≤ k, по XOR к цели)}` | ✅ |
+| 0x05 | STORE_REQUEST | запрос | `{sender: Contact, key: [u8;32], value: bytes, ttl_seconds, signature, sequence}` | ✅ |
+| 0x06 | STORE_RESPONSE | ответ | `{responder: Contact, key, stored: bool}` | ✅ |
+| 0x07 | FIND_VALUE_REQUEST | запрос | `{sender: Contact, key: [u8;32]}` | ✅ |
+| 0x08 | FIND_VALUE_RESPONSE | ответ | `{responder, key, value: Option<bytes>, contacts: [Contact], ttl_remaining_secs, publisher_key, signature, sequence}` | ✅ |
+| 0x10 | TUNNEL_BUILD | запрос | `{tunnel_id: [u8;16], initiator: Contact, hop_index, total_hops, ttl_seconds, timestamp_ms, next_hop: Option<Contact>}` | ✅ |
+| 0x11 | TUNNEL_BUILD_OK | ответ | `{tunnel_id, relay: Contact, hop_index}` | ✅ |
+| 0x12 | TUNNEL_BUILD_FAIL | ответ | `{tunnel_id, reason}` | определён; relay отвечает ERROR, инициатор принимает оба |
+| 0x13 | TUNNEL_DATA | запрос | `{tunnel_id, seq: u64, data: bytes (≤ 48 КиБ), hops_left: u8}` | ✅ |
+| 0x14 | TUNNEL_ACK | ответ | `{tunnel_id, seq, rtt_ms}` | ✅ |
+| 0x15 | TUNNEL_CLOSE | — | `{tunnel_id, reason}` | определён, не отправляется: маршрут на relay истекает по TTL |
+| 0x20 | APP_MESSAGE | — | — | не используется: прикладные сообщения идут E2E-конвертом внутри TUNNEL_DATA (§7) |
+| 0x21 | APP_ACK | — | — | то же: APP_ACK — `AppMessage` с `kind = Ack` (§7.3) |
+| 0x7F | ERROR | ответ | `{code: u16, description}` | ✅ |
+
+`Contact = {node_id, identity_algorithm: "ed25519", identity_public_key, host, port, last_seen_ms, last_verified_ms}`;
+`last_*` — локальные метаданные, от пира как достоверные не принимаются.
+
+**Коды ERROR:** 1 `BAD_VERSION`, 2 `UNKNOWN_TYPE`, 3 `PAYLOAD_TOO_LARGE`, 4 `BAD_PAYLOAD`, 5 `BAD_NODE_ID`, 6 `TIMEOUT`, 99 `INTERNAL`.
+Описание ошибки не содержит стека вызовов, путей и секретов.
+
+**Проверка пары NodeID ↔ ключ.** `NodeID = SHA-256(0x01 ‖ ed25519_pubkey)`. Пара пересчитывается во всех местах, где узел
+получает чужой контакт или подпись: PING/PONG, отправитель FIND_NODE/STORE/FIND_VALUE, контакты в ответах, TUNNEL_BUILD
+(инициатор, `next_hop`), TUNNEL_BUILD_OK (relay), записи DHT, прикладные сообщения. Несовпадение → отказ.
+
+## 4. DHT
+
+### 4.1. Ключи
+
+| Назначение | Ключ (32 байта) | Значение |
+|---|---|---|
+| Пользовательская запись (`/api/store`) | `SHA-256(строка ключа)` | произвольные байты ≤ 4096 |
+| Адресная запись узла (NodeRecord) | `SHA-256("node:" ‖ NodeID)` | `"NREC1" ‖ msgpack(NodeRecord)` |
+| Псевдоним | `SHA-256("alias:" ‖ alias)`, alias ∈ `[a-z0-9_-]{1,32}` | `"ALIAS1:" ‖ alias` |
+
+### 4.2. Подписанная запись (`DhtRecord`)
+
 ```
-key = SHA-256("node:" ‖ node_id)   // упрощённый уровень
-// продвинутый: SHA-256("alias:" ‖ normalize(alias))
+signing_bytes = "P2P-DHT-RECORD-v2" ‖ key(32) ‖ publisher_node_id(32) ‖ sequence(u64 BE) ‖ value
+signature     = Ed25519(publisher_sk, signing_bytes)
 ```
 
+TTL и время публикации не подписываются: TTL назначает хранитель (`min(запрошенный, dht.ttl_seconds)`).
+`sequence` строго растёт: при каждой публикации `max(предыдущий + 1, текущее unix-время в мс)`.
 
-## Примеры payload (§9 ТЗ)
+**Приём STORE хранителем** (`rpc::handle_store`), по порядку:
+1. пара NodeID/ключ отправителя сходится;
+2. подпись записи валидна для ключа публикатора;
+3. если значение — NodeRecord: запись валидна (подпись, срок), лежит под своим ключом `node:<NodeID>`, принадлежит
+   отправителю и не откатывает `sequence_number`;
+4. **first-writer-wins:** живую запись другого публикатора под тем же ключом не перезаписываем;
+5. **без отката:** от того же публикатора отвергается меньший `sequence` и тот же `sequence` с другим значением
+   (тот же `sequence` с тем же значением — обновление TTL).
 
-Все значения сериализуются через MessagePack. Ниже показаны логические структуры.
+**FIND_VALUE** (`DhtNode::get`): сначала локальное хранилище, затем lookup ключа и запрос к ближайшим узлам по очереди.
+Принимается первая запись с валидной подписью; запись с неверной подписью отбрасывается с предупреждением.
+
+### 4.3. NodeRecord
+
+```
+NodeRecord = {node_id, identity_pubkey, addresses: [SocketAddr], sequence_number, issued_at, expires_at, signature}
+canonical  = node_id ‖ identity_pubkey ‖ addresses (строками) ‖ sequence_number ‖ issued_at ‖ expires_at  (числа BE)
+```
+
+Проверяется: NodeID = hash(ключа), подпись, `issued_at` не из будущего, срок не истёк, запись лежит под своим ключом.
+Из двух записей одного узла выбирается запись с большим `sequence_number` (`pick_newer`); откат отклоняется.
+
+### 4.4. Процедуры
+
+- **Bootstrap:** PING каждого bootstrap-адреса → self-lookup `FIND_NODE(own_id)` → публикация своего NodeRecord.
+- **Lookup:** α = 3 параллельных FIND_NODE к ближайшим неопрошенным кандидатам; ответы обрабатываются по мере
+  поступления; остановка, когда ближайший опрошенный не улучшился; результат — k ближайших. Свой NodeID в кандидаты не
+  добавляется (ADR-26).
+- **STORE:** подписать → сохранить локально → lookup ключа → STORE на R = 3 ближайших других узла. Успех — если запись
+  подтвердили не менее `store_quorum` = 2 узлов, считая локальную копию.
+- **Refresh:** раз в `refresh_interval_seconds` (60 с) — lookup случайного ID в каждом непустом бакете.
+- **Republish:** раз в `republish_interval_seconds` (80 с) — повторный STORE своих записей с новым `sequence`;
+  NodeRecord пересоздаётся (новые `issued_at`/`expires_at`).
+- **TTL:** записи с истёкшим TTL удаляются каждые 10 с и не отдаются при чтении.
+
+## 5. Туннели
+
+### 5.1. Построение
+
+Инициатор выбирает `min_relays` ретрансляторов (упрощённый уровень — 2, продвинутый — 3) из своей таблицы маршрутизации
+по стратегии `tunnel.relay_selection` (§5.3; по умолчанию — ближайших к получателю), без себя, получателя и повторов. Адрес получателя берётся из результата lookup (ADR-19). Затем инициатор **сам** соединяется с каждым relay по
+очереди и отправляет TUNNEL_BUILD:
+
+```
+relay[i] ← TUNNEL_BUILD{tunnel_id, initiator, hop_index = i, total_hops, ttl, next_hop = relay[i+1] | получатель}
+relay[i] → TUNNEL_BUILD_OK{tunnel_id, relay = свой Contact, hop_index}
+```
+
+Relay проверяет: пара NodeID/ключ инициатора и `next_hop`; `1 ≤ total_hops ≤ max_hops` (5); `hop_index < total_hops`;
+`next_hop` ≠ сам relay и ≠ инициатор; `tunnel_id` ещё не используется. Затем он запоминает `tunnel_id → next_hop` на
+`min(ttl, tunnel.ttl_seconds)` (600 с). Инициатор проверяет, что ответил именно выбранный relay (NodeID и ключ в
+TUNNEL_BUILD_OK). Ошибка на любом hop → новая попытка без отказавшего relay, всего до 3 попыток (ADR-21).
+
+### 5.2. Передача
+
+```
+инициатор → relay[0]: TUNNEL_DATA{tunnel_id, seq, data, hops_left = max_hops + 1}
+relay[i]  → next_hop: тот же кадр с hops_left − 1; ждёт TUNNEL_ACK следующего hop и только потом отвечает своим TUNNEL_ACK
+получатель: маршрута для tunnel_id нет → это конечная точка; data передаётся приложению, ответ TUNNEL_ACK
+```
+
+- `hops_left = 0` на relay → кадр отбрасывается (защита от петель, ADR-17).
+- **TUNNEL_ACK первого relay означает, что кадр дошёл до получателя.** Любой сбой по пути возвращается инициатору как ERROR;
+  relay дописывает в описание адрес следующего hop и причину с дальнего конца («next hop A replied Error: connect to B refused»).
+- Узел без маршрута подтверждает кадр, только если `data` — E2E-конверт, адресованный ему; иначе ERROR. Так relay,
+  потерявший маршрут (перезапуск, истёкший TTL), не выдаёт себя за получателя (ADR-21).
+
+### 5.3. Пул туннелей и выбор ретрансляторов (продвинутый уровень)
+
+- К каждому получателю — до `tunnel.pool_size` туннелей (упрощённый уровень — 1, продвинутый — 3). Основной строится
+  при первой отправке, остальные — в фоне, по возможности на ретрансляторах, не входящих в другие туннели пула.
+- Отправка идёт по первому пригодному туннелю. Нет TUNNEL_ACK или пришёл ERROR — туннель DEAD, и тот же кадр сразу
+  уходит по следующему туннелю пула (**переключение на резервный**). Отчёт об отправке содержит `failover`, `detect_ms`
+  (от начала отправки до обнаружения отказа) и `switch_ms` (от обнаружения до TUNNEL_ACK по резервному); пул затем
+  пополняется в фоне.
+- **Профиль кандидата** (`tunnel/profile.rs`, по наблюдениям этого узла): успехи, отказы, EMA успешности (α = 0,3),
+  EMA задержки, время последнего наблюдения, отказы подряд, подсеть /24. Обновляется при TUNNEL_BUILD (по каждому hop)
+  и при передаче: успех — всем hop; отказ — узлу, на котором оборвалась цепочка. Его адрес извлекается из текста ошибки:
+  relay включает в ERROR адрес следующего hop и причину с дальнего конца. Если виновного не определить — всем hop.
+- **Стратегии** (`tunnel.relay_selection`): `closest` — ближайшие к получателю по XOR (упрощённый уровень); `random` —
+  случайные допустимые; `rating` — по оценке `EMA успешности − 0,15 · min(отказы подряд, 4) − EMA задержки / 1000`.
+  Неизвестный узел получает нейтральную оценку 0,5, чтобы новые узлы пробовались. При равных — разные подсети.
+
+### 5.4. Состояния и восстановление
+
+`BUILDING → ACTIVE ⇄ DEGRADED → DEAD`, `ACTIVE → CLOSING → DEAD`.
+
+| Переход | Условие |
+|---|---|
+| ACTIVE → DEGRADED | давно (> 12 × `ack_timeout_ms` = 60 с) не было TUNNEL_ACK — простой; туннель остаётся пригодным |
+| DEGRADED → ACTIVE | получен TUNNEL_ACK |
+| ACTIVE/DEGRADED → DEAD | отправка не подтверждена (тайм-аут, ERROR, нет соединения) или прошло 90% `tunnel.ttl_seconds` |
+
+DEAD-туннель удаляется. Если в пуле не осталось пригодных туннелей, при следующей отправке строится новый: свежий lookup получателя, TUNNEL_BUILD без relay, отказавших
+в предыдущих попытках. Если отказ обнаружен посреди отправки, тот же конверт отправляется повторно, один раз (ADR-21).
+Туннели однонаправленные: ответы и APP_ACK получатель отправляет по своему туннелю.
+
+## 6. E2E-конверт
+
+Relay видят только конверт (`security/e2e.rs`; схема ECIES / sealed box, по смыслу как HPKE в режиме Base):
+
+```
+Envelope = {v: 1, to: NodeID получателя, eph: X25519 pubkey (32), nonce (12), ct}
+R      = X25519-ключ получателя, выведенный из его Ed25519 (форма Монтгомери)
+shared = X25519(eph_sk, R)                          // новая эфемерная пара на каждое сообщение
+K      = HKDF-SHA256(salt = eph ‖ R, ikm = shared, info = "p2p-e2e-v1")
+ct     = AES-256-GCM(K, nonce, plaintext = msgpack(AppMessage), aad = "p2p-e2e-v1" ‖ to ‖ eph)
+```
+
+Поле `to` открыто: оно нужно конечному узлу (§5.2) и входит в AAD. Открытые (не завёрнутые в конверт) прикладные
+данные не принимаются.
+
+## 7. Прикладной уровень
+
+### 7.1. Сообщение
+
+```
+AppMessage = {message_id: UUIDv4 (16), kind: Text | Ack | System, from, to, timestamp_ms, payload, signature, sender_pubkey}
+signing_bytes = message_id ‖ kind(1 = Text, 2 = Ack, 3 = System) ‖ from ‖ to ‖ timestamp_ms(u64 BE) ‖ payload
+signature     = Ed25519(sender_sk, signing_bytes)          // sign-then-encrypt: подпись внутри конверта
+```
+
+Получатель: расшифровка → `to` = он сам → NodeID(`sender_pubkey`) = `from` → подпись → анти-replay: подписанная
+`timestamp_ms` не старше 10 минут и не опережает часы больше чем на 2 минуты, `message_id` в этом окне не встречался.
+Принятые id хранятся в `<state_dir>/replay.log` и загружаются при старте — повтор отвергается и после перезапуска.
+
+### 7.2. Отправка
+
+lookup получателя (пропускается в установленной сессии: туннель пригоден и ключ получателя известен) → туннель →
+подпись → конверт → TUNNEL_DATA → ожидание TUNNEL_ACK → ожидание APP_ACK (до 8 с).
+
+### 7.3. APP_ACK
+
+`AppMessage{kind: Ack, payload: message_id подтверждаемого}`, подписан и завёрнут в конверт, как текст. Засчитывается,
+только если `from` = адресат исходного сообщения. На ACK ACK не отправляется, в inbox ACK не попадает.
+
+### 7.4. История и псевдонимы
+
+- История — `<state_dir>/history.jsonl` (права 0600): одна JSON-строка на событие: `dir` out/in, `peer`, `message_id`,
+  `status` delivered/sent/failed/received, `text`, `rtt_ms`, `error`, разбивка задержки.
+- Псевдоним — запись DHT (§4.1); владелец — публикатор подписанной записи. Разрешение `@alias`: FIND_VALUE → проверка
+  ключа, значения и подписи → NodeID публикатора (ADR-24).
+
+### 7.5. Передача файлов (§13.2)
+
+Те же подписанные и зашифрованные `AppMessage`, типы `FileOffer`, `FileBlock`, `FileAck`, `FileDone` (`app/files.rs`):
+
+```text
+A → B  FileOffer {transfer_id(16), name, size, sha256(32), block_size, blocks}
+A → B  FileBlock {transfer_id, index, data}           × окно (window = 8 блоков; последний блок окна шлётся в каждом раунде)
+B → A  FileAck   {transfer_id, received, missing[]}   на последний блок окна
+       … A повторяет пропущенные (до 3 раундов на окно, ожидание подтверждения 10 с) …
+B → A  FileAck (последний) и FileDone {transfer_id, ok, error} — после проверки SHA-256 всего файла
+```
+
+- Блок — 40 КиБ (≤ 44 КиБ): блок с подписью и конвертом укладывается в сегмент туннеля 48 КиБ и в кадр 64 КиБ
+  (тест `largest_block_fits_tunnel_segment_and_frame`).
+- Приёмник: безопасное имя (без `/`, `\`, `:`, `..`, ведущей точки, управляющих символов; ≤ 200 байт), лимит
+  `files.max_bytes` (64 МиБ), согласованность `blocks` с `size`, блоки только от отправителя предложения, индекс и длина
+  блока проверяются, дубликаты игнорируются. Запись — только в `<state_dir>/downloads/.partial/<id>.part`; после всех
+  блоков — SHA-256: совпал → перенос в `downloads/` (при совпадении имён — суффикс ` (1)`), не совпал → удаление.
+  Неполный файл удаляется, если блоков не было `files.incomplete_timeout_s` (60 с). Возобновление не реализовано.
+- Подтверждения FileAck/FileDone засчитываются, только если пришли от получателя файла.
+
+## 8. Локальный HTTP API узла
+
+Только `127.0.0.1`, проверка `Host` (защита от DNS-rebinding) и `Origin` для POST; аутентификации нет. Полный список
+эндпоинтов — [USERGUIDE §5](../../USERGUIDE.md#5-веб-панель-и-http-api).
+
+## 9. Примеры payload (логическое представление MessagePack)
 
 ### PING
 ```json
 {
   "sender": {
-    "node_id": "a1b2c3...32bytes",
+    "node_id": "a1b2c3…(32 байта)",
     "identity_algorithm": "ed25519",
-    "identity_public_key": "d4e5f6...32bytes",
-    "host": "127.0.0.1",
-    "port": 7001,
-    "last_seen_ms": 1727430000000,
-    "last_verified_ms": 0
+    "identity_public_key": "d4e5f6…(32 байта)",
+    "host": "127.0.0.1", "port": 7001,
+    "last_seen_ms": 1727430000000, "last_verified_ms": 0
   },
   "timestamp_ms": 1727430000123
-}
-```
-
-### PONG
-```json
-{
-  "responder": { "node_id": "...", "host": "127.0.0.1", "port": 7002, "..." },
-  "ping_timestamp_ms": 1727430000123,
-  "responder_timestamp_ms": 1727430000145
-}
-```
-
-### FIND_NODE_REQUEST
-```json
-{
-  "sender": { "node_id": "...", "host": "127.0.0.1", "port": 7001, "..." },
-  "target_node_id": "ff00aa11...32bytes"
 }
 ```
 
 ### FIND_NODE_RESPONSE
 ```json
 {
-  "responder": { "node_id": "...", "host": "127.0.0.1", "port": 7002, "..." },
-  "target_node_id": "ff00aa11...32bytes",
+  "responder": { "node_id": "…", "host": "127.0.0.1", "port": 7002, "…": "…" },
+  "target_node_id": "ff00aa11…",
   "contacts": [
-    { "node_id": "fe10bb22...", "host": "127.0.0.1", "port": 7003, "..." },
-    { "node_id": "fd20cc33...", "host": "127.0.0.1", "port": 7004, "..." }
+    { "node_id": "fe10bb22…", "host": "127.0.0.1", "port": 7003, "…": "…" },
+    { "node_id": "fd20cc33…", "host": "127.0.0.1", "port": 7004, "…": "…" }
   ]
 }
 ```
-*Контакты отсортированы по возрастанию XOR-расстояния до `target_node_id`. Количество ≤ K_BUCKET_SIZE.*
+
+### TUNNEL_BUILD
+```json
+{
+  "tunnel_id": "9d9ac4b9…(16 байт)",
+  "initiator": { "node_id": "0a919d1c…", "…": "…" },
+  "hop_index": 0, "total_hops": 2, "ttl_seconds": 600, "timestamp_ms": 1793221769000,
+  "next_hop": { "node_id": "e8dd142a…", "host": "127.0.0.1", "port": 7502, "…": "…" }
+}
+```
+
+### TUNNEL_DATA
+```json
+{ "tunnel_id": "9d9ac4b9…", "seq": 0, "hops_left": 6, "data": "<msgpack(Envelope), ≤ 48 КиБ>" }
+```
 
 ### ERROR
 ```json
-{
-  "code": "BAD_VERSION",
-  "description": "unsupported protocol version: 42"
-}
+{ "code": 1, "description": "bad version" }
 ```
-*Код ошибки не содержит стека вызовов, путей к файлам или секретов (§10 ТЗ).*
 
----
+## 10. Не реализовано
 
-## Handshake-транскрипт (продвинутый уровень — TODO)
-```
-transcript = version(1B) ‖ role_initiator(1B) ‖ role_responder(1B)
-           ‖ NodeID_A(32B) ‖ NodeID_B(32B)
-           ‖ IdentityPK_A(32B) ‖ IdentityPK_B(32B)
-           ‖ EphemeralPK_A(32B) ‖ EphemeralPK_B(32B)
-           ‖ nonce_A(32B) ‖ nonce_B(32B)
-           ‖ session_id(16B)
-```
+TUNNEL_CLOSE (маршрут на relay истекает по TTL), фрагментация кадров (`MORE_FRAGS`), возобновление передачи файла,
+согласование варианта канала между узлами (сеть целиком на TLS или целиком на AKE).
