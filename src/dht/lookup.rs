@@ -139,6 +139,7 @@ impl IterativeLookup {
                 queried.insert(contact.node_id.to_hex());
                 let own  = self.own_contact.clone();
                 let tgt  = *target;
+                let expect = contact.node_id;
                 let cfg  = self.cfg.clone();
                 let rpc  = self.rpc_client.clone();
 
@@ -149,7 +150,7 @@ impl IterativeLookup {
                         addr,
                         cfg.transport.connect_timeout_ms,
                         cfg.transport.read_timeout_ms,
-                        &own, &tgt,
+                        &own, &tgt, Some(&expect),
                     ).await?;
                     anyhow::Ok((contact, resp))
                 }));
@@ -176,8 +177,11 @@ impl IterativeLookup {
                             improved = true;
                         }
 
-                        // Добавить новые контакты
+                        // Добавить новые контакты. Себя не добавляем: пир возвращает и инициатора
+                        // (исключает только себя), а без этого инициатор опрашивал бы сам себя и считал
+                        // собственный узел одной из R реплик при STORE (кворум §10.1 по различным узлам).
                         for c in resp.contacts {
+                            if c.node_id == self.own_contact.node_id { continue; }
                             let hex = c.node_id.to_hex();
                             if !found.contains_key(&hex) {
                                 found.insert(hex, c.clone());
