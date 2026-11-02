@@ -7,15 +7,15 @@
   summary.md   — n / min / max / медиана / среднее (p95 только при n ≥ 20, ТЗ §15.3);
   meta.json    — версия кода, конфигурация, seed, время старта, временная база,
                  N, k, α, R, тайм-ауты, граф bootstrap (ТЗ §15.3).
-Использование:
-  python3 scripts/scenarios.py <01..09|pcap|all> [--nodes N] [--n OBS] [--runs R] [--inj I] [--seed S]
+Использование (из корня репозитория):
+  python3 scripts/python/scenarios.py <01..09|pcap|all> [--nodes N] [--n OBS] [--runs R] [--inj I] [--seed S]
 Длительности меряются оркестратором по time.monotonic(); поля *_ms из API — часами узла.
 """
 import argparse, csv, json, math, os, random, re, signal, statistics, subprocess, sys, time
 import urllib.request, urllib.parse
 import hashlib, shutil, uuid
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 BIN = os.path.join(ROOT, "target/debug/p2p-node")
 CFG = os.path.join(ROOT, "config/node_config.yaml")
 _port = [7400]
@@ -190,6 +190,7 @@ class Run:
         cfg = node_config()
         self.meta = {
             "scenario": name,
+            "driver": "scripts/python/scenarios.py (запасной)",
             "commit": git("rev-parse", "HEAD"),
             "worktree_dirty": bool(git("status", "--porcelain")),
             # точная версия кода при незакоммиченных изменениях: хэш diff (с новыми файлами)
@@ -656,7 +657,7 @@ SC = {"01": s01, "02": s02, "03": s03, "04": s04, "05": s05, "06": s06, "07": s0
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("which", help="01..09 | pcap | all")
-    ap.add_argument("--nodes", type=int, default=12, help="число узлов N")
+    ap.add_argument("--nodes", type=int, default=15, help="число узлов N")
     ap.add_argument("--n", type=int, default=30, help="наблюдений (lookup / операций / пар сообщений)")
     ap.add_argument("--runs", type=int, default=5, help="независимых запусков для холодного старта")
     ap.add_argument("--inj", type=int, default=10, help="инъекций отказа (04, 07)")

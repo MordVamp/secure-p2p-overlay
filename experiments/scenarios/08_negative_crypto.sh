@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Сценарий 08 (ТЗ §15.1): Негативные криптографические и replay-тесты (cargo test).
-# Реальные процессы p2p-node, измерения — scripts/scenarios.py; результаты:
-# experiments/results/08_negative_crypto/<timestamp>/{results.csv,summary.md,meta.json}
+# Реальные процессы p2p-node, драйвер — `p2p-orchestrator scenario` (src/experiment/); результаты:
+# experiments/results/08_negative_crypto/<timestamp>/{results.csv,summary.md,meta.json,plots/,node_logs/}
 # Аргументы передаются драйверу: --nodes N --n OBS --runs R --inj I --seed S
 set -euo pipefail
 cd "$(dirname "$0")/../.."
-exec python3 scripts/scenarios.py 08 "$@"
+cargo build --bins -q
+exec ./target/debug/p2p-orchestrator scenario 08 "$@"
+# запасной вариант на Python: python3 scripts/python/scenarios.py 08 "$@"

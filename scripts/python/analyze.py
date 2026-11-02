@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""scripts/analyze.py — обработка результатов приёмки и построение графиков (ТЗ §15.3).
+"""scripts/python/analyze.py — ЗАПАСНОЙ вариант графиков приёмки (ТЗ §15.3), matplotlib → PNG.
 
-Использование:
-    python3 scripts/analyze.py [КАТАЛОГ_ПРОГОНА]
+Основной — на Rust: `./target/debug/p2p-orchestrator plot <каталог>` (SVG + stats.md, src/experiment/plot.rs).
+Использование (из корня репозитория):
+    python3 scripts/python/analyze.py [КАТАЛОГ_ПРОГОНА]
 Без аргумента берётся самый свежий experiments/results/accept_*.
 
 Входные данные (реальные, из прогона `p2p-orchestrator acceptance`):
@@ -52,8 +53,9 @@ def pct(xs, p):
 def stats_row(name, xs):
     if not xs:
         return f"| {name} | 0 | — | — | — | — | — |"
+    p95 = f"{pct(xs, 95):.1f}" if len(xs) >= 20 else "—"   # ТЗ §15.3: p95 только при n ≥ 20
     return (f"| {name} | {len(xs)} | {min(xs):.1f} | {st.mean(xs):.2f} | "
-            f"{st.median(xs):.1f} | {pct(xs, 95):.1f} | {max(xs):.1f} |")
+            f"{st.median(xs):.1f} | {p95} | {max(xs):.1f} |")
 
 
 def main():

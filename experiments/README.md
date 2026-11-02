@@ -5,16 +5,23 @@
 | Что | Команда | Результаты |
 |---|---|---|
 | Приёмка этапов 1–2 | `bash scripts/run_acceptance.sh` | `results/accept_*/` |
-| Сценарии 01–09 (ТЗ §15.1) | `bash experiments/run_all.sh` или `python3 scripts/scenarios.py <NN>` | `results/<NN_имя>/<timestamp>/` |
-| Нет открытого текста в трафике | `python3 scripts/scenarios.py pcap` | `results/pcap_no_plaintext/<timestamp>/` |
+| Сценарии 01–09 (ТЗ §15.1) + pcap | `bash experiments/run_all.sh` или `./target/debug/p2p-orchestrator scenario <NN>` | `results/<NN_имя>/<timestamp>/` |
+| Нет открытого текста в трафике | `./target/debug/p2p-orchestrator scenario pcap` | `results/pcap_no_plaintext/<timestamp>/` |
+| Графики из сохранённых CSV | `./target/debug/p2p-orchestrator plot <каталог>` | `<каталог>/plots/*.svg` (для `accept_*` — и `stats.md`) |
 
-`experiments/scenarios/NN_*.sh` — обёртки над `scripts/scenarios.py NN` (аргументы `--nodes N --n OBS --runs R --inj I --seed S`).
+Драйвер — Rust (`src/experiment/`), по умолчанию N=15. `experiments/scenarios/NN_*.sh` — обёртки над
+`p2p-orchestrator scenario NN` (аргументы `--nodes N --n OBS --runs R --inj I --seed S`). Запасной вариант на Python тем же
+методом — `scripts/python/scenarios.py` (в `meta.json` поле `driver` показывает, чем снят прогон).
+
+Прогоны: `*/20261102_*` — актуальные (Rust, N=15); `*/20261029_*` — предыдущие (Python, N=12).
 
 В каждом каталоге результата:
 - `results.csv` — сырые наблюдения (строка = наблюдение);
 - `summary.md` — n / min / max / медиана / среднее, p95 только при n ≥ 20 (§15.3);
 - `meta.json` — коммит (и флаг незакоммиченных изменений), конфигурация, seed, время старта, временная база,
   N, k, α, R, тайм-ауты, граф bootstrap (§15.3);
+- `plots/*.svg` — графики, построенные из `results.csv` (ящики с усами поверх всех наблюдений, столбцы);
+- `node_logs/` — журналы узлов прогона (без ANSI, пути относительные; для 01/09 — первый запуск каждой схемы);
 - дополнительно: `rounds.csv`, `join.csv` (01, 09), `cargo_test.txt` (08), `overlay.pcapng`, `tshark_protocols.txt` (pcap).
 
 Логи узлов — `logs/scenarios/` (вне git). Закрытые ключи (`state*/`) в каталог результатов не попадают.
@@ -30,3 +37,22 @@
 | 07 | Отключение relay активного туннеля, ≥5 инъекций | время восстановления доставки, новый маршрут без отказавшего relay |
 | 08 | Негативные крипто/replay-тесты | результат `cargo test` |
 | 09 | Bootstrap star vs ring, по ≥5 запусков | как в 01 при прочих равных |
+
+## Продвинутый уровень (ТЗ §12, §13.2, §14, §15)
+
+`bash experiments/run_advanced.sh` — всё ниже на `config/node_config_advanced.yaml` (k = 4, 3 relay, пул 3, выбор `rating`),
+N = 21; каталоги результатов — с суффиксом `_advanced` (`_ake` — канал AKE, `_release` — release-сборка, `_control` —
+контрольный повтор упрощённого уровня на финальном коде).
+
+| Сценарий | Что | Метрики |
+|---|---|---|
+| 01–09 | как выше; 09 — star / ring / **tree / multi-seed** | те же |
+| `10` | `tc qdisc … netem` на loopback: задержка, джиттер, потери (**root**: `sudo -v`) | lookup и RTT по профилям деградации |
+| `underlay` | группы узлов на разных loopback-подсетях, nftables запрещает A ↔ B, шлюзы видят всех (**root**) | прямая недостижимость, lookup и доставка A → B через оверлей |
+| `failover` | отказ relay **основного** туннеля при пуле туннелей | время обнаружения отказа, время переключения на резервный, восстановление |
+| `strategy` | четверть relay неисправна (`--fault-drop 0.5`); `closest` / `random` / `rating` | доля доставок без отказа на пути, RTT, переключения |
+| `files` | 100 КиБ / 1 МиБ / 10 МиБ × 5 передач | goodput, доля служебного трафика, повторы, SHA-256 у получателя |
+| `channel` | одна сеть с TLS 1.3 и с собственным рукопожатием | соединение + RPC, lookup, построение туннеля, RTT |
+
+Обёртки: `experiments/scenarios/10_netem.sh`, `adv_*.sh`. Без root сценарии `10` и `underlay` останавливаются с
+инструкцией; механику `underlay` можно проверить без правил: `P2P_UNDERLAY_DRY=1 … scenario underlay` (результат помечен).

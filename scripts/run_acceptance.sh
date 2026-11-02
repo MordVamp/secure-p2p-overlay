@@ -7,5 +7,6 @@ N=${1:-13}; L=${2:-30}
 cargo build --bins
 OUT="experiments/results/accept_$(date +%Y%m%d_%H%M%S)"
 ./target/debug/p2p-orchestrator acceptance --nodes "$N" --lookups "$L" --out "$OUT"
-python3 scripts/analyze.py "$OUT" || echo "(графики не построены: нужен python3 + matplotlib)"
-echo "Результаты: $OUT (summary.md, lookups_*.csv/json, routing_tables/, routing_summary.csv, stats.md, plots/*.png); логи узлов: logs/$(basename "$OUT")/"
+./target/debug/p2p-orchestrator plot "$OUT"        # графики SVG + stats.md из сохранённых CSV
+# запасной вариант (matplotlib, PNG): python3 scripts/python/analyze.py "$OUT"
+echo "Результаты: $OUT (summary.md, lookups_*.csv/json, routing_tables/, routing_summary.csv, stats.md, plots/*.svg); логи узлов: logs/$(basename "$OUT")/"
