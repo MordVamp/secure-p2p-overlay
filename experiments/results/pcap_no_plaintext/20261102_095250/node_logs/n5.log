@@ -1,0 +1,52 @@
+2026-11-02T06:52:51.281230Z  INFO p2p_overlay::identity::node_identity: Generating new identity, saving to "logs/scenarios/pcap_1793602370_7400/state5/identity.key"
+2026-11-02T06:52:51.281791Z  INFO p2p_overlay::identity::node_identity: NodeID = 28cf8e3a2136cb45d579b3a62baf50b44571612beaffbf1d16444788c94f6761
+2026-11-02T06:52:51.283386Z  INFO p2p_overlay::node: Listening on 0.0.0.0:7405 NodeID=28cf8e3a
+2026-11-02T06:52:51.283410Z  INFO p2p_overlay::gui::http: GUI: http://127.0.0.1:7422/
+2026-11-02T06:52:51.283519Z  INFO p2p_overlay::dht::node: Bootstrap: connecting to 1 peers
+2026-11-02T06:52:51.289230Z  INFO p2p_overlay::rpc: PONG from 5f6a1832@127.0.0.1:7400 rtt=6ms
+2026-11-02T06:52:51.289303Z  INFO p2p_overlay::dht::node: Bootstrap peer 127.0.0.1:7400 (5f6a1832) reachable, NodeID=5f6a1832688d920ecdb543abf438aa434ec2965c87733eb708054f1dbf5ffe5c
+2026-11-02T06:52:51.289361Z  INFO p2p_overlay::dht::node: Starting self-lookup NodeID=28cf8e3a
+2026-11-02T06:52:51.289407Z  INFO p2p_overlay::dht::lookup: [lookup-6b023bbd] start target=28cf8e3a
+2026-11-02T06:52:51.301512Z  INFO p2p_overlay::dht::lookup: [lookup-6b023bbd] done target=28cf8e3a closest=3 rpc=3 iter=3 dur=12ms
+2026-11-02T06:52:51.301756Z  INFO p2p_overlay::dht::node: Self-lookup done: 3 closest contacts, 3 RPC, 3 iter, 12ms
+2026-11-02T06:52:51.301820Z  INFO p2p_overlay::dht::node: Routing table: 3 contacts in 2 non-empty buckets
+2026-11-02T06:52:51.302927Z  INFO p2p_overlay::dht::lookup: [lookup-f4033edb] start target=ddfae1d6
+2026-11-02T06:52:51.320208Z  INFO p2p_overlay::dht::lookup: [lookup-f4033edb] done target=ddfae1d6 closest=3 rpc=5 iter=3 dur=18ms
+2026-11-02T06:52:51.407415Z  INFO p2p_overlay::node: NodeRecord опубликован на 4 репликах
+2026-11-02T06:52:56.290881Z  WARN p2p_overlay::rpc: outbound conn reader error: i/o error: read timeout
+2026-11-02T06:52:56.295145Z  WARN p2p_overlay::rpc: outbound conn reader error: i/o error: read timeout
+2026-11-02T06:52:56.301368Z  WARN p2p_overlay::rpc: outbound conn reader error: i/o error: read timeout
+2026-11-02T06:52:56.310257Z  WARN p2p_overlay::rpc: outbound conn reader error: i/o error: read timeout
+2026-11-02T06:52:56.310366Z  WARN p2p_overlay::rpc: outbound conn reader error: i/o error: read timeout
+2026-11-02T06:52:56.312555Z  WARN p2p_overlay::rpc: outbound conn reader error: i/o error: read timeout
+2026-11-02T06:52:56.318980Z  WARN p2p_overlay::rpc: outbound conn reader error: i/o error: read timeout
+2026-11-02T06:52:56.320370Z  WARN p2p_overlay::rpc: outbound conn reader error: i/o error: read timeout
+2026-11-02T06:52:56.606989Z  WARN p2p_overlay::node: Frame error from 127.0.0.1:60500 (§10 TZ — closing): i/o error: read timeout
+2026-11-02T06:52:56.617369Z  WARN p2p_overlay::node: Frame error from 127.0.0.1:60512 (§10 TZ — closing): i/o error: read timeout
+2026-11-02T06:52:57.074372Z  WARN p2p_overlay::node: Frame error from 127.0.0.1:60550 (§10 TZ — closing): i/o error: read timeout
+2026-11-02T06:52:57.553905Z  WARN p2p_overlay::node: Frame error from 127.0.0.1:60562 (§10 TZ — closing): i/o error: read timeout
+2026-11-02T06:52:57.699353Z  WARN p2p_overlay::node: Frame error from 127.0.0.1:60570 (§10 TZ — closing): i/o error: read timeout
+2026-11-02T06:52:58.531515Z  INFO p2p_overlay::dht::lookup: [lookup-2c39d9d9] start target=1833d803
+2026-11-02T06:52:58.542147Z  INFO p2p_overlay::dht::lookup: [lookup-2c39d9d9] done target=1833d803 closest=3 rpc=3 iter=2 dur=11ms
+2026-11-02T06:52:58.542391Z  INFO p2p_overlay::tunnel::manager: Building tunnel to 1833d803
+2026-11-02T06:52:58.547432Z  INFO p2p_overlay::tunnel::builder: [tunnel-a7adbeef] hop 0 confirmed: 380ee0f8@127.0.0.1:7410
+2026-11-02T06:52:58.553392Z  INFO p2p_overlay::tunnel::builder: [tunnel-a7adbeef] hop 1 confirmed: 24d4fc3d@127.0.0.1:7401
+2026-11-02T06:52:58.553480Z  INFO p2p_overlay::tunnel::session: [tunnel-a7adbeef] Building → Active
+2026-11-02T06:52:58.553533Z  INFO p2p_overlay::tunnel::builder: [tunnel-a7adbeef] ACTIVE — 2 hops [380ee0f8 → 24d4fc3d → 1833d803], build took 11ms
+2026-11-02T06:52:58.575140Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=20ms
+2026-11-02T06:52:58.575250Z  INFO p2p_overlay::app::messenger: → msg a430c1b0 to 1833d803 (52 bytes), ждём APP_ACK
+2026-11-02T06:52:58.641800Z  INFO p2p_overlay::app::messenger: ← msg f65167e8 from 1833d803 kind=Ack
+2026-11-02T06:52:58.643353Z  INFO p2p_overlay::dht::lookup: [lookup-edc6b461] start target=5f582e0e
+2026-11-02T06:52:58.661107Z  INFO p2p_overlay::dht::lookup: [lookup-edc6b461] done target=5f582e0e closest=3 rpc=5 iter=2 dur=18ms
+2026-11-02T06:52:58.707610Z  INFO p2p_overlay::dht::lookup: [lookup-2f711370] start target=4681588e
+2026-11-02T06:52:58.727833Z  INFO p2p_overlay::dht::lookup: [lookup-2f711370] done target=4681588e closest=3 rpc=5 iter=2 dur=20ms
+2026-11-02T06:52:58.728111Z  INFO p2p_overlay::tunnel::manager: Building tunnel to 4681588e
+2026-11-02T06:52:58.735765Z  INFO p2p_overlay::tunnel::builder: [tunnel-816d1bc8] hop 0 confirmed: 5f6a1832@127.0.0.1:7400
+2026-11-02T06:52:58.743198Z  INFO p2p_overlay::tunnel::builder: [tunnel-816d1bc8] hop 1 confirmed: 7c24147d@127.0.0.1:7407
+2026-11-02T06:52:58.743279Z  INFO p2p_overlay::tunnel::session: [tunnel-816d1bc8] Building → Active
+2026-11-02T06:52:58.743318Z  INFO p2p_overlay::tunnel::builder: [tunnel-816d1bc8] ACTIVE — 2 hops [5f6a1832 → 7c24147d → 4681588e], build took 15ms
+2026-11-02T06:52:58.762782Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=17ms
+2026-11-02T06:52:58.762927Z  INFO p2p_overlay::app::messenger: → msg 608cb8cf to 4681588e (52 bytes), ждём APP_ACK
+2026-11-02T06:52:58.832993Z  INFO p2p_overlay::app::messenger: ← msg 64d0ef37 from 4681588e kind=Ack
+2026-11-02T06:52:58.834445Z  INFO p2p_overlay::dht::lookup: [lookup-76152082] start target=be9a0eff
+2026-11-02T06:52:58.851725Z  INFO p2p_overlay::dht::lookup: [lookup-76152082] done target=be9a0eff closest=3 rpc=5 iter=2 dur=17ms
