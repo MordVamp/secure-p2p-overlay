@@ -7,11 +7,13 @@
 //!  - Доставка: find_node(target) → build_tunnel → send_data, APP_ACK
 //!  - Локальная история отправки/приёма: `<state_dir>/history.jsonl` (history.rs)
 //!
-//! Продвинутый уровень (TODO): file_transfer, блоки ≤ 48 KiB, SHA-256 верификация
+//! Продвинутый уровень: передача файлов (files.rs) — блоки ≤ 44 КиБ, окно подтверждений, SHA-256.
 
+pub mod files;
 pub mod history;
 pub mod message;
 pub mod messenger;
+pub mod replay;
 
 pub use message::{AppMessage, MessageKind};
 pub use messenger::Messenger;

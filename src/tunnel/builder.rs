@@ -21,7 +21,6 @@ use uuid::Uuid;
 use crate::config::NodeConfig;
 use crate::identity::node_identity::verify_node_id_bytes;
 use crate::dht::routing_table::RoutingTable;
-use crate::rpc::dial;
 use crate::transport::framing::{Frame, FrameFlags, MsgType};
 use crate::protocol::{PROTOCOL_VERSION, payload::{encode, decode}};
 use crate::tunnel::hop::TunnelHop;
@@ -36,22 +35,30 @@ pub struct TunnelBuilder {
     own_contact: Contact,
     routing:     Arc<Mutex<RoutingTable>>,
     cfg:         Arc<NodeConfig>,
+    /// Профили кандидатов (обновляются здесь по каждому hop и менеджером — по передаче).
+    pub profiles: Arc<Mutex<crate::tunnel::profile::RelayProfiles>>,
 }
 
 impl TunnelBuilder {
     pub fn new(own_contact: Contact, routing: Arc<Mutex<RoutingTable>>, cfg: Arc<NodeConfig>) -> Self {
-        Self { own_contact, routing, cfg }
+        Self { own_contact, routing, cfg, profiles: Default::default() }
     }
 
     /// Построить туннель к `target` через `min_relays` промежуточных узлов.
     /// Возвращает готовую `TunnelSession` в состоянии ACTIVE.
     pub async fn build(&self, target: &NodeId) -> Result<TunnelSession> {
-        self.build_with(target, None).await
+        self.build_avoiding(target, None, &Default::default()).await
+    }
+
+    pub async fn build_with(&self, target: &NodeId, target_hint: Option<&Contact>) -> Result<TunnelSession> {
+        self.build_avoiding(target, target_hint, &Default::default()).await
     }
 
     /// То же, но адрес получателя можно передать явно (результат lookup): таблица
     /// маршрутизации с малым k может не удержать его, хотя lookup его нашёл.
-    pub async fn build_with(&self, target: &NodeId, target_hint: Option<&Contact>) -> Result<TunnelSession> {
+    /// `avoid` — ретрансляторы других туннелей пула: берутся, только если без них не набрать нужное число.
+    pub async fn build_avoiding(&self, target: &NodeId, target_hint: Option<&Contact>,
+                                avoid: &std::collections::HashSet<NodeId>) -> Result<TunnelSession> {
         let min_relays = self.cfg.tunnel.min_relays;
         if min_relays > self.cfg.tunnel.max_hops {
             bail!("min_relays={} превышает max_hops={}", min_relays, self.cfg.tunnel.max_hops);
@@ -62,7 +69,7 @@ impl TunnelBuilder {
 
         for attempt in 1..=max_attempts {
             debug!("[builder] attempt {}/{}", attempt, max_attempts);
-            match self.try_build(target, min_relays, target_hint, &mut excluded).await {
+            match self.try_build(target, min_relays, target_hint, &mut excluded, avoid).await {
                 Ok(session) => return Ok(session),
                 Err(e) => warn!("[builder] attempt {} failed: {}", attempt, e),
             }
@@ -71,18 +78,21 @@ impl TunnelBuilder {
     }
 
     async fn try_build(&self, target: &NodeId, min_relays: usize, target_hint: Option<&Contact>,
-                       excluded: &mut std::collections::HashSet<NodeId>) -> Result<TunnelSession> {
+                       excluded: &mut std::collections::HashSet<NodeId>,
+                       avoid: &std::collections::HashSet<NodeId>) -> Result<TunnelSession> {
         let t0 = now_ms();
         // Выбираем relay-кандидатов из таблицы маршрутизации
         let candidates: Vec<Contact> = {
             let rt = self.routing.lock().await;
             let own_id = *rt.own_id();
-            let mut c = rt.find_closest(target, min_relays + 5 + excluded.len());
+            // все допустимые кандидаты по возрастанию XOR-расстояния до получателя
+            let mut c = rt.find_closest(target, usize::MAX);
             c.retain(|x| x.node_id != own_id && x.node_id != *target && !excluded.contains(&x.node_id));
             // §12: каждый узел в пути не более одного раза (без петель)
             let mut seen = std::collections::HashSet::new();
             c.retain(|x| seen.insert(x.node_id));
-            c.into_iter().take(min_relays).collect()
+            drop(rt);
+            self.profiles.lock().await.choose(&self.cfg.tunnel.relay_selection, c, min_relays, avoid)
         };
 
         if candidates.len() < min_relays {
@@ -110,7 +120,13 @@ impl TunnelBuilder {
         // Последовательно согласуем с каждым relay
         for (idx, relay) in candidates.iter().enumerate() {
             let next = candidates.get(idx + 1).cloned().unwrap_or_else(|| target_contact.clone());
-            match self.build_hop(&tunnel_id, relay, idx, total_hops, Some(next)).await {
+            let th = now_ms();
+            let res = self.build_hop(&tunnel_id, relay, idx, total_hops, Some(next)).await;
+            match &res {
+                Ok(_) => self.profiles.lock().await.success(relay, now_ms().saturating_sub(th) as f64),
+                Err(_) => self.profiles.lock().await.failure(relay),
+            }
+            match res {
                 Ok(mut hop) => {
                     hop.mark_confirmed();
                     info!("[tunnel-{}] hop {} confirmed: {}", hex::encode(&tunnel_id[..4]), idx, relay);
@@ -147,10 +163,12 @@ impl TunnelBuilder {
         next_hop:  Option<Contact>,
     ) -> Result<TunnelHop> {
         let addr: SocketAddr = relay.socket_addr()?;
-        let mut stream = dial(
+        // relay должен быть именно тем узлом, которого мы выбрали (NodeID из рукопожатия канала)
+        let mut stream = crate::rpc::dial_expect(
             addr,
             self.cfg.transport.connect_timeout_ms,
             self.cfg.transport.read_timeout_ms,
+            Some(&relay.node_id),
         ).await?;
 
         let request_id = crate::rpc::new_request_id();

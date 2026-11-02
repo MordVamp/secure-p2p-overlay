@@ -26,7 +26,8 @@ pub struct Orchestrator {
     log_dir:  PathBuf,
 }
 
-fn node_binary() -> PathBuf {
+/// Путь к `p2p-node` рядом с текущей программой (оркестратор и сценарии).
+pub fn node_binary() -> PathBuf {
     let exe = std::env::current_exe().unwrap_or_default();
     exe.with_file_name(if cfg!(windows) { "p2p-node.exe" } else { "p2p-node" })
 }

@@ -42,6 +42,9 @@ enum Msg {
     Route { peer: String, res: Result<Value, String> },
     Resolved { purpose: Purpose, alias: String, res: Result<Value, String> },
     Alias { name: String, res: Result<Value, String> },
+    Files(Value),
+    Relays(Value),
+    FileSent { name: String, res: Result<Value, String> },
 }
 
 struct ChatMsg {
@@ -99,6 +102,11 @@ pub struct App {
     c_id: String,
     alias_in: String,
     j_filter: usize,
+    files: Value,
+    relays: Value,
+    f_target: String,
+    f_path: String,
+    f_sending: Vec<String>,
 }
 
 fn now_ms() -> u64 { SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0) }
@@ -139,6 +147,7 @@ impl App {
             t_ping: String::new(), t_lookup: String::new(), t_route: String::new(),
             t_key: String::new(), t_val: String::new(), tool_out: None, route: None,
             c_name: String::new(), c_id: String::new(), alias_in: String::new(), j_filter: 0,
+            files: Value::Null, relays: Value::Null, f_target: String::new(), f_path: String::new(), f_sending: vec![],
         };
         if app.s.mode == Mode::Attach || app.s.autostart { app.connect(); }
         app
@@ -226,6 +235,19 @@ impl App {
                     }
                     Err(e) => self.toast(format!("@{alias}: {e}"), RED),
                 },
+                Msg::Files(v) => self.files = v,
+                Msg::Relays(v) => self.relays = v,
+                Msg::FileSent { name, res } => {
+                    self.f_sending.retain(|n| *n != name);
+                    match api::ok(res) {
+                        Ok(v) => {
+                            let r = &v["report"];
+                            self.toast(format!("«{name}» доставлен: {:.2} МиБ/с, служебная доля {:.1}%",
+                                               r["goodput_mib_s"].as_f64().unwrap_or(0.0), r["overhead_share"].as_f64().unwrap_or(0.0) * 100.0), GREEN);
+                        }
+                        Err(e) => self.toast(format!("«{name}» не доставлен: {e}"), RED),
+                    }
+                }
                 Msg::Alias { name, res } => match api::ok(res) {
                     Ok(v) => {
                         self.toast(format!("Псевдоним @{name} опубликован ({} реплик)", api::s(&v, "stored_on")), GREEN);
@@ -357,6 +379,8 @@ fn spawn_poller(port: Arc<AtomicU16>, tx: Sender<Msg>, ctx: egui::Context) {
                 if let Ok(h) = api::get(p, "/api/history", &[("limit", "1000")]) {
                     let _ = tx.send(Msg::History(h["entries"].as_array().cloned().unwrap_or_default()));
                 }
+                if let Ok(f) = api::get(p, "/api/files", &[]) { let _ = tx.send(Msg::Files(f)); }
+                if let Ok(r) = api::get(p, "/api/relays", &[]) { let _ = tx.send(Msg::Relays(r)); }
             }
             ctx.request_repaint();
         }
@@ -767,33 +791,76 @@ impl App {
 
     fn files_tab(&mut self, ui: &mut egui::Ui) {
         ui.heading("Файлы");
+        ui.label(RichText::new("Файл режется на блоки по 40 КиБ; каждый блок подписан и зашифрован для получателя, идёт через туннель; \
+                                получатель подтверждает окна блоков и в конце проверяет SHA-256.").color(MUTED));
         ui.add_space(10.0);
-        self.coming_soon(ui, "files", "🗀 Передача файлов — в разработке",
-            "Протокол поверх того же E2E-канала: предложение (имя, размер, SHA-256, число блоков) → блоки ≤ 48 КиБ с номерами → \
-             подтверждение окном → итоговая проверка SHA-256. Приём только в выделенный каталог, с лимитом размера.");
-        ui.add_enabled_ui(false, |ui| {
-            card(ui, |ui| {
-                section_title(ui, "Отправить файл");
-                ui.horizontal(|ui| {
-                    let mut to = String::new();
-                    ui.add(field(&mut to).hint_text("получатель: NodeID или @псевдоним").desired_width(320.0));
-                    let _ = ui.button("🗀 Выбрать файл…");
-                    let _ = ui.add(primary("Отправить"));
+        if !self.connected() { self.not_connected_hint(ui); return; }
+        // перетаскивание файла в окно
+        let dropped: Vec<String> = ui.ctx().input(|i| i.raw.dropped_files.iter().filter_map(|f| f.path.as_ref().map(|p| p.display().to_string())).collect());
+        if let Some(p) = dropped.into_iter().next() { self.f_path = p; }
+        let hovering = ui.ctx().input(|i| !i.raw.hovered_files.is_empty());
+        card(ui, |ui| {
+            section_title(ui, "Отправить файл");
+            ui.horizontal(|ui| {
+                ui.add(field(&mut self.f_target).hint_text("получатель: NodeID или @псевдоним").desired_width(330.0));
+                egui::ComboBox::from_id_salt("f_contact").selected_text("из контактов").show_ui(ui, |ui| {
+                    for c in &self.s.contacts {
+                        if ui.selectable_label(false, &c.name).clicked() { self.f_target = c.node_id.clone(); }
+                    }
                 });
-                let (r, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 120.0), egui::Sense::hover());
-                ui.painter().rect_stroke(r, CornerRadius::same(12), Stroke::new(1.5_f32, MUTED.gamma_multiply(0.5)), egui::StrokeKind::Inside);
-                ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, "Перетащите файл сюда",
-                                  egui::FontId::proportional(16.0), MUTED);
             });
-            ui.add_space(12.0);
-            card(ui, |ui| {
-                section_title(ui, "Передачи");
-                egui::Grid::new("files_grid").num_columns(5).spacing([24.0, 8.0]).show(ui, |ui| {
-                    for h in ["Файл", "Собеседник", "Размер", "Прогресс", "Статус"] { ui.label(RichText::new(h).strong()); }
+            ui.horizontal(|ui| {
+                ui.add(field(&mut self.f_path).hint_text("путь к файлу на этом компьютере").desired_width(ui.available_width() - 150.0));
+                let can = !self.f_path.trim().is_empty() && !self.f_target.trim().is_empty();
+                if ui.add_enabled(can, primary("Отправить →")).clicked() {
+                    let (path, target) = (self.f_path.trim().to_owned(), self.f_target.trim().to_owned());
+                    let name = std::path::Path::new(&path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                    self.f_sending.push(name.clone());
+                    self.bg(move |p| {
+                        let res = api::call(p, "POST", "/api/send_file", &[("target", &target), ("path", &path)], Duration::from_secs(1800));
+                        Msg::FileSent { name, res }
+                    });
+                }
+            });
+            let (r, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 90.0), egui::Sense::hover());
+            let c = if hovering { ACCENT } else { MUTED.gamma_multiply(0.5) };
+            ui.painter().rect_stroke(r, CornerRadius::same(12), Stroke::new(1.5_f32, c), egui::StrokeKind::Inside);
+            ui.painter().text(r.center(), egui::Align2::CENTER_CENTER,
+                if hovering { "Отпустите — путь подставится в поле выше" } else { "…или перетащите файл в окно" },
+                egui::FontId::proportional(15.0), c);
+            if !self.f_sending.is_empty() {
+                ui.label(RichText::new(format!("⏳ отправляется: {}", self.f_sending.join(", "))).color(YELLOW));
+            }
+        });
+        ui.add_space(12.0);
+        card(ui, |ui| {
+            section_title(ui, "Передачи");
+            if let Some(d) = self.files["downloads_dir"].as_str() {
+                ui.label(RichText::new(format!("Полученные файлы сохраняются в {d}")).size(12.5).color(MUTED));
+            }
+            let list = self.files["transfers"].as_array().cloned().unwrap_or_default();
+            if list.is_empty() { ui.label(RichText::new("передач пока не было").color(MUTED)); return; }
+            egui::Grid::new("files_grid").num_columns(6).striped(true).spacing([18.0, 8.0]).show(ui, |ui| {
+                for h in ["", "Файл", "Собеседник", "Размер", "Прогресс", "Статус"] { ui.label(RichText::new(h).strong()); }
+                ui.end_row();
+                for t in list.iter().rev() {
+                    ui.label(if api::s(t, "dir") == "out" { "↗" } else { "↘" });
+                    let name = api::s(t, "name");
+                    let path = t["path"].as_str().unwrap_or_default().to_owned();
+                    ui.label(&name).on_hover_text(if path.is_empty() { name.clone() } else { path });
+                    ui.label(self.display_name(&api::s(t, "peer")));
+                    let size = api::u(t, "size").unwrap_or(0) as f64;
+                    ui.label(if size >= 1048576.0 { format!("{:.1} МиБ", size / 1048576.0) } else { format!("{:.0} КиБ", size / 1024.0) });
+                    let (done, all) = (api::u(t, "done_blocks").unwrap_or(0) as f32, api::u(t, "blocks").unwrap_or(1).max(1) as f32);
+                    ui.add(egui::ProgressBar::new(done / all).desired_width(160.0).text(format!("{}/{}", done as u64, all as u64)));
+                    let st = api::s(t, "status");
+                    let c = match st.as_str() { "sent" | "received" => GREEN, "failed" | "rejected" => RED, _ => YELLOW };
+                    let label = match st.as_str() { "sent" => "доставлен", "received" => "получен", "sending" => "отправка",
+                                                     "receiving" => "приём", "rejected" => "отклонён", _ => "ошибка" };
+                    let resp = theme::pill_resp(ui, label, c);
+                    if let Some(e) = t["error"].as_str() { resp.on_hover_text(e); }
                     ui.end_row();
-                    ui.label(RichText::new("нет передач").color(MUTED));
-                    ui.end_row();
-                });
+                }
             });
         });
     }
@@ -933,21 +1000,45 @@ impl App {
             if tunnels.is_empty() { ui.label(RichText::new("нет — туннель строится при первой отправке").color(MUTED)); }
             egui::Grid::new("tunnels").num_columns(6).striped(true).spacing([24.0, 6.0]).show(ui, |ui| {
                 if !tunnels.is_empty() {
-                    for h in ["tunnel_id", "состояние", "hops", "живых", "посл. ACK", "uptime"] { ui.label(RichText::new(h).strong()); }
+                    for h in ["tunnel_id", "состояние", "роль", "hops", "посл. ACK", "uptime"] { ui.label(RichText::new(h).strong()); }
                     ui.end_row();
                 }
                 for t in &tunnels {
                     ui.label(RichText::new(api::s(t, "tunnel_id")).monospace());
                     let state = api::s(t, "state");
                     theme::pill(ui, &state, state_color(&state));
+                    ui.label(format!("{} → {}…", if api::s(t, "role") == "backup" { "резерв" } else { "основной" }, api::s(t, "target")));
                     ui.label(api::s(t, "hops"));
-                    ui.label(api::s(t, "alive_hops"));
                     ui.label(api::u(t, "last_ack_age_ms").map(|x| format!("{} назад", ago(x))).unwrap_or("—".into()));
                     ui.label(api::u(t, "uptime_ms").map(ago).unwrap_or_default());
                     ui.end_row();
                 }
             });
         });
+        let profiles = self.relays["profiles"].as_array().cloned().unwrap_or_default();
+        if !profiles.is_empty() {
+            ui.add_space(12.0);
+            card(ui, |ui| {
+                section_title(ui, &format!("Профили ретрансляторов · выбор: {} · пул: {}", api::s(&st["tunnels"], "relay_selection"),
+                                           api::s(&st["tunnels"], "pool_size")));
+                egui::Grid::new("relays").num_columns(6).striped(true).spacing([20.0, 6.0]).show(ui, |ui| {
+                    for h in ["узел", "оценка", "успехов", "отказов", "подряд отказов", "EMA задержки"] { ui.label(RichText::new(h).strong()); }
+                    ui.end_row();
+                    for p in profiles.iter().take(12) {
+                        let id = api::s(p, "node_id");
+                        ui.label(RichText::new(format!("{}…", short(&id))).monospace()).on_hover_text(&id);
+                        let sc = p["score"].as_f64().unwrap_or(0.0);
+                        ui.label(RichText::new(format!("{sc:.2}")).color(if sc > 0.6 { GREEN } else if sc > 0.3 { YELLOW } else { RED }));
+                        let pr = &p["profile"];
+                        ui.label(api::s(pr, "successes"));
+                        ui.label(api::s(pr, "failures"));
+                        ui.label(api::s(pr, "consecutive_failures"));
+                        ui.label(format!("{:.0} мс", pr["ema_latency_ms"].as_f64().unwrap_or(0.0)));
+                        ui.end_row();
+                    }
+                });
+            });
+        }
         ui.add_space(12.0);
         card(ui, |ui| {
             section_title(ui, &format!("Таблица маршрутизации · {} контактов", api::s(routing, "total_contacts")));

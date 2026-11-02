@@ -127,6 +127,17 @@ pub fn field(s: &mut String) -> egui::TextEdit<'_> {
     egui::TextEdit::singleline(s).margin(Margin::symmetric(10, 7))
 }
 
+/// То же, что `pill`, но возвращает Response (для подсказки).
+pub fn pill_resp(ui: &mut egui::Ui, text: &str, color: Color32) -> egui::Response {
+    egui::Frame::default()
+        .fill(color.gamma_multiply(0.18))
+        .stroke(Stroke::new(1.0_f32, color.gamma_multiply(0.6)))
+        .corner_radius(CornerRadius::same(10))
+        .inner_margin(Margin::symmetric(8, 2))
+        .show(ui, |ui| { ui.label(RichText::new(text).color(color).size(12.5)); })
+        .response
+}
+
 pub fn section_title(ui: &mut egui::Ui, text: &str) {
     ui.label(RichText::new(text.to_uppercase()).size(12.0).color(MUTED).strong());
 }

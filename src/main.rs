@@ -42,6 +42,31 @@ struct Cli {
     #[arg(long)]
     metrics_dir: Option<PathBuf>,
 
+    /// Адрес узла (переопределяет LISTEN_HOST), напр. 127.0.1.5: узел слушает и соединяется с этого адреса —
+    /// так на одной машине моделируются разные подсети (сценарий underlay)
+    #[arg(long)]
+    host: Option<String>,
+
+    /// Канал между узлами: tls (TLS 1.3) или ake (собственное рукопожатие, ТЗ §11.3); переопределяет конфиг
+    #[arg(long)]
+    channel: Option<String>,
+
+    /// Стратегия выбора ретрансляторов: closest | random | rating (переопределяет tunnel.relay_selection)
+    #[arg(long)]
+    relay_selection: Option<String>,
+
+    /// Размер пула туннелей к одному получателю (переопределяет tunnel.pool_size)
+    #[arg(long)]
+    pool_size: Option<usize>,
+
+    /// Эксперимент: вероятность, что этот узел как ретранслятор откажет в пересылке (0..1)
+    #[arg(long)]
+    fault_drop: Option<f64>,
+
+    /// Эксперимент: задержка каждой пересылки этим узлом как ретранслятором, мс
+    #[arg(long)]
+    fault_delay_ms: Option<u64>,
+
     /// Экспортировать таблицу маршрутизации в JSON и выйти (§26 ТЗ)
     #[arg(long)]
     export_routing: Option<std::path::PathBuf>,
@@ -61,6 +86,15 @@ async fn main() -> Result<()> {
     if let Some(d) = cli.state_dir { cfg.node.state_dir = d; }
     if let Some(d) = cli.metrics_dir { cfg.node.metrics_dir = d; }
     if !cli.bootstrap.is_empty() { cfg.node.bootstrap_peers = cli.bootstrap; }
+    if let Some(c) = cli.channel { cfg.security.channel = c; }
+    if let Some(h) = cli.host { cfg.node.listen_host = h; }
+    if let Some(s) = cli.relay_selection { cfg.tunnel.relay_selection = s; }
+    if let Some(p) = cli.pool_size { cfg.tunnel.pool_size = p; }
+    if let Some(d) = cli.fault_drop { cfg.fault.drop = d.clamp(0.0, 1.0); }
+    if let Some(d) = cli.fault_delay_ms { cfg.fault.delay_ms = d; }
+    if !["closest", "random", "rating"].contains(&cfg.tunnel.relay_selection.as_str()) {
+        anyhow::bail!("tunnel.relay_selection = {}: допустимо closest, random, rating", cfg.tunnel.relay_selection);
+    }
 
     // Инициализация логов
     tracing_subscriber::fmt()
@@ -73,6 +107,11 @@ async fn main() -> Result<()> {
     info!("=== P2P Overlay Node [Coursework] ===");
     info!("Level: {:?}", cfg.level);
     info!("DHT:   K={} α={} R={}", cfg.dht.k_bucket_size, cfg.dht.alpha, cfg.dht.replication_factor);
+    info!("Канал: {} · туннели: {} relay, пул {}, выбор {}", cfg.security.channel, cfg.tunnel.min_relays,
+          cfg.tunnel.pool_size, cfg.tunnel.relay_selection);
+    if cfg.fault.drop > 0.0 || cfg.fault.delay_ms > 0 {
+        tracing::warn!("ВНЕСЕНИЕ ОТКАЗОВ (эксперимент): drop={} delay_ms={}", cfg.fault.drop, cfg.fault.delay_ms);
+    }
 
     // Идентичность узла
     let identity = NodeIdentity::load_or_create(&cfg.node.state_dir)?;

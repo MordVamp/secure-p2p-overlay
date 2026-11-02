@@ -138,3 +138,21 @@ async fn builder_uses_lookup_hint_when_table_lacks_target() {
     let bad = Contact::new(target.node_id, me.public_key_bytes().to_vec(), "127.0.0.1:1".parse().unwrap());
     assert!(b.build_with(&target.node_id, Some(&bad)).await.is_err());
 }
+
+/// Окно анти-replay переживает перезапуск: повтор того же сообщения новым экземпляром узла отвергается,
+/// а сообщение старше окна отвергается по подписанной метке времени.
+#[tokio::test]
+async fn replay_rejected_after_restart_and_outside_window() {
+    use p2p_overlay::app::replay::{ReplayGuard, WINDOW_MS};
+    let d = std::env::temp_dir().join(format!("p2p-replay-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    let now = p2p_overlay::types::now_ms();
+    let mut g = ReplayGuard::persistent(&d);
+    assert!(g.check(&[1; 16], now).is_ok());
+    drop(g);
+    let mut g = ReplayGuard::persistent(&d);   // «перезапуск»
+    assert!(g.check(&[1; 16], now).is_err(), "повтор после перезапуска");
+    assert!(g.check(&[2; 16], now - WINDOW_MS - 1000).is_err(), "старше окна");
+    assert!(g.check(&[3; 16], now + 10 * 60 * 1000).is_err(), "из будущего");
+    assert!(g.check(&[4; 16], now - 1000).is_ok());
+}

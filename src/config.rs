@@ -34,6 +34,39 @@ pub struct NodeConfig {
     pub security:  SecurityConfig,
     #[serde(default)]
     pub node:      NodeParams,
+    #[serde(default)]
+    pub files:     FilesConfig,
+    /// Только для экспериментов: внесение отказов на этом узле как ретрансляторе.
+    #[serde(default)]
+    pub fault:     FaultConfig,
+}
+
+/// Внесение отказов (эксперимент «стратегии выбора ретрансляторов»): ретранслятор с вероятностью `drop`
+/// отвечает ошибкой вместо пересылки и задерживает каждую пересылку на `delay_ms`. По умолчанию выключено.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct FaultConfig {
+    pub drop:     f64,
+    pub delay_ms: u64,
+}
+
+// ── Files (§13.2) ─────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FilesConfig {
+    /// Максимальный размер принимаемого и отправляемого файла.
+    pub max_bytes: u64,
+    /// Размер блока (≤ 44 КиБ: блок + подпись + конверт укладываются в сегмент туннеля 48 КиБ).
+    pub block_size: usize,
+    /// Окно: столько блоков отправляется до подтверждения.
+    pub window: usize,
+    /// Неполный файл удаляется, если блоков не было дольше этого времени.
+    pub incomplete_timeout_s: u64,
+}
+
+impl Default for FilesConfig {
+    fn default() -> Self { Self { max_bytes: 64 * 1024 * 1024, block_size: 40 * 1024, window: 8, incomplete_timeout_s: 60 } }
 }
 
 // ── DHT ──────────────────────────────────────────────────────────────────────
@@ -108,7 +141,12 @@ pub struct TunnelConfig {
     pub pool_size:          usize,
     pub build_timeout_ms:   u64,
     pub ack_timeout_ms:     u64,
+    /// Выбор ретрансляторов: `closest` (по XOR к получателю), `random`, `rating` (по профилю) — §12, продвинутый уровень.
+    #[serde(default = "default_selection")]
+    pub relay_selection:    String,
 }
+
+fn default_selection() -> String { "closest".into() }
 
 impl Default for TunnelConfig {
     fn default() -> Self {
@@ -119,6 +157,7 @@ impl Default for TunnelConfig {
             pool_size:        1,
             build_timeout_ms: 15000,
             ack_timeout_ms:   5000,
+            relay_selection:  default_selection(),
         }
     }
 }
@@ -128,11 +167,16 @@ impl Default for TunnelConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SecurityConfig {
     pub session_id_ttl_seconds: u64,
+    /// Канал между узлами: `tls` (TLS 1.3, по умолчанию) или `ake` (собственное рукопожатие, §11.3).
+    #[serde(default = "default_channel")]
+    pub channel: String,
 }
+
+fn default_channel() -> String { "tls".into() }
 
 impl Default for SecurityConfig {
     fn default() -> Self {
-        Self { session_id_ttl_seconds: 3600 }
+        Self { session_id_ttl_seconds: 3600, channel: default_channel() }
     }
 }
 

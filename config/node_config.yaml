@@ -36,6 +36,14 @@ tunnel:
   pool_size:        1
   build_timeout_ms: 15000
   ack_timeout_ms:   5000
+  relay_selection:  closest           # closest | random | rating (продвинутый уровень — rating)
 
 security:
   session_id_ttl_seconds: 3600
+  channel: tls                        # tls | ake (собственное рукопожатие, §11.3) — вся сеть одинаково
+
+files:                                # передача файлов (§13.2)
+  max_bytes:            67108864      # 64 МиБ
+  block_size:           40960         # 40 КиБ
+  window:               8
+  incomplete_timeout_s: 60

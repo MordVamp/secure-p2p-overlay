@@ -222,7 +222,7 @@ impl DhtNode {
             let Ok(addr) = c.socket_addr() else { continue };
             match self.rpc_client.store_value(
                 addr, self.cfg.transport.connect_timeout_ms, self.cfg.transport.read_timeout_ms,
-                &self.own_contact, &key.0, value.clone(), ttl, sig.clone(), seq,
+                &self.own_contact, &key.0, value.clone(), ttl, sig.clone(), seq, Some(&c.node_id),
             ).await {
                 Ok(r) if r.stored => stored += 1,
                 Ok(_) => {}
@@ -247,7 +247,7 @@ impl DhtNode {
             let Ok(addr) = c.socket_addr() else { continue };
             let Ok(resp) = self.rpc_client.find_value(
                 addr, self.cfg.transport.connect_timeout_ms, self.cfg.transport.read_timeout_ms,
-                &self.own_contact, &key.0,
+                &self.own_contact, &key.0, Some(&c.node_id),
             ).await else { continue };
             let (Some(v), Some(sig)) = (resp.value, resp.signature) else { continue };
             let Ok(publisher) = crate::identity::node_identity::compute_node_id_from_bytes(&resp.publisher_key)

@@ -21,6 +21,7 @@ use anyhow::{Result, bail};
 use tokio::sync::{Mutex, mpsc, oneshot};
 use tracing::{info, warn};
 
+use crate::app::files::{BlockOutcome, FileAck, FileBlock, FileDone, FileOffer, FileStore, TransferInfo, safe_name, sha256_file, MAX_BLOCK};
 use crate::app::history::{History, HistoryEntry};
 use crate::app::message::{AppMessage, MessageKind};
 use crate::config::NodeConfig;
@@ -51,6 +52,33 @@ pub struct SendReport {
     pub rebuilt_after_failure: bool,
     /// Полное время до APP_ACK (заполняет send_text_acked).
     pub rtt_ms:          u64,
+    /// Размер отправленного E2E-конверта, байт (для доли служебного трафика).
+    pub wire_bytes:      u64,
+    /// Основной туннель отказал, доставлено по резервному из пула (продвинутый уровень).
+    pub failover:        bool,
+    /// От начала передачи до обнаружения отказа, мс (если отказ был).
+    pub detect_ms:       Option<u64>,
+    /// От обнаружения отказа до TUNNEL_ACK по резервному туннелю, мс.
+    pub switch_ms:       Option<u64>,
+}
+
+/// Итог передачи файла (§13.2, метрики §15.2: goodput и доля служебного трафика).
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct FileReport {
+    pub transfer_id:  String,
+    pub name:         String,
+    pub size:         u64,
+    pub blocks:       u32,
+    pub duration_ms:  u64,
+    /// Полезная скорость: размер файла / время от предложения до подтверждения SHA-256 получателем, МиБ/с.
+    pub goodput_mib_s: f64,
+    /// Байты конвертов отправителя (предложение, блоки, повторы) и полученных подтверждений.
+    pub bytes_out:    u64,
+    pub bytes_in:     u64,
+    pub messages_out: u32,
+    pub retransmits:  u32,
+    /// (bytes_out + bytes_in − size) / (bytes_out + bytes_in) — служебная доля на прикладном уровне.
+    pub overhead_share: f64,
 }
 
 pub struct Messenger {
@@ -62,14 +90,18 @@ pub struct Messenger {
     #[allow(dead_code)] cfg:        Arc<NodeConfig>,
     /// Буфер входящих сообщений (до 100).
     inbox:      Mutex<VecDeque<AppMessage>>,
-    /// Анти-replay: ID уже принятых сообщений (ограниченный набор).
-    seen:       Mutex<std::collections::HashSet<Vec<u8>>>,
+    /// Анти-replay: окно по подписанной метке времени + принятые message_id (на диске — с `with_replay_log`).
+    seen:       Mutex<crate::app::replay::ReplayGuard>,
     /// APP_ACK: message_id → (кому отправили, канал пробуждения отправителя).
     waiting:    Mutex<HashMap<Vec<u8>, (NodeId, oneshot::Sender<()>)>>,
     /// Проверенные ключи собеседников (NodeID = hash(ключ), подделать нельзя).
     keys:       Mutex<HashMap<NodeId, Vec<u8>>>,
     /// §13.1: локальная история отправки и приёма (None — не ведётся, напр. в тестах).
     history:    Option<History>,
+    /// §13.2: приём файлов, ожидающие подтверждений отправители и сводка передач.
+    files:      Mutex<FileStore>,
+    file_waiters: Mutex<HashMap<Vec<u8>, (NodeId, mpsc::Sender<(AppMessage, usize)>)>>,
+    transfers:  Mutex<VecDeque<TransferInfo>>,
 }
 
 impl Messenger {
@@ -81,9 +113,17 @@ impl Messenger {
         metrics:   Arc<MetricsCollector>,
         cfg:       Arc<NodeConfig>,
     ) -> Self {
+        let files = FileStore::new(&cfg.node.state_dir, cfg.files.max_bytes, cfg.files.incomplete_timeout_s * 1000);
         Self { identity, dht, tunnels, forwarder, metrics, cfg, inbox: Mutex::new(VecDeque::new()),
-               seen: Mutex::new(Default::default()), waiting: Mutex::new(Default::default()),
-               keys: Mutex::new(Default::default()), history: None }
+               seen: Mutex::new(crate::app::replay::ReplayGuard::in_memory()), waiting: Mutex::new(Default::default()),
+               keys: Mutex::new(Default::default()), history: None,
+               files: Mutex::new(files),
+               file_waiters: Mutex::new(Default::default()), transfers: Mutex::new(VecDeque::new()) }
+    }
+
+    /// Хранить принятые message_id в `<state_dir>/replay.log` — повтор отвергается и после перезапуска.
+    pub fn with_replay_log(self, state_dir: &std::path::Path) -> Self {
+        Self { seen: Mutex::new(crate::app::replay::ReplayGuard::persistent(state_dir)), ..self }
     }
 
     /// Вести историю в `<state_dir>/history.jsonl`.
@@ -173,14 +213,19 @@ impl Messenger {
         };
         // Relay видят только Envelope
         let data = crate::security::e2e::seal(&target, &pk, &encode(msg)?)?;
+        rep.wire_bytes = data.len() as u64;
 
         let t0 = now_ms();
         match self.tunnels.send(&target, data.clone()).await {
-            Ok(()) => rep.tunnel_send_ms = now_ms().saturating_sub(t0),
+            Ok(o) => {
+                rep.tunnel_send_ms = now_ms().saturating_sub(t0);
+                (rep.failover, rep.detect_ms, rep.switch_ms) = (o.failover, o.detect_ms, o.switch_ms);
+            }
             Err(e) => {
-                // §12: туннель помечен DEAD — свежий lookup, новый маршрут без отказавшего relay, повтор
+                // §12: пригодных туннелей не осталось — свежий lookup, новый маршрут без отказавшего relay, повтор
                 warn!("tunnel to {} failed: {e}; перестраиваем маршрут", target.short());
                 rep.rebuilt_after_failure = true;
+                rep.detect_ms = Some(now_ms().saturating_sub(t0));
                 let (c, ms) = self.locate(&target).await;
                 rep.lookup_ms = Some(rep.lookup_ms.unwrap_or(0) + ms);
                 let built = self.tunnels.get_or_build_with(&target, c.as_ref()).await?;
@@ -265,6 +310,7 @@ impl Messenger {
 
     /// Обработать входящий TunnelMessage → проверить подпись → положить в inbox.
     pub async fn handle_incoming(self: &Arc<Self>, raw: Vec<u8>) -> Result<()> {
+        let raw_len = raw.len();
         // E2E: открытый (нешифрованный) AppMessage не принимаем
         let plain = crate::security::e2e::open(&self.identity, &raw)?;
         let msg: AppMessage = decode(&plain)
@@ -278,13 +324,9 @@ impl Messenger {
         info!("← msg {} from {} kind={:?}", msg.message_id_hex(), msg.from.short(), msg.kind);
         self.remember_key(msg.from, &msg.sender_pubkey).await;
 
-        // Анти-replay
-        {
-            let mut seen = self.seen.lock().await;
-            if seen.len() >= 4096 { seen.clear(); }
-            if !seen.insert(msg.message_id.clone()) {
-                bail!("duplicate message {}", msg.message_id_hex());
-            }
+        // Анти-replay: окно по подписанной метке времени + уже принятые message_id
+        if let Err(e) = self.seen.lock().await.check(&msg.message_id, msg.timestamp_ms) {
+            bail!("duplicate message {}: {e}", msg.message_id_hex());
         }
 
         match msg.kind {
@@ -297,6 +339,25 @@ impl Messenger {
                     }
                     Some(_) => warn!("APP_ACK от неожиданного узла {} отброшен", msg.from.short()),
                     None => tracing::debug!("APP_ACK на неизвестное сообщение"),
+                }
+                return Ok(());
+            }
+            MessageKind::FileOffer | MessageKind::FileBlock => {
+                self.on_file_message(msg).await;
+                return Ok(());
+            }
+            MessageKind::FileAck | MessageKind::FileDone => {
+                // подтверждения — ожидающему отправителю, только если пришли от получателя файла
+                let tid = match msg.kind {
+                    MessageKind::FileAck => decode::<FileAck>(&msg.payload).map(|a| a.transfer_id),
+                    _ => decode::<FileDone>(&msg.payload).map(|d| d.transfer_id),
+                };
+                let Ok(tid) = tid else { bail!("некорректное подтверждение файла") };
+                let w = self.file_waiters.lock().await;
+                match w.get(&tid) {
+                    Some((target, tx)) if *target == msg.from => { let _ = tx.try_send((msg, raw_len)); }
+                    Some(_) => warn!("подтверждение файла от неожиданного узла {} отброшено", msg.from.short()),
+                    None => tracing::debug!("подтверждение неизвестной передачи"),
                 }
                 return Ok(());
             }
@@ -318,6 +379,231 @@ impl Messenger {
             }
         }
         Ok(())
+    }
+
+    // ── §13.2: передача файлов ─────────────────────────────────────────────
+
+    fn build_kind<T: serde::Serialize>(&self, target: NodeId, kind: MessageKind, body: &T) -> Result<AppMessage> {
+        let mut m = AppMessage::new_kind(self.identity.node_id, target, kind, encode(body)?);
+        self.sign(&mut m);
+        Ok(m)
+    }
+
+    async fn upsert_transfer(&self, t: TransferInfo) {
+        let mut v = self.transfers.lock().await;
+        match v.iter_mut().find(|x| x.transfer_id == t.transfer_id) {
+            Some(x) => *x = t,
+            None => { if v.len() >= 50 { v.pop_front(); } v.push_back(t); }
+        }
+    }
+
+    async fn update_transfer(&self, id: &str, f: impl FnOnce(&mut TransferInfo)) {
+        if let Some(x) = self.transfers.lock().await.iter_mut().find(|x| x.transfer_id == id) { f(x); }
+    }
+
+    /// Сводка передач (последние 50) и каталог загрузок.
+    pub async fn transfers(&self) -> (Vec<TransferInfo>, std::path::PathBuf) {
+        (self.transfers.lock().await.iter().cloned().collect(), self.files.lock().await.dir.clone())
+    }
+
+    /// Удалить неполные входящие файлы по тайм-ауту (вызывается периодически).
+    pub async fn evict_stale_files(&self) {
+        let stale = self.files.lock().await.evict_stale();
+        for id in stale {
+            let hid = hex::encode(&id);
+            warn!("файл {}: неполный, удалён по тайм-ауту", &hid[..8]);
+            self.update_transfer(&hid, |t| { t.status = "failed".into(); t.error = Some("тайм-аут: файл не получен целиком".into()); t.finished_ms = Some(now_ms()); }).await;
+        }
+    }
+
+    fn file_reply<T: serde::Serialize + Send + 'static>(self: &Arc<Self>, to: NodeId, pk: Vec<u8>, kind: MessageKind, body: T) {
+        let me = self.clone();
+        tokio::spawn(async move {
+            let Ok(m) = me.build_kind(to, kind, &body) else { return };
+            if let Err(e) = me.deliver(to, Some(&pk), &m).await { warn!("ответ по файлу {} не отправлен: {e}", to.short()); }
+        });
+    }
+
+    /// Получатель: FileOffer / FileBlock.
+    async fn on_file_message(self: &Arc<Self>, msg: AppMessage) {
+        let (from, pk) = (msg.from, msg.sender_pubkey.clone());
+        let window = self.cfg.files.window.max(1) as u32;
+        match msg.kind {
+            MessageKind::FileOffer => {
+                let Ok(o) = decode::<FileOffer>(&msg.payload) else { return };
+                let tid = o.transfer_id.clone();
+                let info = TransferInfo {
+                    transfer_id: hex::encode(&tid), dir: "in".into(), peer: from.to_hex(), name: o.name.clone(), size: o.size,
+                    blocks: o.blocks, done_blocks: 0, status: "receiving".into(), error: None, path: None,
+                    started_ms: now_ms(), finished_ms: None,
+                };
+                let res = self.files.lock().await.on_offer(from, o);
+                match res {
+                    Ok(()) => { info!("← файл {} от {}: {} байт", info.name, from.short(), info.size); self.upsert_transfer(info).await; }
+                    Err(e) => {
+                        warn!("предложение файла от {} отклонено: {e}", from.short());
+                        self.upsert_transfer(TransferInfo { status: "rejected".into(), error: Some(e.to_string()), finished_ms: Some(now_ms()), ..info }).await;
+                        self.file_reply(from, pk, MessageKind::FileDone, FileDone { transfer_id: tid, ok: false, error: Some(e.to_string()) });
+                    }
+                }
+            }
+            MessageKind::FileBlock => {
+                let Ok(b) = decode::<FileBlock>(&msg.payload) else { return };
+                let hid = hex::encode(&b.transfer_id);
+                let res = self.files.lock().await.on_block(from, &b);
+                let outcome = match res {
+                    Ok(o) => o,
+                    Err(e) => { tracing::debug!("блок файла отброшен: {e}"); return; }
+                };
+                let (done, blocks, _) = self.files.lock().await.progress(&b.transfer_id).unwrap_or((0, 0, 0));
+                self.update_transfer(&hid, |t| t.done_blocks = done).await;
+                let window_end = (b.index + 1) % window == 0 || b.index + 1 == blocks;
+                if outcome == BlockOutcome::Complete {
+                    let res = self.files.lock().await.finish(&b.transfer_id);
+                    let (ok, err, path) = match res {
+                        Ok(p) => (true, None, Some(p.display().to_string())),
+                        Err(e) => (false, Some(e.to_string()), None),
+                    };
+                    self.update_transfer(&hid, |t| { t.done_blocks = t.blocks; t.status = if ok { "received".into() } else { "failed".into() };
+                                                     t.error = err.clone(); t.path = path.clone(); t.finished_ms = Some(now_ms()); }).await;
+                    if let Some(h) = &self.history {
+                        let name = self.transfers.lock().await.iter().find(|t| t.transfer_id == hid).map(|t| t.name.clone()).unwrap_or_default();
+                        h.append(&HistoryEntry { ts_ms: now_ms(), dir: "in".into(), peer: from.to_hex(), message_id: hid.clone(),
+                            status: if ok { "received".into() } else { "failed".into() }, text: Some(format!("📎 {name}")),
+                            rtt_ms: None, error: err.clone(), lookup_ms: None, tunnel_build_ms: None, tunnel_send_ms: None }).await;
+                    }
+                    // FileAck последнего окна, затем FileDone — по порядку, в одной задаче
+                    let ack = FileAck { transfer_id: b.transfer_id.clone(), received: blocks, missing: vec![] };
+                    let done = FileDone { transfer_id: b.transfer_id, ok, error: err };
+                    let me = self.clone();
+                    tokio::spawn(async move {
+                        for (kind, body) in [(MessageKind::FileAck, encode(&ack)), (MessageKind::FileDone, encode(&done))] {
+                            let Ok(body) = body else { return };
+                            let mut m = AppMessage::new_kind(me.identity.node_id, from, kind, body);
+                            me.sign(&mut m);
+                            if let Err(e) = me.deliver(from, Some(&pk), &m).await { warn!("ответ по файлу {} не отправлен: {e}", from.short()); }
+                        }
+                    });
+                } else if window_end {
+                    if let Some(ack) = self.files.lock().await.ack(&b.transfer_id, b.index + 1) {
+                        self.file_reply(from, pk, MessageKind::FileAck, ack);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Отправить файл: предложение → блоки окнами с подтверждением → повтор пропущенных → итог от получателя.
+    pub async fn send_file(self: &Arc<Self>, target: NodeId, path: &std::path::Path) -> Result<FileReport> {
+        use std::io::{Read, Seek, SeekFrom};
+        let size = std::fs::metadata(path).map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?.len();
+        if size > self.cfg.files.max_bytes { bail!("файл {size} байт больше лимита {} байт", self.cfg.files.max_bytes); }
+        let name = safe_name(&path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default())?;
+        let sha256 = sha256_file(path)?;
+        let bs = self.cfg.files.block_size.clamp(1024, MAX_BLOCK) as u64;
+        let blocks = size.div_ceil(bs).max(1) as u32;
+        let window = self.cfg.files.window.max(1) as u32;
+        let tid = uuid::Uuid::new_v4().into_bytes().to_vec();
+        let hid = hex::encode(&tid);
+        let (tx, mut rx) = mpsc::channel(256);
+        self.file_waiters.lock().await.insert(tid.clone(), (target, tx));
+        let t0 = now_ms();
+        self.upsert_transfer(TransferInfo { transfer_id: hid.clone(), dir: "out".into(), peer: target.to_hex(), name: name.clone(),
+            size, blocks, done_blocks: 0, status: "sending".into(), error: None, path: Some(path.display().to_string()),
+            started_ms: t0, finished_ms: None }).await;
+        let mut rep = FileReport { transfer_id: hid.clone(), name: name.clone(), size, blocks, ..Default::default() };
+
+        let res: Result<()> = async {
+            let offer = FileOffer { transfer_id: tid.clone(), name: name.clone(), size, sha256, block_size: bs as u32, blocks };
+            let m = self.build_kind(target, MessageKind::FileOffer, &offer)?;
+            rep.bytes_out += self.deliver(target, None, &m).await?.wire_bytes;
+            rep.messages_out += 1;
+            let mut f = std::fs::File::open(path)?;
+            let mut next = 0u32;
+            let mut done_ok = false;   // итог мог прийти раньше подтверждения последнего окна
+            while next < blocks {
+                let end = (next + window).min(blocks);
+                let mut pending: Vec<u32> = (next..end).collect();
+                let mut rounds = 0;
+                loop {
+                    // последний блок окна шлётся в каждом раунде: по нему получатель отвечает FileAck
+                    if !pending.contains(&(end - 1)) { pending.push(end - 1); }
+                    for &i in &pending {
+                        let off = i as u64 * bs;
+                        let len = (size - off).min(bs) as usize;
+                        let mut data = vec![0u8; len];
+                        f.seek(SeekFrom::Start(off))?;
+                        f.read_exact(&mut data)?;
+                        let m = self.build_kind(target, MessageKind::FileBlock, &FileBlock { transfer_id: tid.clone(), index: i, data })?;
+                        rep.bytes_out += self.deliver(target, None, &m).await?.wire_bytes;
+                        rep.messages_out += 1;
+                    }
+                    if rounds > 0 { rep.retransmits += pending.len() as u32; }
+                    self.update_transfer(&hid, |t| t.done_blocks = end).await;
+                    // ждём подтверждение окна (или отказ получателя)
+                    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+                    let mut missing: Option<Vec<u32>> = None;
+                    while missing.is_none() {
+                        match tokio::time::timeout_at(deadline, rx.recv()).await {
+                            Ok(Some((m, n))) => {
+                                rep.bytes_in += n as u64;
+                                if m.kind == MessageKind::FileDone {
+                                    let d: FileDone = decode(&m.payload)?;
+                                    if !d.ok { bail!("получатель отказал: {}", d.error.unwrap_or_default()); }
+                                    done_ok = true;
+                                    if next + window >= blocks { missing = Some(vec![]); }
+                                } else if let Ok(a) = decode::<FileAck>(&m.payload) {
+                                    if a.received >= end || a.missing.iter().all(|&x| x < end) {
+                                        missing = Some(a.missing.into_iter().filter(|&x| x >= next && x < end).collect());
+                                    }
+                                }
+                            }
+                            _ => break,
+                        }
+                    }
+                    rounds += 1;
+                    match missing {
+                        Some(m) if m.is_empty() => break,
+                        Some(m) => pending = m,
+                        None => pending = (next..end).collect(),   // подтверждения нет — повторить окно
+                    }
+                    if rounds > 3 { bail!("окно блоков {next}..{end} не подтверждено после 3 повторов"); }
+                }
+                next = end;
+            }
+            // итог: получатель проверил SHA-256
+            if done_ok { return Ok(()); }
+            let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(20);
+            loop {
+                match tokio::time::timeout_at(deadline, rx.recv()).await {
+                    Ok(Some((m, n))) => {
+                        rep.bytes_in += n as u64;
+                        if m.kind == MessageKind::FileDone {
+                            let d: FileDone = decode(&m.payload)?;
+                            if d.ok { return Ok(()); }
+                            bail!("получатель отклонил файл: {}", d.error.unwrap_or_default());
+                        }
+                    }
+                    _ => bail!("нет итогового подтверждения (SHA-256) от получателя"),
+                }
+            }
+        }.await;
+
+        self.file_waiters.lock().await.remove(&tid);
+        rep.duration_ms = now_ms().saturating_sub(t0).max(1);
+        rep.goodput_mib_s = size as f64 / (1024.0 * 1024.0) / (rep.duration_ms as f64 / 1000.0);
+        let total = (rep.bytes_out + rep.bytes_in) as f64;
+        rep.overhead_share = if total > 0.0 { ((total - size as f64) / total).max(0.0) } else { 0.0 };
+        let (status, err) = match &res { Ok(()) => ("delivered", None), Err(e) => ("failed", Some(e.to_string())) };
+        self.update_transfer(&hid, |t| { t.status = if res.is_ok() { "sent".into() } else { "failed".into() };
+                                         t.error = err.clone(); t.finished_ms = Some(now_ms()); if res.is_ok() { t.done_blocks = t.blocks; } }).await;
+        if let Some(h) = &self.history {
+            h.append(&HistoryEntry { ts_ms: now_ms(), dir: "out".into(), peer: target.to_hex(), message_id: hid.clone(),
+                status: status.into(), text: Some(format!("📎 {name}")), rtt_ms: Some(rep.duration_ms), error: err,
+                lookup_ms: None, tunnel_build_ms: None, tunnel_send_ms: None }).await;
+        }
+        res.map(|_| rep)
     }
 
     /// Публичный ключ получателя: из таблицы маршрутизации, иначе из его NodeRecord в DHT.

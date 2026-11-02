@@ -1,9 +1,13 @@
-//! tunnel/manager.rs — Пул туннелей: создание, мониторинг, восстановление.
+//! tunnel/manager.rs — пул туннелей: создание, отправка, переключение на резервный, мониторинг.
 //!
-//! Упрощённый уровень: pool_size=1 (один активный туннель к каждому dest).
-//! Продвинутый уровень: pool_size≥3, ротация туннелей, профили кандидатов.
+//! К каждому получателю держится до `tunnel.pool_size` туннелей (упрощённый уровень — 1, продвинутый — 3):
+//! основной строится при первой отправке, остальные достраиваются в фоне, по возможности на
+//! непересекающихся ретрансляторах. Отправка идёт по первому пригодному туннелю; если он не подтвердил
+//! кадр (TUNNEL_ACK), туннель помечается DEAD и тот же кадр сразу уходит по следующему — переключение на
+//! резервный. Если не осталось ни одного, ошибку получает `Messenger`, который перестраивает маршрут
+//! через свежий lookup (ADR-21). Выбор ретрансляторов и профили кандидатов — `profile.rs`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use tokio::sync::{Mutex, RwLock};
@@ -13,78 +17,82 @@ use tracing::{debug, info, warn};
 use crate::config::NodeConfig;
 use crate::dht::routing_table::RoutingTable;
 use crate::tunnel::builder::TunnelBuilder;
+use crate::tunnel::forwarder::TunnelForwarder;
+use crate::tunnel::profile::{blamed_addr, RelayProfiles};
 use crate::tunnel::session::TunnelSession;
 use crate::tunnel::state::TunnelState;
-use crate::tunnel::forwarder::TunnelForwarder;
-use crate::types::{Contact, NodeId};
+use crate::types::{now_ms, Contact, NodeId};
 
-/// Менеджер пула туннелей.
+/// Итог отправки через пул.
+#[derive(Debug, Clone, Default)]
+pub struct SendOutcome {
+    /// Основной туннель отказал, кадр доставлен по резервному.
+    pub failover:  bool,
+    /// От начала отправки до обнаружения отказа (нет TUNNEL_ACK / ERROR), мс.
+    pub detect_ms: Option<u64>,
+    /// От обнаружения отказа до TUNNEL_ACK по резервному туннелю, мс.
+    pub switch_ms: Option<u64>,
+    /// Сколько туннелей пула пришлось попробовать.
+    pub attempts:  u32,
+}
+
 pub struct TunnelManager {
-    /// Активные туннели: target NodeId → сессия
-    tunnels:  RwLock<HashMap<String, TunnelSession>>,
-    builder:  TunnelBuilder,
-    #[allow(dead_code)]
-    cfg:      Arc<NodeConfig>,
+    /// Пулы: target NodeId (hex) → туннели, первый пригодный — основной.
+    tunnels:   RwLock<HashMap<String, Vec<TunnelSession>>>,
+    builder:   TunnelBuilder,
+    cfg:       Arc<NodeConfig>,
     /// A4: отправка данных первому hop (используется задачей-отправителем сессии).
     pub forwarder: Arc<TunnelForwarder>,
+    pub profiles:  Arc<Mutex<RelayProfiles>>,
+    /// Получатели, для которых уже идёт фоновое пополнение пула.
+    filling:   Mutex<HashSet<String>>,
+    /// Последний известный контакт получателя (из lookup) — для фонового построения.
+    hints:     Mutex<HashMap<String, Contact>>,
 }
 
 impl TunnelManager {
-    pub fn new(
-        own_contact: Contact,
-        routing:     Arc<Mutex<RoutingTable>>,
-        cfg:         Arc<NodeConfig>,
-    ) -> Self {
+    pub fn new(own_contact: Contact, routing: Arc<Mutex<RoutingTable>>, cfg: Arc<NodeConfig>) -> Self {
         let builder = TunnelBuilder::new(own_contact, routing, cfg.clone());
+        let profiles = builder.profiles.clone();
         Self {
-            tunnels: RwLock::new(HashMap::new()),
-            builder,
-            forwarder: Arc::new(TunnelForwarder::new(cfg.clone())),
-            cfg,
+            tunnels: RwLock::new(HashMap::new()), builder, forwarder: Arc::new(TunnelForwarder::new(cfg.clone())),
+            profiles, cfg, filling: Mutex::new(HashSet::new()), hints: Mutex::new(HashMap::new()),
         }
     }
 
-    /// Получить активный туннель к `target` или построить новый.
-    /// Ok(None) — использован существующий туннель, Ok(Some(ms)) — построен новый за `ms`.
-    pub async fn get_or_build(&self, target: &NodeId) -> anyhow::Result<Option<u64>> {
-        self.get_or_build_with(target, None).await
+    fn pool_size(&self) -> usize { self.cfg.tunnel.pool_size.max(1) }
+
+    async fn usable_count(&self, key: &str) -> usize {
+        let tunnels = self.tunnels.read().await;
+        let Some(pool) = tunnels.get(key) else { return 0 };
+        let mut n = 0;
+        for t in pool { if t.state().await.is_usable() && !t.is_expired() { n += 1; } }
+        n
     }
 
     /// Есть ли пригодный туннель к `target` (без построения).
-    pub async fn is_usable(&self, target: &NodeId) -> bool {
+    pub async fn is_usable(&self, target: &NodeId) -> bool { self.usable_count(&target.to_hex()).await > 0 }
+
+    /// Ретрансляторы пригодных туннелей пула — их по возможности не повторяем в новом туннеле.
+    async fn pool_relays(&self, key: &str) -> HashSet<NodeId> {
         let tunnels = self.tunnels.read().await;
-        match tunnels.get(&target.to_hex()) {
-            Some(t) => t.state().await.is_usable() && !t.is_expired(),
-            None => false,
-        }
-    }
-
-    /// То же с явным контактом получателя (из результата lookup).
-    pub async fn get_or_build_with(&self, target: &NodeId, hint: Option<&crate::types::Contact>) -> anyhow::Result<Option<u64>> {
-        let key = target.to_hex();
-
-        // Проверяем наличие пригодного туннеля
-        {
-            let tunnels = self.tunnels.read().await;
-            if let Some(t) = tunnels.get(&key) {
-                if t.state().await.is_usable() && !t.is_expired() {
-                    debug!("Reusing tunnel {} to {}", t.id_hex(), target.short());
-                    return Ok(None);
-                }
+        let mut out = HashSet::new();
+        if let Some(pool) = tunnels.get(key) {
+            for t in pool {
+                if t.state().await.is_usable() { out.extend(t.hops.iter().map(|h| h.relay.node_id)); }
             }
         }
+        out
+    }
 
-        // Строим новый
-        info!("Building tunnel to {}", target.short());
-        let t0 = crate::types::now_ms();
-        let session = self.builder.build_with(target, hint).await?;
-        let build_ms = crate::types::now_ms().saturating_sub(t0);
-
-        // A4: задача-отправитель — забирает очередь сессии и шлёт данные первому hop.
-        // TUNNEL_ACK первого relay приходит после ACK всей цепочки → это и есть контроль доступности.
-        let first_hop = session.hops.first()
-            .ok_or_else(|| anyhow::anyhow!("empty route"))?
-            .relay.socket_addr()?;
+    /// Построить один туннель и запустить его задачу-отправителя.
+    async fn build_one(&self, target: &NodeId, hint: Option<&Contact>, avoid: &HashSet<NodeId>) -> anyhow::Result<(TunnelSession, u64)> {
+        let t0 = now_ms();
+        let session = self.builder.build_avoiding(target, hint, avoid).await?;
+        let build_ms = now_ms().saturating_sub(t0);
+        // TUNNEL_ACK первого relay приходит после ACK всей цепочки → это и есть контроль доступности
+        let first = &session.hops.first().ok_or_else(|| anyhow::anyhow!("empty route"))?.relay;
+        let (first_hop, first_id) = (first.socket_addr()?, first.node_id);
         if let Some(mut rx) = session.take_outbox().await {
             let fwd = self.forwarder.clone();
             let tag = session.id_hex();
@@ -94,7 +102,7 @@ impl TunnelManager {
                     let res = if health.is_dead().await {
                         Err(anyhow::anyhow!("tunnel {tag} is DEAD"))
                     } else {
-                        fwd.send_data(&td.tunnel_id, first_hop, td.payload).await.map(|_| ())
+                        fwd.send_data_to(&td.tunnel_id, first_hop, Some(first_id), td.payload).await.map(|_| ())
                     };
                     match &res {
                         Ok(()) => health.mark_ack().await,
@@ -107,112 +115,212 @@ impl TunnelManager {
                 }
             });
         }
-
-        let mut tunnels = self.tunnels.write().await;
-        tunnels.insert(key, session);
-        Ok(Some(build_ms))
+        Ok((session, build_ms))
     }
 
-    /// Отправить данные через туннель к `target` и дождаться TUNNEL_ACK.
-    /// Ошибка означает, что кадр не дошёл; туннель при этом помечен DEAD.
-    pub async fn send(&self, target: &NodeId, payload: Vec<u8>) -> anyhow::Result<()> {
+    /// Получить пригодный туннель к `target` или построить основной.
+    /// Ok(None) — использован существующий, Ok(Some(ms)) — построен новый за `ms`.
+    pub async fn get_or_build(self: &Arc<Self>, target: &NodeId) -> anyhow::Result<Option<u64>> {
+        self.get_or_build_with(target, None).await
+    }
+
+    /// То же с явным контактом получателя (из результата lookup). Пул до `pool_size` пополняется в фоне.
+    pub async fn get_or_build_with(self: &Arc<Self>, target: &NodeId, hint: Option<&Contact>) -> anyhow::Result<Option<u64>> {
         let key = target.to_hex();
-        let rx = {
-            let tunnels = self.tunnels.read().await;
-            let session = tunnels.get(&key)
-                .ok_or_else(|| anyhow::anyhow!("no tunnel to {}", target.short()))?;
-            session.send_confirmed(payload).await?
+        if let Some(h) = hint { self.hints.lock().await.insert(key.clone(), h.clone()); }
+        let built = if self.usable_count(&key).await == 0 {
+            info!("Building tunnel to {}", target.short());
+            let (s, ms) = self.build_one(target, hint, &HashSet::new()).await?;
+            self.tunnels.write().await.entry(key).or_default().insert(0, s);
+            Some(ms)
+        } else {
+            debug!("Reusing tunnel to {}", target.short());
+            None
         };
-        rx.await.map_err(|_| anyhow::anyhow!("tunnel sender stopped"))?
+        self.fill_pool(target);
+        Ok(built)
     }
 
-    /// Закрыть туннель к `target`.
+    /// Фоновое пополнение пула до `pool_size` пригодных туннелей.
+    fn fill_pool(self: &Arc<Self>, target: &NodeId) {
+        if self.pool_size() <= 1 { return; }
+        let (me, target) = (self.clone(), *target);
+        tokio::spawn(async move {
+            let key = target.to_hex();
+            if !me.filling.lock().await.insert(key.clone()) { return; }
+            for _ in 0..me.pool_size() * 2 {
+                if me.usable_count(&key).await >= me.pool_size() { break; }
+                let avoid = me.pool_relays(&key).await;
+                let hint = me.hints.lock().await.get(&key).cloned();
+                match me.build_one(&target, hint.as_ref(), &avoid).await {
+                    Ok((s, _)) => {
+                        debug!("pool {}: + tunnel {}", target.short(), s.id_hex());
+                        me.tunnels.write().await.entry(key.clone()).or_default().push(s);
+                    }
+                    Err(e) => { debug!("pool {}: пополнение не удалось: {e}", target.short()); break; }
+                }
+            }
+            me.filling.lock().await.remove(&key);
+        });
+    }
+
+    /// Учесть отказ: виноват узел, на котором оборвалась цепочка; если не определить — все hop туннеля.
+    async fn blame(&self, hops: &[Contact], err: &str) {
+        let mut p = self.profiles.lock().await;
+        match blamed_addr(err) {
+            Some(addr) => {
+                if let Some(c) = hops.iter().find(|c| c.host_port() == addr) { p.failure(c); }
+                // иначе адрес — получатель или посторонний: ретрансляторы не виноваты
+            }
+            None => for c in hops { p.failure(c); },
+        }
+    }
+
+    /// Отправить данные к `target` и дождаться TUNNEL_ACK; при отказе — по следующему туннелю пула.
+    pub async fn send(self: &Arc<Self>, target: &NodeId, payload: Vec<u8>) -> anyhow::Result<SendOutcome> {
+        let key = target.to_hex();
+        let t0 = now_ms();
+        let mut out = SendOutcome::default();
+        let mut detected: Option<u64> = None;
+        let mut last_err: Option<anyhow::Error> = None;
+        let mut tried: HashSet<[u8; 16]> = HashSet::new();
+        loop {
+            let pick = {
+                let tunnels = self.tunnels.read().await;
+                let Some(pool) = tunnels.get(&key) else { anyhow::bail!("no tunnel to {}", target.short()) };
+                let mut pick = None;
+                for t in pool {
+                    if !tried.contains(&t.id) && t.state().await.is_usable() && !t.is_expired() {
+                        tried.insert(t.id);
+                        let hops: Vec<Contact> = t.hops.iter().map(|h| h.relay.clone()).collect();
+                        pick = Some((t.send_confirmed(payload.clone()).await, hops));
+                        break;
+                    }
+                }
+                pick
+            };
+            let Some((rx, hops)) = pick else { break };
+            out.attempts += 1;
+            let t_try = now_ms();
+            let res = match rx {
+                Ok(rx) => rx.await.unwrap_or_else(|_| Err(anyhow::anyhow!("tunnel sender stopped"))),
+                Err(e) => Err(e),
+            };
+            match res {
+                Ok(()) => {
+                    let per_hop = now_ms().saturating_sub(t_try) as f64 / hops.len().max(1) as f64;
+                    let mut p = self.profiles.lock().await;
+                    for c in &hops { p.success(c, per_hop); }
+                    drop(p);
+                    if let Some(d) = detected {
+                        out.failover = true;
+                        out.switch_ms = Some(now_ms().saturating_sub(d));
+                        info!("доставка к {} переключена на резервный туннель", target.short());
+                        self.fill_pool(target);
+                    }
+                    return Ok(out);
+                }
+                Err(e) => {
+                    self.blame(&hops, &e.to_string()).await;
+                    if detected.is_none() {
+                        let now = now_ms();
+                        detected = Some(now);
+                        out.detect_ms = Some(now.saturating_sub(t0));
+                    }
+                    last_err = Some(e);
+                }
+            }
+        }
+        Err(last_err.unwrap_or_else(|| anyhow::anyhow!("no usable tunnel to {}", target.short())))
+    }
+
+    /// Закрыть все туннели к `target`.
     pub async fn close(&self, target: &NodeId) {
         let key = target.to_hex();
         let mut tunnels = self.tunnels.write().await;
-        if let Some(t) = tunnels.get(&key) {
-            t.transition(TunnelState::Closing).await;
-            t.transition(TunnelState::Dead).await;
+        if let Some(pool) = tunnels.get(&key) {
+            for t in pool { t.transition(TunnelState::Closing).await; t.transition(TunnelState::Dead).await; }
         }
         tunnels.remove(&key);
-        info!("Tunnel to {} closed", target.short());
+        info!("Tunnels to {} closed", target.short());
     }
 
-    /// Фоновый мониторинг: обновляет состояние, убирает мёртвые и истёкшие туннели.
-    /// Вызывать через `tokio::spawn`.
+    /// Фоновый мониторинг: обновляет состояния, убирает мёртвые и истёкшие туннели.
     pub async fn monitor_loop(self: Arc<Self>) {
-        let check_interval = Duration::from_secs(10);
-        let mut ticker = interval(check_interval);
+        let mut ticker = interval(Duration::from_secs(10));
         loop {
             ticker.tick().await;
             self.check_tunnels().await;
         }
     }
 
-    /// DEAD-туннели удаляются; новый маршрут к получателю строится при следующей
-    /// отправке (Messenger: свежий lookup → TUNNEL_BUILD без отказавших relay → повтор).
+    /// DEAD-туннели удаляются; новый маршрут строится при следующей отправке или пополнении пула.
     async fn check_tunnels(&self) {
-        let mut dead = vec![];
+        let mut dead: Vec<(String, [u8; 16])> = vec![];
         {
             let tunnels = self.tunnels.read().await;
-            for (key, session) in tunnels.iter() {
-                session.refresh_state().await;
-                if session.state().await == TunnelState::Dead {
-                    dead.push((key.clone(), session.id));
+            for (key, pool) in tunnels.iter() {
+                for s in pool {
+                    s.refresh_state().await;
+                    if s.state().await == TunnelState::Dead { dead.push((key.clone(), s.id)); }
                 }
             }
         }
         if dead.is_empty() { return; }
         let mut tunnels = self.tunnels.write().await;
         for (key, id) in dead {
-            // туннель мог быть заменён новым, пока мы не держали блокировку
-            if tunnels.get(&key).map(|s| s.id == id).unwrap_or(false) {
-                tunnels.remove(&key);
-                info!("Tunnel to {} removed (DEAD), will be rebuilt on next send", &key[..8]);
+            if let Some(pool) = tunnels.get_mut(&key) {
+                pool.retain(|s| s.id != id);
+                if pool.is_empty() { tunnels.remove(&key); }
             }
+            info!("Tunnel to {} removed (DEAD)", &key[..8]);
         }
     }
 
-    /// Диагностика маршрута до `target`: состояние туннеля и цепочка relay (None — туннеля нет).
+    /// Диагностика маршрута до `target`: основной туннель (цепочка relay) и пул. None — туннелей нет.
     pub async fn route_json(&self, target: &NodeId) -> Option<serde_json::Value> {
         let tunnels = self.tunnels.read().await;
-        let t = tunnels.get(&target.to_hex())?;
-        let fresh = t.alive_hops() > 0;
-        let hops: Vec<_> = t.hops.iter().map(|h| serde_json::json!({
-            "index":     h.hop_index,
-            "node_id":   h.relay.node_id.to_hex(),
-            "addr":      format!("{}:{}", h.relay.host, h.relay.port),
-            "confirmed": h.confirmed,
-            "alive":     h.confirmed && fresh,
-        })).collect();
-        Some(serde_json::json!({
-            "tunnel_id": t.id_hex(),
-            "state":     format!("{:?}", t.state().await),
-            "uptime_ms": t.uptime_ms(),
-            "last_ack_age_ms": t.last_ack_age_ms(),
-            "hops":      hops,
-        }))
+        let pool = tunnels.get(&target.to_hex())?;
+        let mut primary = None;
+        let mut list = vec![];
+        for t in pool {
+            let state = t.state().await;
+            let fresh = t.alive_hops() > 0;
+            let hops: Vec<_> = t.hops.iter().map(|h| serde_json::json!({
+                "index": h.hop_index, "node_id": h.relay.node_id.to_hex(), "addr": h.relay.host_port(),
+                "confirmed": h.confirmed, "alive": h.confirmed && fresh,
+            })).collect();
+            let j = serde_json::json!({
+                "tunnel_id": t.id_hex(), "state": format!("{state:?}"), "uptime_ms": t.uptime_ms(),
+                "last_ack_age_ms": t.last_ack_age_ms(), "hops": hops,
+            });
+            if primary.is_none() && state.is_usable() { primary = Some(j.clone()); }
+            list.push(j);
+        }
+        let mut p = primary.or_else(|| list.first().cloned())?;
+        p["pool"] = serde_json::json!(list);
+        p["pool_size"] = serde_json::json!(self.pool_size());
+        p["relay_selection"] = serde_json::json!(self.cfg.tunnel.relay_selection);
+        Some(p)
     }
 
-    /// Экспорт состояния всех туннелей в JSON (для метрик).
+    /// Экспорт состояния всех туннелей в JSON (для метрик и панели).
     pub async fn export_json(&self) -> serde_json::Value {
         let tunnels = self.tunnels.read().await;
-        let list: Vec<serde_json::Value> = futures::future::join_all(
-            tunnels.values().map(|t| async move {
-                serde_json::json!({
-                    "tunnel_id": t.id_hex(),
-                    "state": format!("{:?}", t.state().await),
-                    "hops": t.hops.len(),
-                    "alive_hops": t.alive_hops(),
-                    "last_ack_age_ms": t.last_ack_age_ms(),
-                    "uptime_ms": t.uptime_ms(),
-                })
-            })
-        ).await;
-
-        serde_json::json!({
-            "total_tunnels": list.len(),
-            "tunnels": list,
-        })
+        let mut list = vec![];
+        for (key, pool) in tunnels.iter() {
+            for (i, t) in pool.iter().enumerate() {
+                list.push(serde_json::json!({
+                    "tunnel_id": t.id_hex(), "target": &key[..8], "role": if i == 0 { "primary" } else { "backup" },
+                    "state": format!("{:?}", t.state().await), "hops": t.hops.len(), "alive_hops": t.alive_hops(),
+                    "last_ack_age_ms": t.last_ack_age_ms(), "uptime_ms": t.uptime_ms(),
+                }));
+            }
+        }
+        serde_json::json!({ "total_tunnels": list.len(), "tunnels": list, "pool_size": self.pool_size(),
+                            "relay_selection": self.cfg.tunnel.relay_selection })
     }
+
+    /// Профили кандидатов в ретрансляторы (по убыванию оценки).
+    pub async fn profiles_json(&self) -> serde_json::Value { self.profiles.lock().await.json() }
 }

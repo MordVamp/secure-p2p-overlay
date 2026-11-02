@@ -41,11 +41,18 @@ impl Node {
             identity.public_key_bytes().to_vec(),
             addr_str.parse().context("listen addr parse")?,
         );
-        // TLS 1.3 (mutual, Ed25519): сертификат строится из identity-ключа узла
-        crate::rpc::install_tls(Arc::new(
-            crate::security::tls::TlsSecurity::new(identity.signing_key())
-                .context("TLS init")?,
-        ));
+        // Канал: TLS 1.3 (mutual, сертификат на identity-ключе) или собственное рукопожатие (§11.3)
+        match cfg.security.channel.as_str() {
+            "tls" => crate::rpc::install_tls(Arc::new(
+                crate::security::tls::TlsSecurity::new(identity.signing_key()).context("TLS init")?,
+            )),
+            "ake" => crate::rpc::install_ake(Arc::new(crate::security::ake::AkeSecurity::from_identity(identity))),
+            other => anyhow::bail!("security.channel = {other}: допустимо tls или ake"),
+        }
+        // узел на конкретном адресе (не 0.0.0.0) и соединяется с него — для сценария с ограниченным underlay
+        if let Ok(ip) = cfg.node.listen_host.parse::<std::net::IpAddr>() {
+            if !ip.is_unspecified() { crate::rpc::set_local_ip(ip); }
+        }
         let dht = Arc::new(DhtNode::new(own_contact.clone(), cfg.clone()));
         let tunnel_mgr = Arc::new(TunnelManager::new(
             own_contact.clone(),
@@ -58,7 +65,8 @@ impl Node {
         let messenger = Arc::new(crate::app::messenger::Messenger::new(
             identity.clone(), dht.clone(), tunnel_mgr.clone(),
             tunnel_mgr.forwarder.clone(), dht.metrics.clone(), cfg.clone(),
-        ).with_history(crate::app::history::History::open(&cfg.node.state_dir)));
+        ).with_history(crate::app::history::History::open(&cfg.node.state_dir))
+         .with_replay_log(&cfg.node.state_dir));
         Ok(Self {
             dht, cfg, own_contact, tunnel_mgr, messenger, identity, routes,
             app_tx, app_rx: std::sync::Mutex::new(Some(app_rx)),
@@ -167,15 +175,16 @@ impl Node {
             });
         }
 
-        // ── §10.1: TTL-очистка хранилища и переопубликование своих записей ─
+        // ── §10.1: TTL-очистка хранилища и переопубликование своих записей; §13.2: неполные файлы ─
         {
             let dht = self.dht.clone();
+            let msgr = self.messenger.clone();
             let mut rx = shutdown_rx.clone();
             tokio::spawn(async move {
                 let mut t = tokio::time::interval(std::time::Duration::from_secs(10));
                 loop {
                     tokio::select! {
-                        _ = t.tick() => { dht.store.evict_expired().await; }
+                        _ = t.tick() => { dht.store.evict_expired().await; msgr.evict_stale_files().await; }
                         _ = rx.changed() => break,
                     }
                 }
@@ -218,7 +227,12 @@ impl Node {
                                 let hs_timeout = std::time::Duration::from_millis(handshake_ms);
                                 tokio::select! {
                                     res = async move {
-                                        let framed = match crate::rpc::tls() {
+                                        let framed = if let Some(a) = crate::rpc::ake() {
+                                            let (s, id) = tokio::time::timeout(hs_timeout, a.accept(stream)).await
+                                                .map_err(|_| anyhow::anyhow!("AKE handshake timeout"))??;
+                                            debug!("AKE peer {} NodeID={}", peer_addr, id.short());
+                                            FramedStream::new(Box::new(s) as BoxedIo, timeout).with_peer(id)
+                                        } else { match crate::rpc::tls() {
                                             Some(t) => {
                                                 let (tls, id) = tokio::time::timeout(hs_timeout, t.accept(stream)).await
                                                     .map_err(|_| anyhow::anyhow!("TLS handshake timeout"))??;
@@ -226,7 +240,7 @@ impl Node {
                                                 FramedStream::new(Box::new(tls) as BoxedIo, timeout).with_peer(id)
                                             }
                                             None => FramedStream::new(Box::new(stream) as BoxedIo, timeout),
-                                        };
+                                        } };
                                         handle_conn(framed, peer_addr, handler).await
                                     } => {
                                         if let Err(e) = res {

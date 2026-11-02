@@ -1,0 +1,50 @@
+# Конфигурация узла — ПРОДВИНУТЫЙ уровень (ТЗ §5, §12, §13.2): k=4, три ретранслятора, пул из трёх туннелей,
+# выбор ретрансляторов по профилю (rating), передача файлов. Отличается от config/node_config.yaml только этим.
+# Запуск: p2p-node -c config/node_config_advanced.yaml …   ·   сценарии: p2p-orchestrator scenario … --node-config config/node_config_advanced.yaml
+
+level: advanced
+
+dht:
+  node_id_bits:               256
+  k_bucket_size:              4       # advanced=4
+  alpha:                      3
+  replication_factor:         3
+  store_quorum:               2
+  ttl_seconds:                180
+  republish_interval_seconds: 80
+  refresh_interval_seconds:   60
+  ping_timeout_ms:            5000
+  rpc_timeout_ms:             5000
+
+transport:
+  max_frame_payload:   65536
+  protocol_version:    1
+  connect_timeout_ms:  3000
+  read_timeout_ms:     5000
+
+node:
+  state_dir:       ./state/node-01
+  listen_host:     0.0.0.0
+  listen_port:     7001
+  bootstrap_peers: []
+  log_level:       INFO
+  metrics_dir:     ./metrics/node-01
+
+tunnel:
+  min_relays:       3                 # advanced: ≥3 ретранслятора
+  max_hops:         5
+  ttl_seconds:      600
+  pool_size:        3                 # пул ≥3 туннелей, резервные на непересекающихся relay
+  build_timeout_ms: 15000
+  ack_timeout_ms:   5000
+  relay_selection:  rating            # closest | random | rating
+
+security:
+  session_id_ttl_seconds: 3600
+  channel: tls                        # tls | ake (собственное рукопожатие, §11.3)
+
+files:
+  max_bytes:            67108864      # 64 МиБ
+  block_size:           40960         # 40 КиБ (≤ 44 КиБ, чтобы блок с подписью и конвертом уложился в сегмент 48 КиБ)
+  window:               8
+  incomplete_timeout_s: 60

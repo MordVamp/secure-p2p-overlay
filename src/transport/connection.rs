@@ -49,6 +49,7 @@ impl<S: AsyncReadExt + AsyncWriteExt + Unpin + Send> FramedStream<S> {
     pub async fn send(&mut self, frame: &Frame) -> Result<(), FrameError> {
         let bytes = frame.encode()?;
         self.inner.write_all(&bytes).await?;
+        self.inner.flush().await?;   // AKE буферизует запись — отправить сразу
         debug!("→ {:?} len={}", frame.msg_type, bytes.len());
         Ok(())
     }

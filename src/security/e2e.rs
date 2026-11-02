@@ -90,7 +90,7 @@ pub fn seal(to: &NodeId, recipient_ed_pub: &[u8], plaintext: &[u8]) -> Result<Ve
         .map_err(|_| anyhow!("E2E: encrypt failed"))?;
 
     let env = Envelope { v: VERSION, to: *to, eph: eph.to_vec(), nonce: nonce.to_vec(), ct };
-    rmp_serde::to_vec_named(&env).map_err(|e| anyhow!("encode envelope: {e}"))
+    crate::protocol::payload::encode(&env).map_err(|e| anyhow!("encode envelope: {e}"))
 }
 
 /// Адресат контейнера (поле `to` открыто) без расшифровки; None — это не Envelope.

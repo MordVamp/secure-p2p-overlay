@@ -143,7 +143,7 @@ impl NodeRecord {
     /// Значение для DHT: MAGIC || msgpack(NodeRecord).
     pub fn to_value(&self) -> anyhow::Result<Vec<u8>> {
         let mut v = NODE_RECORD_MAGIC.to_vec();
-        v.extend(rmp_serde::to_vec_named(self).map_err(|e| anyhow::anyhow!("encode NodeRecord: {e}"))?);
+        v.extend(crate::protocol::payload::encode(self).map_err(|e| anyhow::anyhow!("encode NodeRecord: {e}"))?);
         Ok(v)
     }
 

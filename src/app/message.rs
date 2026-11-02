@@ -12,6 +12,21 @@ pub enum MessageKind {
     Ack,
     /// Системное уведомление (join/leave/ping).
     System,
+    /// Передача файла (§13.2): предложение, блок, подтверждение окна, итог (app/files.rs).
+    FileOffer,
+    FileBlock,
+    FileAck,
+    FileDone,
+}
+
+impl MessageKind {
+    /// Байт типа в подписываемых данных.
+    pub fn code(&self) -> u8 {
+        match self {
+            MessageKind::Text => 1, MessageKind::Ack => 2, MessageKind::System => 3,
+            MessageKind::FileOffer => 4, MessageKind::FileBlock => 5, MessageKind::FileAck => 6, MessageKind::FileDone => 7,
+        }
+    }
 }
 
 /// Прикладное E2E-сообщение.
@@ -67,11 +82,19 @@ impl AppMessage {
         }
     }
 
+    /// Сообщение произвольного типа с готовым payload (передача файлов).
+    pub fn new_kind(from: NodeId, to: NodeId, kind: MessageKind, payload: Vec<u8>) -> Self {
+        Self {
+            message_id: uuid::Uuid::new_v4().into_bytes().to_vec(), kind, from, to,
+            timestamp_ms: now_ms(), payload, signature: vec![], sender_pubkey: vec![],
+        }
+    }
+
     /// Сериализовать для подписи/верификации (без поля signature).
     pub fn signing_bytes(&self) -> Vec<u8> {
         let mut buf = Vec::new();
         buf.extend_from_slice(&self.message_id);
-        buf.push(match self.kind { MessageKind::Text => 1, MessageKind::Ack => 2, MessageKind::System => 3 });
+        buf.push(self.kind.code());
         buf.extend_from_slice(&self.from.0);
         buf.extend_from_slice(&self.to.0);
         buf.extend_from_slice(&self.timestamp_ms.to_be_bytes());

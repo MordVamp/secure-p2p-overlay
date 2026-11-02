@@ -13,7 +13,7 @@ const MAX_ROUTES: usize = 4096;
 
 #[derive(Default)]
 pub struct TunnelRoutes {
-    map: RwLock<HashMap<[u8; 16], (SocketAddr, u64)>>,
+    map: RwLock<HashMap<[u8; 16], (SocketAddr, Option<crate::types::NodeId>, u64)>>,
 }
 
 impl TunnelRoutes {
@@ -21,13 +21,18 @@ impl TunnelRoutes {
 
     /// Запомнить маршрут на `ttl_seconds`. Возвращает false, если таблица переполнена.
     pub async fn insert(&self, tid: [u8; 16], next: SocketAddr, ttl_seconds: u64) -> bool {
+        self.insert_with_id(tid, next, None, ttl_seconds).await
+    }
+
+    /// То же с NodeID следующего hop — при пересылке он сверяется с NodeID из рукопожатия.
+    pub async fn insert_with_id(&self, tid: [u8; 16], next: SocketAddr, next_id: Option<crate::types::NodeId>, ttl_seconds: u64) -> bool {
         let mut m = self.map.write().await;
         let now = now_ms();
         if m.len() >= MAX_ROUTES {
-            m.retain(|_, (_, exp)| *exp > now);
+            m.retain(|_, (_, _, exp)| *exp > now);
             if m.len() >= MAX_ROUTES { return false; }
         }
-        m.insert(tid, (next, now + ttl_seconds * 1000));
+        m.insert(tid, (next, next_id, now + ttl_seconds * 1000));
         true
     }
 
@@ -37,7 +42,11 @@ impl TunnelRoutes {
     }
 
     pub async fn next_hop(&self, tid: &[u8; 16]) -> Option<SocketAddr> {
+        self.next_hop_with_id(tid).await.map(|x| x.0)
+    }
+
+    pub async fn next_hop_with_id(&self, tid: &[u8; 16]) -> Option<(SocketAddr, Option<crate::types::NodeId>)> {
         let m = self.map.read().await;
-        m.get(tid).filter(|(_, exp)| *exp > now_ms()).map(|(a, _)| *a)
+        m.get(tid).filter(|(_, _, exp)| *exp > now_ms()).map(|(a, id, _)| (*a, *id))
     }
 }

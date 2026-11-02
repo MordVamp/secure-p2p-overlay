@@ -19,7 +19,6 @@ use crate::config::NodeConfig;
 use crate::protocol::payload::{TunnelDataPayload, TunnelAckPayload, encode, decode};
 use crate::transport::framing::{Frame, FrameFlags, MsgType};
 use crate::tunnel::session::TunnelId;
-use crate::rpc::dial;
 use crate::types::now_ms;
 
 pub const MAX_SEGMENT_SIZE: usize = 49_152; // 48 KiB
@@ -105,6 +104,17 @@ impl TunnelForwarder {
         next_hop_addr: std::net::SocketAddr,
         data: Vec<u8>,
     ) -> Result<Vec<u64>> {
+        self.send_data_to(tunnel_id, next_hop_addr, None, data).await
+    }
+
+    /// То же со сверкой NodeID первого hop в рукопожатии канала.
+    pub async fn send_data_to(
+        &self,
+        tunnel_id: &TunnelId,
+        next_hop_addr: std::net::SocketAddr,
+        next_hop_id: Option<crate::types::NodeId>,
+        data: Vec<u8>,
+    ) -> Result<Vec<u64>> {
         // Разбить на сегменты
         let segments: Vec<&[u8]> = data.chunks(MAX_SEGMENT_SIZE).collect();
         let total = segments.len();
@@ -128,10 +138,11 @@ impl TunnelForwarder {
                 payload:    Bytes::from(encode(&payload)?),
             };
 
-            let mut stream = dial(
+            let mut stream = crate::rpc::dial_expect(
                 next_hop_addr,
                 self.cfg.transport.connect_timeout_ms,
                 self.cfg.transport.read_timeout_ms,
+                next_hop_id.as_ref(),
             ).await?;
 
             stream.send(&frame).await.map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -142,11 +153,12 @@ impl TunnelForwarder {
                 Duration::from_millis(self.cfg.tunnel.ack_timeout_ms),
                 stream.recv(),
             ).await
-                .map_err(|_| anyhow::anyhow!("ACK timeout for seq={seq}"))??;
+                .map_err(|_| anyhow::anyhow!("first hop {next_hop_addr} ACK timeout for seq={seq}"))??;
 
-            // relay отвечает ERROR, если не смог переслать кадр дальше по цепочке
+            // relay отвечает ERROR, если не смог переслать кадр дальше по цепочке; описание — причина с дальнего конца
             if ack_frame.msg_type != MsgType::TunnelAck || ack_frame.request_id != request_id {
-                anyhow::bail!("seq={seq}: ожидался TUNNEL_ACK, получен {:?}", ack_frame.msg_type);
+                let why = decode::<crate::protocol::payload::ErrorPayload>(&ack_frame.payload).map(|e| e.description).unwrap_or_default();
+                anyhow::bail!("first hop {next_hop_addr} replied {:?} (seq={seq}): {why}", ack_frame.msg_type);
             }
             let _ack: TunnelAckPayload = decode(&ack_frame.payload)?;
             let rtt = now_ms() - t0;

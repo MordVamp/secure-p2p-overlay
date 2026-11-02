@@ -50,6 +50,19 @@ pub fn install_tls(t: Arc<crate::security::tls::TlsSecurity>) { let _ = TLS.set(
 /// Установленный TLS-провайдер (если есть).
 pub fn tls() -> Option<&'static Arc<crate::security::tls::TlsSecurity>> { TLS.get() }
 
+static AKE: std::sync::OnceLock<Arc<crate::security::ake::AkeSecurity>> = std::sync::OnceLock::new();
+
+/// Включить собственное рукопожатие (ТЗ §11.3) вместо TLS для всех соединений процесса.
+pub fn install_ake(a: Arc<crate::security::ake::AkeSecurity>) { let _ = AKE.set(a); }
+
+/// Установленный AKE-провайдер (если есть).
+pub fn ake() -> Option<&'static Arc<crate::security::ake::AkeSecurity>> { AKE.get() }
+
+static LOCAL_IP: std::sync::OnceLock<std::net::IpAddr> = std::sync::OnceLock::new();
+
+/// Исходящие соединения — с этого адреса (узел слушает конкретный IP, а не 0.0.0.0).
+pub fn set_local_ip(ip: std::net::IpAddr) { let _ = LOCAL_IP.set(ip); }
+
 /// Открыть соединение с тайм-аутом (§5 CONNECT_TIMEOUT_MS); при включённом TLS — с рукопожатием.
 pub async fn dial(addr: SocketAddr, connect_timeout_ms: u64, read_timeout_ms: u64)
     -> Result<FramedStream<BoxedIo>>
@@ -62,12 +75,27 @@ pub async fn dial_expect(addr: SocketAddr, connect_timeout_ms: u64, read_timeout
                          expected: Option<&NodeId>)
     -> Result<FramedStream<BoxedIo>>
 {
+    let connect = async {
+        match LOCAL_IP.get() {
+            Some(ip) => {
+                let sock = if ip.is_ipv4() { tokio::net::TcpSocket::new_v4()? } else { tokio::net::TcpSocket::new_v6()? };
+                sock.bind(SocketAddr::new(*ip, 0))?;
+                sock.connect(addr).await
+            }
+            None => TcpStream::connect(addr).await,
+        }
+    };
     let stream = timeout(
         Duration::from_millis(connect_timeout_ms),
-        TcpStream::connect(addr),
+        connect,
     ).await
         .map_err(|_| anyhow::anyhow!("connect timeout to {addr}"))?
         .map_err(|e| anyhow::anyhow!("TCP connect to {addr}: {e}"))?;
+    if let Some(a) = AKE.get() {
+        let (s, peer) = timeout(Duration::from_millis(connect_timeout_ms), a.connect(stream, expected)).await
+            .map_err(|_| anyhow::anyhow!("AKE handshake timeout to {addr}"))??;
+        return Ok(FramedStream::new(Box::new(s) as BoxedIo, read_timeout_ms).with_peer(peer));
+    }
     match TLS.get() {
         Some(t) => {
             let (tls, peer) = timeout(Duration::from_millis(connect_timeout_ms), t.connect(stream, expected)).await
@@ -448,6 +476,7 @@ impl RpcClient {
         read_timeout_ms:    u64,
         own:     &Contact,
         target:  &NodeId,
+        expected: Option<&NodeId>,
     ) -> Result<FindNodeResponse> {
         let request_id = new_request_id();
         let req = FindNodeRequest { sender: own.clone(), target_node_id: NodeIdBytes::from(target) };
@@ -459,7 +488,7 @@ impl RpcClient {
 
         let rx = self.pending.register(request_id).await;
 
-        let mut stream = dial(addr, connect_timeout_ms, read_timeout_ms).await?;
+        let mut stream = dial_expect(addr, connect_timeout_ms, read_timeout_ms, expected).await?;
         stream.send(&frame).await.map_err(|e| anyhow::anyhow!("{e}"))?;
         spawn_conn_reader(stream.into_raw_stream(), self.pending.clone());
 
@@ -495,6 +524,7 @@ impl RpcClient {
         ttl_seconds: u64,
         signature: Option<Vec<u8>>,
         sequence: u64,
+        expected: Option<&NodeId>,
     ) -> Result<StoreResponse> {
         let request_id = new_request_id();
         let req = StoreRequest {
@@ -507,7 +537,7 @@ impl RpcClient {
             payload: Bytes::from(payload::encode(&req)?),
         };
         let rx = self.pending.register(request_id).await;
-        let mut stream = dial(addr, connect_timeout_ms, read_timeout_ms).await?;
+        let mut stream = dial_expect(addr, connect_timeout_ms, read_timeout_ms, expected).await?;
         stream.send(&frame).await.map_err(|e| anyhow::anyhow!("{e}"))?;
         spawn_conn_reader(stream.into_raw_stream(), self.pending.clone());
 
@@ -527,6 +557,7 @@ impl RpcClient {
         read_timeout_ms:    u64,
         own:  &Contact,
         key:  &[u8],
+        expected: Option<&NodeId>,
     ) -> Result<FindValueResponse> {
         let request_id = new_request_id();
         let req = FindValueRequest { sender: own.clone(), key: key.to_vec() };
@@ -536,7 +567,7 @@ impl RpcClient {
             payload: Bytes::from(payload::encode(&req)?),
         };
         let rx = self.pending.register(request_id).await;
-        let mut stream = dial(addr, connect_timeout_ms, read_timeout_ms).await?;
+        let mut stream = dial_expect(addr, connect_timeout_ms, read_timeout_ms, expected).await?;
         stream.send(&frame).await.map_err(|e| anyhow::anyhow!("{e}"))?;
         spawn_conn_reader(stream.into_raw_stream(), self.pending.clone());
 
@@ -594,7 +625,7 @@ impl RpcHandler {
                 anyhow::bail!("TUNNEL_BUILD: tunnel_id уже используется");
             }
             let ttl = req.ttl_seconds.min(self.cfg.tunnel.ttl_seconds);
-            if !self.routes.insert(tid, next.socket_addr()?, ttl).await {
+            if !self.routes.insert_with_id(tid, next.socket_addr()?, Some(next.node_id), ttl).await {
                 anyhow::bail!("TUNNEL_BUILD: таблица маршрутов переполнена");
             }
         }
@@ -623,13 +654,21 @@ impl RpcHandler {
             bail!("TUNNEL_DATA segment too large");
         }
 
-        if let Some(next) = self.routes.next_hop(&tid).await {
+        if let Some((next, next_id)) = self.routes.next_hop_with_id(&tid).await {
             // §12: защита от петель — relay пересылает не более max_hops+1 раз
             if p.hops_left == 0 {
                 bail!("TUNNEL_DATA: hops_left исчерпан (возможна петля), кадр отброшен");
             }
-            let mut stream = dial(next, self.cfg.transport.connect_timeout_ms,
-                                  self.cfg.transport.read_timeout_ms).await?;
+            // эксперимент: неисправный / медленный ретранслятор
+            if self.cfg.fault.delay_ms > 0 {
+                tokio::time::sleep(Duration::from_millis(self.cfg.fault.delay_ms)).await;
+            }
+            if self.cfg.fault.drop > 0.0 && rand::random::<f64>() < self.cfg.fault.drop {
+                bail!("ретранслятор {} отказал (внесённый отказ)", self.own_contact.host_port());
+            }
+            // по адресу следующего hop должен ответить именно тот узел, что был согласован при TUNNEL_BUILD
+            let mut stream = dial_expect(next, self.cfg.transport.connect_timeout_ms,
+                                         self.cfg.transport.read_timeout_ms, next_id.as_ref()).await?;
             let fwd = Frame {
                 version:    crate::protocol::PROTOCOL_VERSION,
                 msg_type:   MsgType::TunnelData,
@@ -642,10 +681,12 @@ impl RpcHandler {
             };
             stream.send(&fwd).await.map_err(|e| anyhow::anyhow!("{e}"))?;
             let ack = timeout(Duration::from_millis(self.cfg.tunnel.ack_timeout_ms), stream.recv()).await
-                .map_err(|_| anyhow::anyhow!("next hop ACK timeout"))?
-                .map_err(|e| anyhow::anyhow!("recv: {e}"))?;
+                .map_err(|_| anyhow::anyhow!("next hop {next} ACK timeout"))?
+                .map_err(|e| anyhow::anyhow!("next hop {next} recv: {e}"))?;
             if ack.msg_type != MsgType::TunnelAck {
-                bail!("next hop replied {:?}", ack.msg_type);
+                // причина с дальнего конца цепочки — для определения виновного узла
+                let why = payload::decode::<ErrorPayload>(&ack.payload).map(|e| e.description).unwrap_or_default();
+                bail!("next hop {next} replied {:?}: {why}", ack.msg_type);
             }
             debug!("TUNNEL_DATA relayed tunnel={} → {next}", hex::encode(&tid[..4]));
         } else {

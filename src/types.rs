@@ -76,6 +76,9 @@ pub struct Contact {
 }
 
 impl Contact {
+    /// `host:port` — как адрес выглядит в текстах ошибок.
+    pub fn host_port(&self) -> String { format!("{}:{}", self.host, self.port) }
+
     pub fn new(node_id: NodeId, pubkey: Vec<u8>, addr: SocketAddr) -> Self {
         let now = now_ms();
         Self {

@@ -97,7 +97,14 @@ pub mod error_codes {
 
 /// Сериализовать payload в MessagePack байты.
 pub fn encode<T: Serialize>(val: &T) -> anyhow::Result<Vec<u8>> {
-    rmp_serde::to_vec_named(val).map_err(|e| anyhow::anyhow!("msgpack encode: {e}"))
+    // Именованные поля; байтовые поля (`Vec<u8>`: ключи, подписи, шифртекст, блоки файлов) — как MessagePack bin.
+    // По умолчанию rmp-serde пишет их массивом чисел: байт ≥ 128 занимает 2 байта, данные раздуваются ≈ в 1,5 раза.
+    // Декодер принимает оба представления.
+    let mut buf = Vec::new();
+    let mut ser = rmp_serde::Serializer::new(&mut buf).with_struct_map()
+        .with_bytes(rmp_serde::config::BytesMode::ForceIterables);
+    val.serialize(&mut ser).map_err(|e| anyhow::anyhow!("msgpack encode: {e}"))?;
+    Ok(buf)
 }
 
 /// Десериализовать MessagePack байты в T.

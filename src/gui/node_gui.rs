@@ -44,6 +44,7 @@ async fn route(node: Arc<Node>, req: Request) -> Response {
                 "node_id": node.own_contact.node_id.to_hex(),
                 "addr":    format!("{}:{}", node.own_contact.host, node.own_contact.port),
                 "level":   format!("{:?}", node.cfg.level),
+                "channel": node.cfg.security.channel,
                 "k":       node.cfg.dht.k_bucket_size,
                 "alpha":   node.cfg.dht.alpha,
                 "routing": routing,
@@ -51,7 +52,7 @@ async fn route(node: Arc<Node>, req: Request) -> Response {
                 "store":   store,
                 "bootstrap": node.dht.bootstrap_json(),
                 // что умеет узел: клиенты (desktop-приложение) включают только поддержанные разделы
-                "features": { "messages": true, "aliases": true, "history": true, "files": false, "calls": false },
+                "features": { "messages": true, "aliases": true, "history": true, "files": true, "calls": false },
                 "now_ms":  now_ms(),
             }))
         }
@@ -120,10 +121,26 @@ async fn route(node: Arc<Node>, req: Request) -> Response {
                     "ok": true, "delivered": true, "target": target.to_hex(), "message_id": r.message_id, "rtt_ms": r.rtt_ms,
                     "lookup_ms": r.lookup_ms, "tunnel_reused": r.tunnel_build_ms.is_none(),
                     "tunnel_build_ms": r.tunnel_build_ms, "tunnel_send_ms": r.tunnel_send_ms,
-                    "rebuilt_after_failure": r.rebuilt_after_failure,
+                    "rebuilt_after_failure": r.rebuilt_after_failure, "failover": r.failover,
+                    "detect_ms": r.detect_ms, "switch_ms": r.switch_ms, "wire_bytes": r.wire_bytes,
                 })),
                 Err(e)  => Response::json(json!({ "ok": false, "delivered": false, "error": e.to_string() })),
             }
+        }
+        ("/api/send_file", true) => {
+            let Some(path) = req.query.get("path").filter(|p| !p.is_empty()) else { return Response::error(400, "нужен path"); };
+            let target = match resolve_target(&node, req.query.get("target").map(|s| s.as_str()).unwrap_or("")).await {
+                Ok(t) => t, Err(e) => return Response::json(json!({ "ok": false, "error": e })),
+            };
+            match node.messenger.send_file(target, std::path::Path::new(path)).await {
+                Ok(r)  => Response::json(json!({ "ok": true, "report": r })),
+                Err(e) => Response::json(json!({ "ok": false, "error": e.to_string() })),
+            }
+        }
+        ("/api/relays", false) => Response::json(json!({ "profiles": node.tunnel_mgr.profiles_json().await })),
+        ("/api/files", false) => {
+            let (t, dir) = node.messenger.transfers().await;
+            Response::json(json!({ "downloads_dir": dir.display().to_string(), "transfers": t }))
         }
         ("/api/history", false) => {
             let limit = req.query.get("limit").and_then(|l| l.parse().ok()).unwrap_or(100usize).min(10_000);

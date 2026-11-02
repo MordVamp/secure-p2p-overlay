@@ -1,14 +1,12 @@
 //! security/mod.rs — Абстракция защиты канала.
 //!
-//! Упрощённый уровень:  TLS 1.3 с взаимной аутентификацией (tls.rs).
-//! Продвинутый уровень: собственный AKE на X25519+Ed25519+HKDF (ake.rs — TODO).
-//!
-//! Точка расширения — трейт `ChannelSecurity`:
-//!   impl TlsSecurity  (simplified) — `tls.rs`
-//!   impl AkeSecurity  (advanced)  — `ake.rs` (добавить без правки остальных модулей)
+//! Канал между узлами — один из двух вариантов (`security.channel`, вся сеть использует один):
+//!   tls — TLS 1.3 с взаимной аутентификацией (tls.rs), по умолчанию;
+//!   ake — собственное рукопожатие Ed25519 + X25519 + HKDF + AES-256-GCM (ake.rs), ТЗ §11.3.
+//! Содержимое сообщений дополнительно защищено от ретрансляторов E2E-конвертом (e2e.rs).
 
 pub mod tls;
 pub mod e2e;
 pub mod session_tracker;
 
-// TODO (продвинутый уровень): pub mod ake;
+pub mod ake;
