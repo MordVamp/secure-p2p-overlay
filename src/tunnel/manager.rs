@@ -177,6 +177,35 @@ impl TunnelManager {
     }
 
     /// Отправить данные к `target` и дождаться TUNNEL_ACK; при отказе — по следующему туннелю пула.
+    /// Медиакадр звонка (шаг 2): по основному пригодному туннелю к `target`, **мимо очереди туннеля**
+    /// (там кадры идут по одному с ожиданием сквозного подтверждения) и без подтверждения вообще.
+    /// Ok — кадр отдан первому узлу; доставку никто не подтверждает.
+    pub async fn send_media(&self, target: &NodeId, data: Vec<u8>) -> anyhow::Result<()> {
+        let (tid, first) = {
+            let tunnels = self.tunnels.read().await;
+            let pool = tunnels.get(&target.to_hex()).ok_or_else(|| anyhow::anyhow!("no tunnel to {}", target.short()))?;
+            let mut pick = None;
+            for t in pool {
+                if t.state().await.is_usable() && !t.is_expired() {
+                    if let Some(h) = t.hops.first() { pick = Some((t.id, h.relay.clone())); break; }
+                }
+            }
+            pick.ok_or_else(|| anyhow::anyhow!("нет пригодного туннеля к {}", target.short()))?
+        };
+        let frame = crate::transport::framing::Frame {
+            version: crate::protocol::PROTOCOL_VERSION,
+            msg_type: crate::transport::framing::MsgType::TunnelMedia,
+            flags: crate::transport::framing::FrameFlags::empty(),
+            request_id: crate::rpc::new_request_id(),
+            payload: bytes::Bytes::from(crate::protocol::payload::encode(&crate::protocol::payload::TunnelDataPayload {
+                tunnel_id: tid.to_vec(), seq: 0, data,
+                hops_left: (self.cfg.tunnel.max_hops + 1).min(u8::MAX as usize) as u8,
+            })?),
+        };
+        crate::rpc::pool::send_oneway(crate::rpc::pool::Scope::Tunnel, first.socket_addr()?, Some(&first.node_id), frame,
+            self.cfg.transport.connect_timeout_ms, self.cfg.transport.read_timeout_ms).await
+    }
+
     pub async fn send(self: &Arc<Self>, target: &NodeId, payload: Vec<u8>) -> anyhow::Result<SendOutcome> {
         let key = target.to_hex();
         let t0 = now_ms();

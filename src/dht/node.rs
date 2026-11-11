@@ -143,6 +143,8 @@ impl DhtNode {
             "k": rt.k(),
             "total_contacts": rt.total_contacts(),
             "non_empty_buckets": rt.non_empty_buckets(),
+            // кэш замены (Kademlia §2.4): кандидаты в ретрансляторы и на место выбывших
+            "replacement_cache": rt.replacement_count(),
             "buckets": buckets,
         })
     }

@@ -23,6 +23,7 @@ use tracing::{info, warn};
 
 use crate::app::files::{BlockOutcome, FileAck, FileBlock, FileDone, FileOffer, FileStore, TransferInfo, safe_name, sha256_file, MAX_BLOCK};
 use crate::app::history::{History, HistoryEntry};
+use crate::app::calls::{self, Call, CallAnswer, CallEnd, CallKeys, CallOffer, CallState};
 use crate::app::events::EventBus;
 use crate::app::mailbox::{self, MailboxBody, Outbox, Queued};
 use crate::app::message::{AppMessage, GroupBody, MessageKind, ProbeBody, ReadBody};
@@ -126,6 +127,8 @@ pub struct Messenger {
     typing:     Mutex<HashMap<NodeId, u64>>,
     /// Принятые измерительные пакеты (до 50 000).
     probes:     Mutex<VecDeque<ProbeRx>>,
+    /// Звонки: call_id → состояние, ключи, статистика приёма.
+    calls:      Mutex<HashMap<Vec<u8>, Call>>,
 }
 
 /// Результат групповой рассылки по одному участнику.
@@ -154,7 +157,7 @@ impl Messenger {
                file_waiters: Mutex::new(Default::default()), transfers: Mutex::new(VecDeque::new()),
                events: Arc::new(EventBus::new()), outbox: Mutex::new(Outbox::in_memory()),
                watch: Mutex::new(Default::default()), typing: Mutex::new(Default::default()),
-               probes: Mutex::new(VecDeque::new()) }
+               probes: Mutex::new(VecDeque::new()), calls: Mutex::new(HashMap::new()) }
     }
 
     /// Хранить очередь офлайн-доставки в `<state_dir>/outbox.json` (переживает перезапуск).
@@ -457,6 +460,230 @@ impl Messenger {
         Ok(true)
     }
 
+    // ── звонки: сигнализация (шаг 3), ключ звонка и медиа (шаги 2 и 4) ──────
+
+    async fn call_event(&self, c: &Call) {
+        self.events.emit("call", c.json()).await;
+    }
+
+    /// Запись в историю по завершении звонка.
+    async fn log_call(&self, c: &Call) {
+        let Some(h) = &self.history else { return };
+        let (status, text) = match (c.answered_ms, c.end_reason.as_deref()) {
+            (Some(a), _) => {
+                let s = c.ended_ms.unwrap_or_else(now_ms).saturating_sub(a) / 1000;
+                ("call_ended", format!("📞 {} звонок · {}:{:02}", if c.outgoing { "Исходящий" } else { "Входящий" }, s / 60, s % 60))
+            }
+            (None, Some("busy")) => ("call_rejected", "📞 Абонент занят".to_owned()),
+            (None, Some("rejected")) => ("call_rejected", "📞 Звонок отклонён".to_owned()),
+            (None, _) if c.outgoing => ("call_missed", "📞 Нет ответа".to_owned()),
+            (None, _) => ("call_missed", "📞 Пропущенный звонок".to_owned()),
+        };
+        h.append(&HistoryEntry {
+            ts_ms: c.created_ms, dir: if c.outgoing { "out".into() } else { "in".into() }, peer: c.peer.to_hex(),
+            message_id: hex::encode(&c.id), status: status.into(), text: Some(text), rtt_ms: None, error: None,
+            lookup_ms: None, tunnel_build_ms: None, tunnel_send_ms: None, group: None, group_name: None,
+            members: None, read_ms: None,
+        }).await;
+    }
+
+    fn busy(calls: &HashMap<Vec<u8>, Call>) -> bool { calls.values().any(|c| c.state != CallState::Ended) }
+
+    /// Позвонить: одноразовый ключ, подписанный CallOffer. Ok — id звонка (hex); ответ придёт событием `call`.
+    pub async fn call_start(self: &Arc<Self>, target: NodeId) -> Result<String> {
+        let id = uuid::Uuid::new_v4().into_bytes().to_vec();
+        let offer = {
+            let mut calls = self.calls.lock().await;
+            if Self::busy(&calls) { bail!("уже идёт звонок"); }
+            let c = Call::new(id.clone(), target, true);
+            let offer = CallOffer { call_id: id.clone(), eph_pk: c.my_pk.to_vec(), codec: "opus".into(), frame_ms: 20 };
+            calls.insert(id.clone(), c);
+            offer
+        };
+        let m = self.build_kind(target, MessageKind::CallOffer, &offer)?;
+        if let Err(e) = self.deliver(target, None, &m).await {
+            self.calls.lock().await.remove(&id);
+            bail!("вызов не доставлен: {e}");
+        }
+        if let Some(c) = self.calls.lock().await.get(&id) { self.call_event(c).await; }
+        Ok(hex::encode(&id))
+    }
+
+    /// Ответить на входящий: свой одноразовый ключ, ключи звонка, подписанный CallAnswer.
+    pub async fn call_accept(self: &Arc<Self>, id_hex: &str) -> Result<()> {
+        let id = hex::decode(id_hex).map_err(|_| anyhow::anyhow!("call_id: hex"))?;
+        let (peer, answer) = {
+            let mut calls = self.calls.lock().await;
+            let c = calls.get_mut(&id).ok_or_else(|| anyhow::anyhow!("нет такого звонка"))?;
+            if c.outgoing || c.state != CallState::Ringing { bail!("звонок не ожидает ответа"); }
+            let caller_pk = c.caller_pk.ok_or_else(|| anyhow::anyhow!("нет ключа звонящего"))?;
+            let secret = c.secret.take().ok_or_else(|| anyhow::anyhow!("секрет уже использован"))?;
+            c.keys = Some(CallKeys::derive(&c.id, &c.peer, &self.identity.node_id, &caller_pk, &c.my_pk, &secret, false)?);
+            (c.peer, CallAnswer { call_id: id.clone(), eph_pk: c.my_pk.to_vec() })
+        };
+        let m = self.build_kind(peer, MessageKind::CallAnswer, &answer)?;
+        if let Err(e) = self.deliver(peer, None, &m).await {
+            if let Some(c) = self.calls.lock().await.get_mut(&id) { c.end("answer_failed"); }
+            bail!("ответ не доставлен: {e}");
+        }
+        let mut calls = self.calls.lock().await;
+        if let Some(c) = calls.get_mut(&id) {
+            c.state = CallState::Active;
+            c.answered_ms = Some(now_ms());
+            self.call_event(c).await;
+        }
+        Ok(())
+    }
+
+    /// Отклонить входящий (`rejected`) или завершить любой (`hangup`).
+    pub async fn call_end(self: &Arc<Self>, id_hex: &str, reason: &str) -> Result<()> {
+        let id = hex::decode(id_hex).map_err(|_| anyhow::anyhow!("call_id: hex"))?;
+        let peer = {
+            let mut calls = self.calls.lock().await;
+            let c = calls.get_mut(&id).ok_or_else(|| anyhow::anyhow!("нет такого звонка"))?;
+            if c.state == CallState::Ended { return Ok(()); }
+            c.end(reason);
+            self.log_call(c).await;
+            self.call_event(c).await;
+            c.peer
+        };
+        let kind = if reason == "rejected" { MessageKind::CallReject } else { MessageKind::CallHangup };
+        let m = self.build_kind(peer, kind, &CallEnd { call_id: id, reason: reason.into() })?;
+        if let Err(e) = self.deliver(peer, None, &m).await { warn!("завершение звонка не доставлено: {e}"); }
+        Ok(())
+    }
+
+    /// Входящая сигнализация. Принимается только от собеседника этого звонка.
+    async fn on_call_message(self: &Arc<Self>, msg: AppMessage) -> Result<()> {
+        let from = msg.from;
+        match msg.kind {
+            MessageKind::CallOffer => {
+                let o: CallOffer = decode(&msg.payload)?;
+                if o.call_id.len() != calls::CALL_ID_LEN || o.eph_pk.len() != 32 { bail!("некорректный вызов"); }
+                let mut list = self.calls.lock().await;
+                if list.contains_key(&o.call_id) { bail!("повтор вызова"); }
+                if Self::busy(&list) {
+                    drop(list);
+                    let me = self.clone();
+                    tokio::spawn(async move {
+                        if let Ok(m) = me.build_kind(from, MessageKind::CallReject, &CallEnd { call_id: o.call_id, reason: "busy".into() }) {
+                            let _ = me.deliver(from, None, &m).await;
+                        }
+                    });
+                    return Ok(());
+                }
+                let mut c = Call::new(o.call_id.clone(), from, false);
+                c.caller_pk = Some(o.eph_pk.as_slice().try_into().unwrap());
+                info!("📞 входящий звонок от {}", from.short());
+                self.call_event(&c).await;
+                list.insert(o.call_id, c);
+            }
+            MessageKind::CallAnswer => {
+                let a: CallAnswer = decode(&msg.payload)?;
+                let callee_pk: [u8; 32] = a.eph_pk.as_slice().try_into().map_err(|_| anyhow::anyhow!("ключ ответа"))?;
+                let mut list = self.calls.lock().await;
+                let c = list.get_mut(&a.call_id).filter(|c| c.peer == from && c.outgoing && c.state == CallState::Ringing)
+                    .ok_or_else(|| anyhow::anyhow!("ответ не на наш вызов"))?;
+                let secret = c.secret.take().ok_or_else(|| anyhow::anyhow!("секрет уже использован"))?;
+                let my_pk = c.my_pk;
+                c.keys = Some(CallKeys::derive(&c.id, &self.identity.node_id, &from, &my_pk, &callee_pk, &secret, true)?);
+                c.state = CallState::Active;
+                c.answered_ms = Some(now_ms());
+                info!("📞 звонок с {} принят", from.short());
+                self.call_event(c).await;
+            }
+            _ => {
+                let e: CallEnd = decode(&msg.payload)?;
+                let mut list = self.calls.lock().await;
+                let c = list.get_mut(&e.call_id).filter(|c| c.peer == from)
+                    .ok_or_else(|| anyhow::anyhow!("завершение чужого звонка"))?;
+                if c.state != CallState::Ended {
+                    let reason = if e.reason.len() <= 32 { e.reason } else { "hangup".into() };
+                    c.end(&reason);
+                    self.log_call(c).await;
+                    self.call_event(c).await;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Медиакадр из туннеля: найти звонок, расшифровать его ключом, отсечь повтор, учесть в статистике.
+    pub async fn on_media(&self, packet: Vec<u8>) {
+        let recv_us = now_us();
+        let Ok((id, _)) = calls::parse_header(&packet) else { return };
+        let mut list = self.calls.lock().await;
+        let Some(c) = list.get_mut(id) else { return };
+        if c.state != CallState::Active { return; }
+        let Some(keys) = &c.keys else { return };
+        match keys.open(&packet) {
+            Ok((seq, sent_us, payload)) => {
+                if c.window.accept(seq) { c.rx.record(seq, sent_us, recv_us, payload.len()); } else { c.rx.rejected += 1; }
+            }
+            Err(_) => c.rx.rejected += 1,
+        }
+    }
+
+    /// Синтетический медиапоток (до шага 5 — без звука): `count` кадров по `size` байт каждые `interval_ms`.
+    pub async fn call_send_media(&self, id_hex: &str, count: u32, interval_ms: u64, size: usize) -> Result<serde_json::Value> {
+        let id = hex::decode(id_hex).map_err(|_| anyhow::anyhow!("call_id: hex"))?;
+        let peer = match self.calls.lock().await.get(&id) {
+            Some(c) if c.state == CallState::Active && c.keys.is_some() => c.peer,
+            _ => bail!("звонок не активен"),
+        };
+        let payload = vec![0u8; size.min(1200)];
+        let start = tokio::time::Instant::now();
+        let (mut sent, mut failed) = (0u32, 0u32);
+        let mut first_err = None;
+        for i in 0..count {
+            tokio::time::sleep_until(start + std::time::Duration::from_millis(interval_ms * i as u64)).await;
+            let packet = {
+                let mut list = self.calls.lock().await;
+                let Some(c) = list.get_mut(&id).filter(|c| c.state == CallState::Active) else { break };
+                let seq = c.tx_seq;
+                c.tx_seq += 1;
+                c.keys.as_ref().unwrap().seal(&c.id, seq, now_us(), &payload)?
+            };
+            match self.tunnels.send_media(&peer, packet).await {
+                Ok(()) => sent += 1,
+                Err(e) => { failed += 1; if first_err.is_none() { first_err = Some(e.to_string()); } }
+            }
+        }
+        Ok(serde_json::json!({ "sent": sent, "failed": failed, "error": first_err,
+                               "span_ms": start.elapsed().as_millis() as u64 }))
+    }
+
+    /// Звонки (последние сверху).
+    pub async fn calls_json(&self) -> Vec<serde_json::Value> {
+        let list = self.calls.lock().await;
+        let mut v: Vec<&Call> = list.values().collect();
+        v.sort_by_key(|c| std::cmp::Reverse(c.created_ms));
+        v.into_iter().map(Call::json).collect()
+    }
+
+    /// Тайм-аут вызова (30 с без ответа) и уборка звонков, закончившихся больше 10 мин назад.
+    pub async fn expire_calls(self: &Arc<Self>) {
+        let now = now_ms();
+        let mut stale = vec![];
+        {
+            let mut list = self.calls.lock().await;
+            for c in list.values_mut() {
+                if c.state == CallState::Ringing && now.saturating_sub(c.created_ms) > calls::RING_TIMEOUT_MS {
+                    c.end(if c.outgoing { "no_answer" } else { "missed" });
+                    self.log_call(c).await;
+                    self.call_event(c).await;
+                    if c.outgoing { stale.push((c.peer, c.id.clone())); }
+                }
+            }
+            list.retain(|_, c| c.ended_ms.map_or(true, |e| now.saturating_sub(e) < 600_000));
+        }
+        for (peer, id) in stale {
+            if let Ok(m) = self.build_kind(peer, MessageKind::CallHangup, &CallEnd { call_id: id, reason: "no_answer".into() }) {
+                let _ = self.deliver(peer, None, &m).await;
+            }
+        }
+    }
+
     // ── измерительный поток (план звонков, шаг 0) ──────────────────────────
 
     /// Поток из `count` пакетов по `size` байт с периодом `interval_ms` — как голос (50 пакетов/с по ~80 байт).
@@ -725,6 +952,9 @@ impl Messenger {
                 let Some(g) = msg.group() else { bail!("некорректное групповое сообщение") };
                 if !g.members.contains(&msg.from.to_hex()) { bail!("отправитель не входит в группу"); }
                 self.accept_message(msg, false).await;
+            }
+            MessageKind::CallOffer | MessageKind::CallAnswer | MessageKind::CallReject | MessageKind::CallHangup => {
+                self.on_call_message(msg).await?;
             }
             MessageKind::Probe => {
                 let recv_us = now_us();

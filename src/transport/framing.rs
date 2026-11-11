@@ -40,6 +40,9 @@ pub enum MsgType {
     TunnelData        = 0x13,
     TunnelAck         = 0x14,
     TunnelClose       = 0x15,
+    /// Медиакадр звонка: ретранслятор пересылает сразу и не отвечает, получатель не подтверждает
+    /// (опоздавший голосовой пакет не нужен — повтор бессмыслен).
+    TunnelMedia       = 0x16,
     // Приложение
     AppMessage        = 0x20,
     AppAck            = 0x21,
@@ -64,6 +67,7 @@ impl TryFrom<u8> for MsgType {
             0x12 => Ok(Self::TunnelBuildFail),
             0x13 => Ok(Self::TunnelData),
             0x14 => Ok(Self::TunnelAck),
+            0x16 => Ok(Self::TunnelMedia),
             0x15 => Ok(Self::TunnelClose),
             0x20 => Ok(Self::AppMessage),
             0x21 => Ok(Self::AppAck),

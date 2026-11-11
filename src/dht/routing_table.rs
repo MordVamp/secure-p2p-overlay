@@ -9,17 +9,34 @@ use std::collections::VecDeque;
 
 use crate::types::{Contact, NodeId};
 
+/// Сколько узлов держит кэш замены одной корзины (Kademlia §2.4).
+pub const REPLACEMENTS: usize = 8;
+
 /// Один k-bucket.
 #[derive(Debug, Default)]
 pub struct KBucket {
     contacts:   VecDeque<Contact>,
     capacity:   usize,
+    /// Кэш замены (Kademlia §2.4): узлы, не поместившиеся в полную корзину или увиденные в ответах
+    /// FIND_NODE (самые свежие — в конце). Занимают место удалённого контакта и служат кандидатами
+    /// в ретрансляторы — иначе при малом k у недавно вошедшего узла их может не хватить.
+    replacements: VecDeque<Contact>,
 }
 
 impl KBucket {
     pub fn new(capacity: usize) -> Self {
-        Self { contacts: VecDeque::new(), capacity }
+        Self { contacts: VecDeque::new(), capacity, replacements: VecDeque::new() }
     }
+
+    /// Запомнить узел в кэше замены. Уже находящийся в корзине — не дублируется.
+    pub fn note_replacement(&mut self, contact: Contact) {
+        if self.contains(&contact.node_id) { return; }
+        self.replacements.retain(|c| c.node_id != contact.node_id);
+        self.replacements.push_back(contact);
+        while self.replacements.len() > REPLACEMENTS { self.replacements.pop_front(); }
+    }
+
+    pub fn replacements(&self) -> impl Iterator<Item = &Contact> { self.replacements.iter() }
 
     pub fn len(&self) -> usize { self.contacts.len() }
     pub fn is_full(&self) -> bool { self.contacts.len() >= self.capacity }
@@ -40,11 +57,13 @@ impl KBucket {
         }
 
         if !self.is_full() {
+            self.replacements.retain(|c| c.node_id != contact.node_id);
             self.contacts.push_back(contact);
             return None;
         }
 
-        // Bucket полон — возвращаем LRU (хвост) для PING-проверки
+        // Bucket полон — новый узел ждёт в кэше замены, LRU (хвост) возвращается для PING-проверки
+        self.note_replacement(contact);
         self.contacts.front().cloned()
     }
 
@@ -52,12 +71,18 @@ impl KBucket {
     /// Затем добавляем новый.
     pub fn evict_lru_and_insert(&mut self, new_contact: Contact) {
         self.contacts.pop_front();
+        self.replacements.retain(|c| c.node_id != new_contact.node_id);
         self.contacts.push_back(new_contact);
     }
 
-    /// Удалить контакт (узел ушёл offline).
+    /// Удалить контакт (узел ушёл offline); его место занимает самый свежий узел из кэша замены.
     pub fn remove(&mut self, node_id: &NodeId) {
+        let n = self.contacts.len();
         self.contacts.retain(|c| &c.node_id != node_id);
+        self.replacements.retain(|c| &c.node_id != node_id);
+        if self.contacts.len() < n && !self.is_full() {
+            if let Some(c) = self.replacements.pop_back() { self.contacts.push_back(c); }
+        }
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &Contact> {
@@ -121,6 +146,27 @@ impl RoutingTable {
         all.sort_by_key(|c| c.node_id.xor_distance(target));
         all.into_iter().take(count).cloned().collect()
     }
+
+    /// Запомнить узел, увиденный в ответе FIND_NODE (пара NodeID/ключ проверена, живость — нет):
+    /// только в кэш замены его корзины — в саму таблицу попадают лишь ответившие узлы.
+    pub fn note_seen(&mut self, contact: Contact) {
+        if contact.node_id == self.own_id { return; }
+        let idx = self.bucket_index(&contact.node_id);
+        self.buckets[idx].note_replacement(contact);
+    }
+
+    /// Кандидаты в ретрансляторы: контакты таблицы и кэшей замены по возрастанию XOR-расстояния до `target`.
+    pub fn relay_candidates(&self, target: &NodeId) -> Vec<Contact> {
+        let mut all: Vec<(bool, &Contact)> = self.buckets.iter()
+            .flat_map(|b| b.iter().map(|c| (false, c)).chain(b.replacements().map(|c| (true, c))))
+            .collect();
+        all.sort_by_key(|(spare, c)| (c.node_id.xor_distance(target), *spare));
+        let mut seen = std::collections::HashSet::new();
+        all.into_iter().filter(|(_, c)| seen.insert(c.node_id)).map(|(_, c)| c.clone()).collect()
+    }
+
+    /// Узлов в кэшах замены (для статуса).
+    pub fn replacement_count(&self) -> usize { self.buckets.iter().map(|b| b.replacements.len()).sum() }
 
     /// Суммарное число контактов во всех bucket.
     pub fn total_contacts(&self) -> usize {

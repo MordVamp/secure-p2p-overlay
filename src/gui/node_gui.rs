@@ -79,6 +79,8 @@ async fn route(node: Arc<Node>, req: Request) -> Response {
                 // что умеет узел: клиенты (desktop-приложение) включают только поддержанные разделы
                 "features": { "messages": true, "aliases": true, "history": true, "files": true, "calls": false,
                               "events": true, "typing": true, "read_receipts": true, "groups": true,
+                              // звонки: сигнализация, ключ звонка и медиатранспорт готовы, звук — шаг 5
+                              "call_signaling": true,
                               "mailbox": node.cfg.mailbox.enabled },
                 // режим «только клиент»: узел не ретранслирует чужие туннели
                 "relay":   node.cfg.tunnel.relay,
@@ -250,6 +252,38 @@ async fn route(node: Arc<Node>, req: Request) -> Response {
             let stream = req.query.get("stream").cloned().unwrap_or_else(|| "probe".into());
             Response::json(json!({ "stream": stream, "packets": node.messenger.probe_results(&stream).await }))
         }
+        // звонки (шаги 2–4): сигнализация, ключ звонка, медиакадры; звук — шаг 5 (пока синтетический поток)
+        ("/api/call/start", true) => {
+            let target = match resolve_target(&node, req.query.get("target").map(|s| s.as_str()).unwrap_or("")).await {
+                Ok(t) => t, Err(e) => return Response::error(400, &e),
+            };
+            match node.messenger.call_start(target).await {
+                Ok(id) => Response::json(json!({ "ok": true, "call_id": id })),
+                Err(e) => Response::json(json!({ "ok": false, "error": e.to_string() })),
+            }
+        }
+        ("/api/call/accept", true) | ("/api/call/reject", true) | ("/api/call/hangup", true) => {
+            let Some(id) = req.query.get("call_id") else { return Response::error(400, "нужен call_id"); };
+            let r = match req.path.as_str() {
+                "/api/call/accept" => node.messenger.call_accept(id).await,
+                "/api/call/reject" => node.messenger.call_end(id, "rejected").await,
+                _ => node.messenger.call_end(id, "hangup").await,
+            };
+            match r {
+                Ok(()) => Response::json(json!({ "ok": true })),
+                Err(e) => Response::json(json!({ "ok": false, "error": e.to_string() })),
+            }
+        }
+        ("/api/call/media", true) => {
+            let Some(id) = req.query.get("call_id") else { return Response::error(400, "нужен call_id"); };
+            let q = |k: &str, d: u64| req.query.get(k).and_then(|v| v.parse().ok()).unwrap_or(d);
+            match node.messenger.call_send_media(id, q("count", 250).min(30_000) as u32, q("interval_ms", 20).max(1),
+                                                 q("size", 80) as usize).await {
+                Ok(v) => Response::json(json!({ "ok": true, "report": v })),
+                Err(e) => Response::json(json!({ "ok": false, "error": e.to_string() })),
+            }
+        }
+        ("/api/calls", false) => Response::json(json!({ "calls": node.messenger.calls_json().await })),
         ("/api/relays", false) => Response::json(json!({ "profiles": node.tunnel_mgr.profiles_json().await })),
         ("/api/files", false) => {
             let (t, dir) = node.messenger.transfers().await;

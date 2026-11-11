@@ -85,7 +85,8 @@ impl TunnelBuilder {
             let rt = self.routing.lock().await;
             let own_id = *rt.own_id();
             // все допустимые кандидаты по возрастанию XOR-расстояния до получателя
-            let mut c = rt.find_closest(target, usize::MAX);
+            // таблица + кэши замены (Kademlia §2.4): при малом k одной таблицы может не хватить
+            let mut c = rt.relay_candidates(target);
             // узлы «только клиент» (relay = false) в цепочку не берём
             c.retain(|x| x.node_id != own_id && x.node_id != *target && !excluded.contains(&x.node_id) && x.relay);
             // §12: каждый узел в пути не более одного раза (без петель)

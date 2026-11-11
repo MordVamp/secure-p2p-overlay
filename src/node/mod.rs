@@ -29,6 +29,9 @@ pub struct Node {
     routes:          Arc<crate::tunnel::routes::TunnelRoutes>,
     app_tx:          tokio::sync::mpsc::Sender<Vec<u8>>,
     app_rx:          std::sync::Mutex<Option<tokio::sync::mpsc::Receiver<Vec<u8>>>>,
+    /// Медиакадры звонков (TUNNEL_MEDIA, конечный узел) → Messenger::on_media.
+    media_tx:        tokio::sync::mpsc::Sender<Vec<u8>>,
+    media_rx:        std::sync::Mutex<Option<tokio::sync::mpsc::Receiver<Vec<u8>>>>,
 }
 
 /// IPv4-адрес в локальной сети для `advertise_host: auto`.
@@ -140,6 +143,7 @@ impl Node {
         let identity = Arc::new(identity.clone());
         let routes   = Arc::new(crate::tunnel::routes::TunnelRoutes::new());
         let (app_tx, app_rx) = tokio::sync::mpsc::channel(256);
+        let (media_tx, media_rx) = tokio::sync::mpsc::channel(2048);
         let messenger = Arc::new(crate::app::messenger::Messenger::new(
             identity.clone(), dht.clone(), tunnel_mgr.clone(),
             tunnel_mgr.forwarder.clone(), dht.metrics.clone(), cfg.clone(),
@@ -149,6 +153,7 @@ impl Node {
         Ok(Self {
             dht, cfg, own_contact, tunnel_mgr, messenger, identity, routes,
             app_tx, app_rx: std::sync::Mutex::new(Some(app_rx)),
+            media_tx, media_rx: std::sync::Mutex::new(Some(media_rx)),
         })
     }
 
@@ -171,6 +176,13 @@ impl Node {
             });
         }
 
+        // ── Звонки: медиакадры → Messenger (расшифровка ключом звонка, статистика) ─
+        let media_rx = self.media_rx.lock().ok().and_then(|mut g| g.take());
+        if let Some(mut rx) = media_rx {
+            let m = self.messenger.clone();
+            tokio::spawn(async move { while let Some(p) = rx.recv().await { m.on_media(p).await; } });
+        }
+
         // ── T4: Graceful shutdown через watch-канал ───────────────────────
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let shutdown_tx = Arc::new(shutdown_tx);
@@ -191,9 +203,22 @@ impl Node {
             let dht  = self.dht.clone();
             let addrs = self.resolve_bootstrap();
             let id   = self.identity.clone();
+            let mut rx = shutdown_rx.clone();
             tokio::spawn(async move {
-                if let Err(e) = dht.join(&addrs).await {
-                    error!("Bootstrap error: {e}");
+                // Повтор, пока не ответит хотя бы один bootstrap-узел (узел мог стартовать раньше seed
+                // или сеть ещё не поднялась): пауза 1, 2, 4 … 30 с.
+                let mut delay = 1u64;
+                loop {
+                    if let Err(e) = dht.join(&addrs).await {
+                        error!("Bootstrap error: {e}");
+                    }
+                    if addrs.is_empty() || dht.routing.lock().await.total_contacts() > 0 { break; }
+                    warn!("Bootstrap: ни один bootstrap-узел не ответил — повтор через {delay} с");
+                    tokio::select! {
+                        _ = tokio::time::sleep(std::time::Duration::from_secs(delay)) => {}
+                        _ = rx.changed() => return,
+                    }
+                    delay = (delay * 2).min(30);
                 }
                 // §10.3: публикуем свою адресную запись (NodeRecord)
                 match dht.publish_node_record(&id).await {
@@ -220,6 +245,7 @@ impl Node {
         // ── A1: Bucket refresh — периодический lookup случайного ID ──────
         {
             let dht       = self.dht.clone();
+            let boot      = self.resolve_bootstrap();
             let interval  = self.cfg.dht.refresh_interval_seconds;
             let mut rx    = shutdown_rx.clone();
             tokio::spawn(async move {
@@ -230,6 +256,11 @@ impl Node {
                 loop {
                     tokio::select! {
                         _ = ticker.tick() => {
+                            // таблица опустела (все соседи ушли) — войти в сеть заново через bootstrap
+                            if !boot.is_empty() && dht.routing.lock().await.total_contacts() == 0 {
+                                warn!("Таблица маршрутизации пуста — повторный bootstrap");
+                                if let Err(e) = dht.join(&boot).await { warn!("Повторный bootstrap: {e}"); }
+                            }
                             // Lookup случайного ID в каждом непустом бакете
                             let targets = {
                                 let rt = dht.routing.lock().await;
@@ -263,7 +294,11 @@ impl Node {
                 let mut t = tokio::time::interval(std::time::Duration::from_secs(10));
                 loop {
                     tokio::select! {
-                        _ = t.tick() => { dht.store.evict_expired().await; msgr.evict_stale_files().await; }
+                        _ = t.tick() => {
+                            dht.store.evict_expired().await;
+                            msgr.evict_stale_files().await;
+                            msgr.expire_calls().await;   // вызов без ответа 30 с; уборка старых звонков
+                        }
                         _ = rx.changed() => break,
                     }
                 }
@@ -383,6 +418,7 @@ impl Node {
             self.dht.pending.clone(),
             self.cfg.clone(),
         ).with_services(self.dht.store.clone(), self.routes.clone(), Some(self.app_tx.clone()))
+         .with_media_sink(self.media_tx.clone())
     }
 
     fn resolve_bootstrap(&self) -> Vec<SocketAddr> {

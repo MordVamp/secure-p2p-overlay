@@ -1,0 +1,100 @@
+{
+  "N": 15,
+  "R": 3,
+  "alpha": 3,
+  "bootstrap_graph": "-",
+  "build": "debug",
+  "channel": "tls",
+  "commit": "3ce7ff913648085ccf87b931c1b629490982a97d",
+  "config": {
+    "dht": {
+      "alpha": 3,
+      "k_bucket_size": 3,
+      "node_id_bits": 256,
+      "ping_timeout_ms": 5000,
+      "refresh_interval_seconds": 60,
+      "replication_factor": 3,
+      "republish_interval_seconds": 80,
+      "rpc_timeout_ms": 5000,
+      "store_quorum": 2,
+      "ttl_seconds": 180
+    },
+    "files": {
+      "block_size": 40960,
+      "incomplete_timeout_s": 60,
+      "max_bytes": 67108864,
+      "window": 8
+    },
+    "level": "simplified",
+    "mailbox": {
+      "enabled": true,
+      "max_age_s": 604800,
+      "max_messages": 20,
+      "poll_interval_s": 60
+    },
+    "node": {
+      "advertise_host": "",
+      "bootstrap_peers": [],
+      "listen_host": "0.0.0.0",
+      "listen_port": 7001,
+      "log_level": "INFO",
+      "metrics_dir": "./metrics/node-01",
+      "state_dir": "./state/node-01"
+    },
+    "security": {
+      "channel": "tls",
+      "session_id_ttl_seconds": 3600
+    },
+    "transport": {
+      "connect_timeout_ms": 3000,
+      "idle_timeout_ms": 60000,
+      "max_frame_payload": 65536,
+      "pool_scope": "tunnels",
+      "protocol_version": 1,
+      "read_timeout_ms": 5000,
+      "reuse_connections": true
+    },
+    "tunnel": {
+      "ack_timeout_ms": 5000,
+      "build_timeout_ms": 15000,
+      "max_hops": 5,
+      "min_relays": 2,
+      "pool_size": 1,
+      "relay": true,
+      "relay_selection": "closest",
+      "ttl_seconds": 600
+    }
+  },
+  "config_file": "config/node_config.yaml",
+  "connections": "pool:tunnels",
+  "driver": "p2p-orchestrator scenario (Rust)",
+  "finished_at": "2026-11-11T23:02:42+0300",
+  "k": 3,
+  "netem": null,
+  "params": {},
+  "scenario": "08_negative_crypto",
+  "seed": 1,
+  "started_at": "2026-11-11T23:02:11+0300",
+  "timebase": "длительности *_s и *_ms оркестратора — монотонные часы (Instant); *_ms из API узла — часы узла",
+  "timeouts_ms": {
+    "ack_timeout_ms": 5000,
+    "build_timeout_ms": 15000,
+    "connect_timeout_ms": 3000,
+    "idle_timeout_ms": 60000,
+    "ping_timeout_ms": 5000,
+    "read_timeout_ms": 5000,
+    "rpc_timeout_ms": 5000
+  },
+  "tunnel": {
+    "ack_timeout_ms": 5000,
+    "build_timeout_ms": 15000,
+    "max_hops": 5,
+    "min_relays": 2,
+    "pool_size": 1,
+    "relay": true,
+    "relay_selection": "closest",
+    "ttl_seconds": 600
+  },
+  "worktree_diff_sha256": "c6c0c4a0be37ea5f06622faeb195e2c0af663360cec8ae13c254fa472bdb5fab",
+  "worktree_dirty": true
+}

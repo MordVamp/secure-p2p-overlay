@@ -180,6 +180,11 @@ impl IterativeLookup {
                         // Добавить новые контакты. Себя не добавляем: пир возвращает и инициатора
                         // (исключает только себя), а без этого инициатор опрашивал бы сам себя и считал
                         // собственный узел одной из R реплик при STORE (кворум §10.1 по различным узлам).
+                        {
+                            // увиденные узлы — в кэш замены: кандидаты в ретрансляторы и на место выбывших
+                            let mut rt = self.routing.lock().await;
+                            for c in &resp.contacts { rt.note_seen(c.clone()); }
+                        }
                         for c in resp.contacts {
                             if c.node_id == self.own_contact.node_id { continue; }
                             let hex = c.node_id.to_hex();

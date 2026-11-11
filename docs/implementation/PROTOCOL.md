@@ -81,6 +81,7 @@ rmp-serde пишет их массивом чисел, и байт ≥ 128 за�
 | 0x13 | TUNNEL_DATA | запрос | `{tunnel_id, seq: u64, data: bytes (≤ 48 КиБ), hops_left: u8}` | ✅ |
 | 0x14 | TUNNEL_ACK | ответ | `{tunnel_id, seq, rtt_ms}` | ✅ |
 | 0x15 | TUNNEL_CLOSE | — | `{tunnel_id, reason}` | определён, не отправляется: маршрут на relay истекает по TTL |
+| 0x16 | TUNNEL_MEDIA | без ответа | `{tunnel_id, seq, data, hops_left}` (как TUNNEL_DATA, `data` ≤ 4 КиБ) | ✅ медиакадры звонков (§7.8): ретранслятор пересылает сразу, никто не подтверждает |
 | 0x20 | APP_MESSAGE | — | — | не используется: прикладные сообщения идут E2E-конвертом внутри TUNNEL_DATA (§7) |
 | 0x21 | APP_ACK | — | — | то же: APP_ACK — `AppMessage` с `kind = Ack` (§7.3) |
 | 0x7F | ERROR | ответ | `{code: u16, description}` | ✅ |
@@ -139,7 +140,12 @@ canonical  = node_id ‖ identity_pubkey ‖ addresses (строками) ‖ se
 
 ### 4.4. Процедуры
 
-- **Bootstrap:** PING каждого bootstrap-адреса → self-lookup `FIND_NODE(own_id)` → публикация своего NodeRecord.
+- **Bootstrap:** PING каждого bootstrap-адреса → self-lookup `FIND_NODE(own_id)` → публикация своего NodeRecord. Если
+  не ответил ни один bootstrap-узел — повтор через 1, 2, 4 … 30 с, пока таблица не получит контакт (узел мог стартовать
+  раньше seed); если таблица позже опустеет — повторный bootstrap при очередном refresh.
+- **Кэш замены (Kademlia §2.4):** у каждой корзины — до 8 узлов, не поместившихся в полную корзину, и узлов из ответов
+  FIND_NODE (пара NodeID/ключ проверена, живость — нет). В таблицу они не входят; занимают место удалённого контакта и
+  служат кандидатами в ретрансляторы.
 - **Lookup:** α = 3 параллельных FIND_NODE к ближайшим неопрошенным кандидатам; ответы обрабатываются по мере
   поступления; остановка, когда ближайший опрошенный не улучшился; результат — k ближайших. Свой NodeID в кандидаты не
   добавляется (ADR-26).
@@ -155,6 +161,7 @@ canonical  = node_id ‖ identity_pubkey ‖ addresses (строками) ‖ se
 ### 5.1. Построение
 
 Инициатор выбирает `min_relays` ретрансляторов (упрощённый уровень — 2, продвинутый — 3) из своей таблицы маршрутизации
+и кэшей замены (§4.4; при малом k одной таблицы может не хватить)
 по стратегии `tunnel.relay_selection` (§5.3; по умолчанию — ближайших к получателю), без себя, получателя и повторов. Адрес получателя берётся из результата lookup (ADR-19). Затем инициатор **сам** соединяется с каждым relay по
 очереди и отправляет TUNNEL_BUILD:
 
@@ -242,6 +249,7 @@ ct     = AES-256-GCM(K, nonce, plaintext = msgpack(AppMessage), aad = "p2p-e2e-v
 ```
 AppMessage = {message_id: UUIDv4 (16), kind, from, to, timestamp_ms, payload, signature, sender_pubkey}
 kind: 1 Text · 2 Ack · 3 System · 4–7 FileOffer/FileBlock/FileAck/FileDone (§7.5) · 8 Typing · 9 Read · 10 GroupText (§7.6)
+      · 12–15 CallOffer/CallAnswer/CallReject/CallHangup (§7.8)
       · 11 Probe — измерительный пакет потока {stream, seq, sent_us, pad} (план звонков, шаг 0), без ACK и истории
 signing_bytes = message_id ‖ kind(1 байт) ‖ from ‖ to ‖ timestamp_ms(u64 BE) ‖ payload
 signature     = Ed25519(sender_sk, signing_bytes)          // sign-then-encrypt: подпись внутри конверта
@@ -322,7 +330,39 @@ B → A  FileAck (последний) и FileDone {transfer_id, ok, error} — �
 снаружи (телефон за NAT), если он может достучаться до узлов DHT. Сообщения старше `mailbox.max_age_s` (7 суток)
 удаляются из очереди со статусом `failed`.
 
-### 7.8. Номер безопасности
+### 7.8. Звонки: сигнализация, ключ звонка, медиакадры
+
+**Сигнализация** — подписанные E2E-сообщения (как текст: проверка отправителя, анти-replay, доставка через туннель):
+
+```text
+A → B  CallOffer  {call_id(16), eph_pk_A(32) — одноразовый X25519, codec "opus", frame_ms 20}
+B → A  CallAnswer {call_id, eph_pk_B(32)}          — или CallReject {call_id, reason: busy | rejected}
+A ↔ B  CallHangup {call_id, reason: hangup | no_answer}
+```
+
+Звонок принимается только от собеседника этого звонка; повторный CallOffer с тем же `call_id` отвергается. Если у
+вызываемого уже идёт звонок — автоматический CallReject `busy`. Без ответа 30 с: у звонящего — `no_answer` (и CallHangup),
+у вызываемого — `missed`. По завершении — запись в историю (`status`: `call_ended` с длительностью, `call_missed`,
+`call_rejected`).
+
+**Ключ звонка.** `shared = X25519(eph_свой, eph_собеседника)` (проверка `was_contributory`);
+`HKDF-SHA256(salt = call_id, ikm = shared, info = "p2p-overlay call v1" ‖ NodeID_A ‖ NodeID_B ‖ eph_pk_A ‖ eph_pk_B)` →
+64 байта: ключ AES-256-GCM направления A→B и ключ B→A. Одноразовые ключи подписаны внутри Offer/Answer — подмена
+ломает подпись; секреты стираются после вывода ключей, ключи — после завершения (прямая секретность звонка).
+
+**Медиакадр** (`data` в TUNNEL_MEDIA, ≤ 4 КиБ): `call_id(16) ‖ seq(8, BE) ‖ AES-256-GCM(key_направления,
+nonce = dir(1) ‖ 0(3) ‖ seq(8), aad = call_id ‖ seq, plaintext = sent_us(8, BE) ‖ payload)`, `dir` = 1 для A→B, 2 для B→A.
+Получатель находит звонок по `call_id`, расшифровывает и пропускает через окно повторов на 64 номера (повтор и кадр
+старше окна отбрасываются). TUNNEL_MEDIA идёт по основному пригодному туннелю **мимо очереди туннеля** и без
+подтверждений: ретранслятор пересылает следующему узлу сразу (через пул соединений) и не отвечает, ошибки отправителю не
+возвращаются; переполненная очередь записи соединения отбрасывает кадр — опоздавший голос не нужен. Живость туннеля
+по-прежнему проверяют обычные кадры (сигнализация, сообщения) со сквозным TUNNEL_ACK.
+
+API: `POST /api/call/start|accept|reject|hangup`, `POST /api/call/media` (синтетический поток до шага 5 — звука ещё
+нет), `GET /api/calls` (состояние, время установления, приём: пакеты, потери, переупорядочивание, отвергнутые,
+джиттер RFC 3550, задержка в одну сторону); событие `call` в `/api/events`.
+
+### 7.9. Номер безопасности
 
 `SHA-256("p2p-overlay-safety-v1" ‖ min(id_a, id_b) ‖ max(id_a, id_b))`, первые 30 байт → 6 чисел по 5 байт mod 10¹⁰ →
 12 групп по 5 цифр. Одинаков у обоих собеседников; так как NodeID = SHA-256 ключа, совпадение при личной сверке

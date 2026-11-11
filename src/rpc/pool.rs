@@ -151,6 +151,33 @@ pub async fn request(scope: Scope, addr: SocketAddr, expected: Option<&NodeId>, 
     bail!("соединение с {addr} закрыто до ответа")
 }
 
+/// Отправить кадр без ожидания ответа (медиакадры). С пулом — в очередь записи открытого соединения;
+/// без пула — новое соединение на кадр (дорого — для звонков нужен пул).
+pub async fn send_oneway(scope: Scope, addr: SocketAddr, expected: Option<&NodeId>, frame: Frame,
+                         connect_ms: u64, read_ms: u64) -> Result<()> {
+    let Some(pool) = POOL.get().filter(|p| scope == Scope::Tunnel || p.dht) else {
+        let mut s = super::dial_expect(addr, connect_ms, read_ms, expected).await?;
+        s.send(&frame).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        return Ok(());
+    };
+    let key: Key = (addr, expected.copied());
+    for attempt in 0..2 {
+        let (conn, fresh) = pool.get_or_open(key, connect_ms, read_ms).await?;
+        conn.last_ms.store(now_ms(), Ordering::Relaxed);
+        // переполненная очередь записи — кадр опоздал бы всё равно: отбрасываем, а не ждём
+        match conn.tx.try_send(Some(frame.clone())) {
+            Ok(()) => return Ok(()),
+            Err(mpsc::error::TrySendError::Full(_)) => bail!("очередь соединения с {addr} переполнена — медиакадр отброшен"),
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                conn.close("запись невозможна");
+                if !fresh && attempt == 0 { continue; }
+                bail!("соединение с {addr} закрыто");
+            }
+        }
+    }
+    bail!("соединение с {addr} закрыто")
+}
+
 impl Pool {
     async fn get_or_open(&'static self, key: Key, connect_ms: u64, read_ms: u64) -> Result<(Arc<Conn>, bool)> {
         {

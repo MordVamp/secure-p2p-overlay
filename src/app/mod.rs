@@ -19,3 +19,4 @@ pub use message::{AppMessage, MessageKind};
 pub use messenger::Messenger;
 pub mod events;
 pub mod mailbox;
+pub mod calls;

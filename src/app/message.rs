@@ -27,6 +27,11 @@ pub enum MessageKind {
     /// Измерительный пакет потока (план звонков, шаг 0): payload = `ProbeBody`. Без подтверждения и истории;
     /// получатель запоминает время прихода — задержка в одну сторону, джиттер, потери.
     Probe,
+    /// Звонки (шаг 3): вызов с одноразовым ключом, ответ с одноразовым ключом, отказ, завершение (`app/calls.rs`).
+    CallOffer,
+    CallAnswer,
+    CallReject,
+    CallHangup,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,6 +65,7 @@ impl MessageKind {
             MessageKind::Text => 1, MessageKind::Ack => 2, MessageKind::System => 3,
             MessageKind::FileOffer => 4, MessageKind::FileBlock => 5, MessageKind::FileAck => 6, MessageKind::FileDone => 7,
             MessageKind::Typing => 8, MessageKind::Read => 9, MessageKind::GroupText => 10, MessageKind::Probe => 11,
+            MessageKind::CallOffer => 12, MessageKind::CallAnswer => 13, MessageKind::CallReject => 14, MessageKind::CallHangup => 15,
         }
     }
 }

@@ -136,6 +136,8 @@ pub struct RpcHandler {
     routes:      Arc<crate::tunnel::routes::TunnelRoutes>,
     /// A4: получатель прикладных данных (конечный узел туннеля).
     app_sink:    Option<tokio::sync::mpsc::Sender<Vec<u8>>>,
+    /// Звонки: получатель медиакадров (конечный узел туннеля), без подтверждений.
+    media_sink:  Option<tokio::sync::mpsc::Sender<Vec<u8>>>,
 }
 
 impl RpcHandler {
@@ -150,6 +152,12 @@ impl RpcHandler {
         self
     }
 
+    /// Подключить получателя медиакадров звонков.
+    pub fn with_media_sink(mut self, sink: tokio::sync::mpsc::Sender<Vec<u8>>) -> Self {
+        self.media_sink = Some(sink);
+        self
+    }
+
     pub fn new(
         own_contact: Contact,
         routing:     Arc<Mutex<RoutingTable>>,
@@ -161,6 +169,7 @@ impl RpcHandler {
             store:    Arc::new(crate::dht::storage::DhtStore::default()),
             routes:   Arc::new(crate::tunnel::routes::TunnelRoutes::new()),
             app_sink: None,
+            media_sink: None,
         }
     }
 
@@ -195,6 +204,11 @@ impl RpcHandler {
                 Ok(f)  => Some(f),
                 Err(e) => { warn!("tunnel_build err: {e}"); Some(make_error_frame(frame.request_id, error_codes::BAD_PAYLOAD, e.to_string())) }
             },
+            // медиакадр: ответа нет ни в каком случае — ни подтверждения, ни ошибки
+            MsgType::TunnelMedia => {
+                if let Err(e) = self.handle_tunnel_media(&frame).await { debug!("tunnel_media: {e}"); }
+                None
+            }
             MsgType::TunnelData => match self.handle_tunnel_data(&frame).await {
                 Ok(f)  => Some(f),
                 Err(e) => { warn!("tunnel_data err: {e}"); Some(make_error_frame(frame.request_id, error_codes::BAD_PAYLOAD, e.to_string())) }
@@ -596,6 +610,36 @@ impl RpcHandler {
             frame.request_id,
             bytes::Bytes::from(payload::encode(&ok)?),
         ))
+    }
+}
+
+// ── TUNNEL_MEDIA: медиакадры звонков (план звонков, шаг 2) ───────────────────
+impl RpcHandler {
+    /// Ретранслятор: переслать следующему узлу сразу, не дожидаясь его ответа. Конечный узел: отдать
+    /// получателю медиа (проверку — расшифровку ключом звонка — делает он). Ошибки не возвращаются отправителю:
+    /// голосовой пакет, не дошедший вовремя, не нужен.
+    pub async fn handle_tunnel_media(&self, frame: &Frame) -> Result<()> {
+        let p: TunnelDataPayload = payload::decode(&frame.payload)?;
+        let tid: [u8; 16] = p.tunnel_id.as_slice().try_into().map_err(|_| anyhow::anyhow!("bad tunnel_id length"))?;
+        if p.data.len() > 4096 { bail!("медиакадр больше 4 КиБ"); }
+        if let Some((next, next_id)) = self.routes.next_hop_with_id(&tid).await {
+            if p.hops_left == 0 { bail!("TUNNEL_MEDIA: hops_left исчерпан"); }
+            if self.cfg.fault.drop > 0.0 && rand::random::<f64>() < self.cfg.fault.drop { return Ok(()); }
+            let fwd = Frame {
+                version: crate::protocol::PROTOCOL_VERSION, msg_type: MsgType::TunnelMedia, flags: FrameFlags::empty(),
+                request_id: new_request_id(),
+                payload: Bytes::from(payload::encode(&TunnelDataPayload {
+                    tunnel_id: p.tunnel_id, seq: p.seq, data: p.data, hops_left: p.hops_left - 1,
+                })?),
+            };
+            pool::send_oneway(pool::Scope::Tunnel, next, next_id.as_ref(), fwd,
+                              self.cfg.transport.connect_timeout_ms, self.cfg.transport.read_timeout_ms).await
+        } else {
+            match &self.media_sink {
+                Some(s) => { let _ = s.try_send(p.data); Ok(()) }   // очередь полна — кадр опоздал, отбрасываем
+                None => bail!("нет получателя медиакадров"),
+            }
+        }
     }
 }
 

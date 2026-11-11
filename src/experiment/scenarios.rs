@@ -49,7 +49,8 @@ pub async fn run(which: &str, a: &Args) -> Result<bool> {
             "10" => s10_netem(a).await?,
             "underlay" => sunderlay(a).await?,
             "media" => smedia(a).await?,
-            other => bail!("неизвестный сценарий {other}; есть 01–09, pcap, channel, files, failover, strategy, media, 10, underlay, all"),
+            "call" => scall(a).await?,
+            other => bail!("неизвестный сценарий {other}; есть 01–09, pcap, channel, files, failover, strategy, media, call, 10, underlay, all"),
         };
     }
     Ok(ok)
@@ -752,6 +753,87 @@ async fn smedia(a: &Args) -> Result<bool> {
 
 ")))?;
     Ok(true)
+}
+
+// ── call: звонок — сигнализация, ключ звонка, медиапоток TUNNEL_MEDIA (план звонков, шаги 2–4) ──
+//
+// Пара узлов: вызов → ответ (время установления: от вызова до активного звонка у звонящего, т.е. до прихода
+// подписанного ответа), затем поток как у голоса (250 × 80 байт / 20 мс) по TUNNEL_MEDIA — без подтверждений и
+// мимо очереди туннеля; у вызываемого — расшифровка ключом звонка, окно повторов, статистика. Задержка — по общим
+// часам стенда. Сравнение с путём `media` (пакеты с подтверждением всей цепочки) — в summary.
+
+async fn scall(a: &Args) -> Result<bool> {
+    let pairs = a.runs.max(1);
+    let mut run = Run::new("call_stream", a, "star", json!({
+        "pairs": pairs, "packets": MEDIA_PACKETS, "interval_ms": MEDIA_INTERVAL_MS, "size": MEDIA_SIZE,
+    }))?;
+    let mut rng = StdRng::seed_from_u64(a.seed);
+    let mut net = Net::start(&format!("call"), a.nodes, "star").await?;
+    net.converge(60.0, 3).await;
+    let n = net.n();
+    let mut rows = vec![];
+    let (mut setup, mut ow, mut ow_p95, mut jit, mut loss, mut rej) = (vec![], vec![], vec![], vec![], vec![], 0u64);
+    let mut ok = true;
+    for p in 0..pairs {
+        let x = rng.gen_range(0..n);
+        let y = other(&mut rng, n, x);
+        let st = net.api(x, "POST", "/api/call/start", &[("target", &net.id(y))]).await.unwrap_or_default();
+        let Some(cid) = st["call_id"].as_str().map(str::to_owned) else { ok = false; eprintln!("вызов {p}: {st}"); continue };
+        // вызываемый видит входящий → отвечает
+        let mut answered = false;
+        for _ in 0..100 {
+            let v = net.api(y, "GET", "/api/calls", &[]).await.unwrap_or_default();
+            if v["calls"].as_array().is_some_and(|l| l.iter().any(|c| c["call_id"] == cid.as_str() && c["state"] == "ringing")) {
+                answered = net.api(y, "POST", "/api/call/accept", &[("call_id", &cid)]).await.map(|r| is_true(&r["ok"])).unwrap_or(false);
+                break;
+            }
+            sleep_s(0.05).await;
+        }
+        let mut c = json!({});
+        for _ in 0..100 {
+            let v = net.api(x, "GET", "/api/calls", &[]).await.unwrap_or_default();
+            c = v["calls"].as_array().and_then(|l| l.iter().find(|c| c["call_id"] == cid.as_str()).cloned()).unwrap_or_default();
+            if c["state"] == "active" { break; }
+            sleep_s(0.05).await;
+        }
+        if !answered || c["state"] != "active" { ok = false; eprintln!("звонок {p} не установлен: {c}"); continue; }
+        let setup_ms = c["setup_ms"].as_f64().unwrap_or(f64::NAN);
+        let m = super::net::api(net.gui(x), "POST", "/api/call/media", &[("call_id", &cid), ("count", &s(MEDIA_PACKETS)),
+            ("interval_ms", &s(MEDIA_INTERVAL_MS)), ("size", &s(MEDIA_SIZE))], 300).await.unwrap_or_default();
+        sleep_s(1.0).await;
+        let v = net.api(y, "GET", "/api/calls", &[]).await.unwrap_or_default();
+        let r = v["calls"].as_array().and_then(|l| l.iter().find(|c| c["call_id"] == cid.as_str()).cloned()).unwrap_or_default();
+        let _ = net.api(x, "POST", "/api/call/hangup", &[("call_id", &cid)]).await;
+        let received = r["rx"]["packets"].as_u64().unwrap_or(0);
+        let lost = MEDIA_PACKETS as u64 - received.min(MEDIA_PACKETS as u64);
+        rej += r["rx"]["rejected"].as_u64().unwrap_or(0);
+        rows.push(vec![s(p), s(x), s(y), f1(setup_ms), jv(&m["report"]["sent"]), s(received), s(lost),
+            jv(&r["one_way_ms"]["median"]), jv(&r["one_way_ms"]["p95"]), jv(&r["one_way_ms"]["max"]),
+            format!("{:.2}", r["rx"]["jitter_ms"].as_f64().unwrap_or(f64::NAN)), jv(&r["rx"]["reordered"]), jv(&r["rx"]["rejected"])]);
+        setup.push(setup_ms);
+        if let Some(v) = r["one_way_ms"]["median"].as_f64() { ow.push(v); }
+        if let Some(v) = r["one_way_ms"]["p95"].as_f64() { ow_p95.push(v); }
+        jit.push(r["rx"]["jitter_ms"].as_f64().unwrap_or(f64::NAN));
+        loss.push(100.0 * lost as f64 / MEDIA_PACKETS as f64);
+    }
+    close(&mut net, &run.dir.join("node_logs")).await?;
+    let worst = ow_p95.iter().copied().fold(0.0, f64::max);
+    let verdict = if worst <= 150.0 { "укладывается в 150 мс (хорошо по ITU-T G.114)" } else if worst <= 300.0 { "150–300 мс (терпимо)" } else { "больше 300 мс" };
+    run.finish(&["pair", "caller", "callee", "setup_ms", "sent", "received", "lost", "one_way_median_ms", "one_way_p95_ms",
+                 "one_way_max_ms", "jitter_ms", "reordered", "rejected"], &rows,
+        &format!("Звонок: вызов → ответ → поток {MEDIA_PACKETS} × {MEDIA_SIZE} байт / {MEDIA_INTERVAL_MS} мс по TUNNEL_MEDIA \
+                  (без подтверждений, мимо очереди туннеля; AES-256-GCM ключом звонка) → завершение. {pairs} пар, сеть {} узлов, \
+                  сборка `{}`. Задержка — от отправки до расшифровки у получателя (общие часы стенда).\n\n\
+                  - установление звонка (вызов → ответ у звонящего), мс: {}\n\
+                  - медиа, задержка в одну сторону — медианы по звонкам, мс: {}\n\
+                  - медиа, p95 по звонкам, мс: {}\n\
+                  - джиттер (RFC 3550) по звонкам, мс: {}\n\
+                  - потери по звонкам, %: {}\n\
+                  - отвергнуто окном повторов / проверкой ключа: {rej}\n\
+                  - вывод по худшему p95: {verdict}",
+                 a.nodes, if cfg!(debug_assertions) { "debug" } else { "release" },
+                 fmt(&setup), fmt(&ow), fmt(&ow_p95), fmt(&jit), fmt(&loss)))?;
+    Ok(ok)
 }
 
 // ── files: передача файлов, goodput и доля служебного трафика (§13.2, §15.2) ──
