@@ -133,7 +133,7 @@ impl DhtNode {
                     "node_id": c.node_id.to_hex(),
                     "host":    c.host,
                     "port":    c.port,
-                    "last_seen_ms": c.last_seen_ms,
+                    "last_seen_ms": c.last_seen_ms, "relay": c.relay,
                 })).collect::<Vec<_>>()
             })
         }).collect();

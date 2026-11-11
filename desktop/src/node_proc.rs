@@ -37,23 +37,37 @@ fn repo_root(bin: &Path) -> Option<PathBuf> {
 }
 
 impl LocalNode {
+    /// Основной узел: P2P-порт, API для приложения, bootstrap из настроек.
     pub fn start(s: &Settings) -> Result<Self, String> {
-        let bin = find_node_binary(&s.node_bin);
         let state = PathBuf::from(&s.state_dir);
-        std::fs::create_dir_all(&state).map_err(|e| format!("{}: {e}", state.display()))?;
+        let bootstrap: Vec<String> = s.bootstrap.split([',', ' ', ';']).map(str::trim)
+            .filter(|b| !b.is_empty()).map(str::to_owned).collect();
+        Self::spawn(s, &state, s.listen_port, Some(s.gui_port), &bootstrap)
+    }
+
+    /// Вспомогательный ретранслятор № `i` (1..): порт `listen_port + i`, свой каталог
+    /// состояния рядом с основным, bootstrap — основной узел, без API.
+    pub fn start_helper(s: &Settings, i: u16) -> Result<Self, String> {
+        let state = PathBuf::from(format!("{}-helpers/h{i}", s.state_dir.trim_end_matches('/')));
+        let port = s.listen_port.checked_add(i).ok_or("порт ретранслятора > 65535")?;
+        Self::spawn(s, &state, port, None, &[format!("127.0.0.1:{}", s.listen_port)])
+    }
+
+    fn spawn(s: &Settings, state: &Path, port: u16, gui_port: Option<u16>, bootstrap: &[String]) -> Result<Self, String> {
+        let bin = find_node_binary(&s.node_bin);
+        std::fs::create_dir_all(state).map_err(|e| format!("{}: {e}", state.display()))?;
         let log_path = state.join("node.log");
         let log = std::fs::File::create(&log_path).map_err(|e| format!("{}: {e}", log_path.display()))?;
         let mut cmd = Command::new(&bin);
-        cmd.arg("-p").arg(s.listen_port.to_string())
-           .arg("--gui-port").arg(s.gui_port.to_string())
-           .arg("--state-dir").arg(&state)
+        cmd.arg("-p").arg(port.to_string())
+           .arg("--state-dir").arg(state)
            .arg("--metrics-dir").arg(state.join("metrics"));
+        if let Some(gp) = gui_port { cmd.arg("--gui-port").arg(gp.to_string()); }
+        if s.lan { cmd.arg("--advertise").arg("auto"); }
         if let Some(root) = repo_root(&bin) {
             cmd.arg("-c").arg(root.join("config/node_config.yaml")).current_dir(root);
         }
-        for b in s.bootstrap.split([',', ' ', ';']).map(str::trim).filter(|b| !b.is_empty()) {
-            cmd.arg("-b").arg(b);
-        }
+        for b in bootstrap { cmd.arg("-b").arg(b); }
         let err = log.try_clone().map_err(|e| e.to_string())?;
         let child = cmd.stdin(Stdio::null()).stdout(Stdio::from(log)).stderr(Stdio::from(err))
             .spawn().map_err(|e| format!("не удалось запустить {}: {e}", bin.display()))?;

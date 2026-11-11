@@ -48,7 +48,8 @@ pub async fn run(which: &str, a: &Args) -> Result<bool> {
             "strategy" => sstrategy(a).await?,
             "10" => s10_netem(a).await?,
             "underlay" => sunderlay(a).await?,
-            other => bail!("неизвестный сценарий {other}; есть 01–09, pcap, channel, files, pool, strategy, 10, underlay, all"),
+            "media" => smedia(a).await?,
+            other => bail!("неизвестный сценарий {other}; есть 01–09, pcap, channel, files, failover, strategy, media, 10, underlay, all"),
         };
     }
     Ok(ok)
@@ -643,6 +644,113 @@ async fn schannel(a: &Args) -> Result<bool> {
         &format!("Одна и та же сеть из {} узлов поднимается дважды: с каналом TLS 1.3 и с собственным рукопожатием (AKE, §11.3). \
                   Остальное одинаково (seed, пары, сборка `{}`).\n\n{}",
                  a.nodes, if cfg!(debug_assertions) { "debug" } else { "release" }, lines.join("\n")))?;
+    Ok(true)
+}
+
+// ── media: может ли туннель нести голосовой поток (план звонков, шаг 0) ─────────
+//
+// Поток как у голоса: пакет 80 байт каждые 20 мс (Opus 20 мс ≈ 24 кбит/с), пакеты уходят по расписанию,
+// не дожидаясь подтверждения. Узлы стенда на одной машине — часы общие, задержка в одну сторону меряется точно.
+// Режимы — способы соединений между узлами (`MEDIA_MODES`); сравнение — главный результат шага.
+
+/// (название режима, дополнительные флаги узла)
+const MEDIA_MODES: &[(&str, &[&str])] = &[("per_request", &[]), ("pool", &["--reuse-connections"]),
+    ("pool_all", &["--reuse-connections", "--pool-scope", "all"])];
+
+const MEDIA_PACKETS: u32 = 250;     // 5 с потока
+const MEDIA_INTERVAL_MS: u64 = 20;
+const MEDIA_SIZE: usize = 80;
+
+struct StreamStat { received: usize, one_way: Vec<f64>, jitter_ms: f64, reordered: usize }
+
+/// Задержка в одну сторону, джиттер (RFC 3550, §6.4.1) и переупорядочивание по принятым пакетам.
+fn stream_stat(pkts: &[Value]) -> StreamStat {
+    let mut arr: Vec<(u64, u64, u64)> = pkts.iter().filter_map(|p| Some((
+        p["recv_us"].as_u64()?, p["sent_us"].as_u64()?, p["seq"].as_u64()?))).collect();
+    arr.sort_by_key(|x| x.0);   // порядок прихода
+    let one_way: Vec<f64> = arr.iter().map(|(r, s, _)| (*r as f64 - *s as f64) / 1000.0).collect();
+    let mut j = 0.0;
+    for w in arr.windows(2) {
+        let d = (w[1].0 as f64 - w[0].0 as f64) - (w[1].1 as f64 - w[0].1 as f64);
+        j += (d.abs() / 1000.0 - j) / 16.0;
+    }
+    let mut max_seq = 0u64;
+    let mut reordered = 0;
+    for (k, (_, _, seq)) in arr.iter().enumerate() {
+        if k > 0 && *seq < max_seq { reordered += 1; }
+        max_seq = max_seq.max(*seq);
+    }
+    StreamStat { received: arr.len(), one_way, jitter_ms: j, reordered }
+}
+
+async fn smedia(a: &Args) -> Result<bool> {
+    let pairs = a.runs.max(1);
+    let mut run = Run::new("media_stream", a, "star", json!({
+        "modes": MEDIA_MODES.iter().map(|m| m.0).collect::<Vec<_>>(), "pairs": pairs,
+        "packets": MEDIA_PACKETS, "interval_ms": MEDIA_INTERVAL_MS, "size": MEDIA_SIZE,
+    }))?;
+    let mut rng = StdRng::seed_from_u64(a.seed);
+    let mut rows = vec![];      // по пакету
+    let mut streams = vec![];   // по потоку
+    let mut lines = vec![];
+    for (mode, flags) in MEDIA_MODES {
+        let flags: Vec<String> = flags.iter().map(|f| f.to_string()).collect();
+        let mut net = Net::start_with(&format!("media_{mode}"), a.nodes, "star", |_| flags.clone()).await?;
+        net.converge(60.0, 3).await;
+        let n = net.n();
+        let (mut all_ow, mut jit, mut loss, mut acks) = (vec![], vec![], vec![], vec![]);
+        for p in 0..pairs {
+            let x = rng.gen_range(0..n);
+            let y = other(&mut rng, n, x);
+            let sid = format!("{mode}-{p}");
+            let send = super::net::api(net.gui(x), "POST", "/api/probe", &[
+                ("target", &net.id(y)), ("stream", &sid), ("count", &s(MEDIA_PACKETS)),
+                ("interval_ms", &s(MEDIA_INTERVAL_MS)), ("size", &s(MEDIA_SIZE))], 300).await
+                .unwrap_or_else(|e| json!({ "ok": false, "error": e.to_string() }));
+            sleep_s(1.0).await;     // догнать хвост потока
+            let got = net.api(y, "GET", "/api/probe_results", &[("stream", &sid)]).await.unwrap_or_else(|_| json!({}));
+            let pk = got["packets"].as_array().cloned().unwrap_or_default();
+            let st = stream_stat(&pk);
+            for v in &pk {
+                if let (Some(seq), Some(r), Some(sn)) = (v["seq"].as_u64(), v["recv_us"].as_u64(), v["sent_us"].as_u64()) {
+                    rows.push(vec![s(mode), s(p), s(x), s(y), s(seq), format!("{:.2}", (r as f64 - sn as f64) / 1000.0)]);
+                }
+            }
+            let rep = &send["report"];
+            let ack: Vec<f64> = rep["ack_ms"].as_array().map(|a| a.iter().filter_map(|v| v.as_f64()).collect()).unwrap_or_default();
+            let lost = MEDIA_PACKETS as usize - st.received.min(MEDIA_PACKETS as usize);
+            let ow = stat(&st.one_way);
+            streams.push(vec![s(mode), s(p), s(x), s(y), s(st.received), s(lost), f1(ow.median), ow.p95.map(f1).unwrap_or_default(),
+                f1(ow.max), format!("{:.2}", st.jitter_ms), s(st.reordered), jv(&rep["warmup_ms"]), f1(stat(&ack).median),
+                jv(&send["error"])]);
+            all_ow.extend(st.one_way.iter().copied());
+            jit.push(st.jitter_ms);
+            loss.push(100.0 * lost as f64 / MEDIA_PACKETS as f64);
+            acks.extend(ack);
+        }
+        close(&mut net, &run.dir.join("node_logs").join(mode)).await?;
+        let ow = stat(&all_ow);
+        let verdict = match ow.p95.unwrap_or(ow.max) {
+            x if x <= 150.0 => "укладывается в 150 мс (хорошо по ITU-T G.114)",
+            x if x <= 300.0 => "150–300 мс (терпимо)",
+            _ => "больше 300 мс — для голоса непригодно",
+        };
+        lines.push(format!("**{mode}**
+- задержка в одну сторону, мс: {}
+- джиттер (RFC 3550) по потокам, мс: {}
+                            - потери по потокам, %: {}
+- подтверждение пакета у отправителя (TUNNEL_ACK всей цепочки), мс: {}
+                            - вывод по p95: {verdict}", fmt(&all_ow), fmt(&jit), fmt(&loss), fmt(&acks)));
+    }
+    run.csv("streams.csv", &["mode", "pair", "from", "to", "received", "lost", "one_way_median_ms", "one_way_p95_ms",
+                             "one_way_max_ms", "jitter_ms", "reordered", "warmup_ms", "ack_median_ms", "error"], &streams)?;
+    run.finish(&["mode", "pair", "from", "to", "seq", "one_way_ms"], &rows,
+        &format!("Поток как у голоса: {MEDIA_PACKETS} пакетов по {MEDIA_SIZE} байт каждые {MEDIA_INTERVAL_MS} мс,                   {pairs} случайных пар, сеть {} узлов (звезда), сборка `{}`. Задержка — от отправки до прихода к получателю                   (общие часы стенда), включая ожидание в очереди туннеля. По потокам — `streams.csv`.
+
+{}",
+                 a.nodes, if cfg!(debug_assertions) { "debug" } else { "release" }, lines.join("
+
+")))?;
     Ok(true)
 }
 

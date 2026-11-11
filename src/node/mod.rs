@@ -31,16 +31,92 @@ pub struct Node {
     app_rx:          std::sync::Mutex<Option<tokio::sync::mpsc::Receiver<Vec<u8>>>>,
 }
 
+/// IPv4-адрес в локальной сети для `advertise_host: auto`.
+///
+/// Маршрут по умолчанию часто идёт через VPN/туннель (tun, wg, xray) — его адрес
+/// телефону недоступен. Поэтому сначала перебираем интерфейсы и берём частный адрес
+/// (10/8, 172.16/12, 192.168/16) на физическом Wi-Fi/Ethernet, и только затем —
+/// адрес интерфейса маршрута по умолчанию.
+pub fn lan_ip() -> Option<std::net::IpAddr> {
+    let mut best: Option<(u8, std::net::Ipv4Addr)> = None;
+    for (name, ip) in interfaces_v4() {
+        if ip.is_loopback() || ip.is_link_local() || ip.is_unspecified() { continue; }
+        let n = name.to_ascii_lowercase();
+        let virt = ["tun", "tap", "wg", "docker", "br-", "veth", "virbr", "vboxnet", "vmnet", "xray", "happ",
+                    "zt", "tailscale", "utun", "ppp", "dummy", "lxc", "cni", "flannel", "rmnet"]
+            .iter().any(|p| n.starts_with(p) || n.contains(p));
+        let phys = ["wl", "en", "eth", "ap", "swlan"].iter().any(|p| n.starts_with(p));
+        let rank = match (ip.is_private(), phys, virt) {
+            (true, true, false) => 3,
+            (true, false, false) => 2,
+            (_, _, false) => 1,
+            _ => 0,
+        };
+        if rank > 0 && best.map(|(r, _)| rank > r).unwrap_or(true) { best = Some((rank, ip)); }
+    }
+    if let Some((_, ip)) = best { return Some(ip.into()); }
+    // запасной путь: адрес интерфейса маршрута по умолчанию (UDP connect не отправляет пакетов)
+    let s = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+    s.connect("192.0.2.1:9").ok()?; // TEST-NET-1: только выбор интерфейса
+    let ip = s.local_addr().ok()?.ip();
+    (!ip.is_unspecified() && !ip.is_loopback()).then_some(ip)
+}
+
+/// (имя интерфейса, IPv4) всех поднятых интерфейсов.
+#[cfg(unix)]
+fn interfaces_v4() -> Vec<(String, std::net::Ipv4Addr)> {
+    let mut out = vec![];
+    // SAFETY: getifaddrs/freeifaddrs — стандартный POSIX API; список читается до освобождения.
+    unsafe {
+        let mut ifap: *mut libc::ifaddrs = std::ptr::null_mut();
+        if libc::getifaddrs(&mut ifap) != 0 { return out; }
+        let mut p = ifap;
+        while !p.is_null() {
+            let ifa = &*p;
+            let up = ifa.ifa_flags & (libc::IFF_UP as libc::c_uint) != 0;
+            if up && !ifa.ifa_addr.is_null() && (*ifa.ifa_addr).sa_family as i32 == libc::AF_INET {
+                let sin = &*(ifa.ifa_addr as *const libc::sockaddr_in);
+                let ip = std::net::Ipv4Addr::from(u32::from_be(sin.sin_addr.s_addr));
+                let name = std::ffi::CStr::from_ptr(ifa.ifa_name).to_string_lossy().into_owned();
+                out.push((name, ip));
+            }
+            p = ifa.ifa_next;
+        }
+        libc::freeifaddrs(ifap);
+    }
+    out
+}
+
+#[cfg(not(unix))]
+fn interfaces_v4() -> Vec<(String, std::net::Ipv4Addr)> { vec![] }
+
+/// Какой адрес сообщать пирам: конкретный listen_host; при 0.0.0.0 — advertise_host
+/// (`auto` — LAN-адрес) или 127.0.0.1.
+pub fn advertised_host(listen_host: &str, advertise: &str) -> String {
+    if listen_host != "0.0.0.0" { return listen_host.to_owned(); }
+    match advertise.trim() {
+        "" => "127.0.0.1".to_owned(),
+        "auto" => lan_ip().map(|ip| { tracing::info!("advertise auto → {ip}"); ip.to_string() }).unwrap_or_else(|| {
+            tracing::warn!("advertise_host=auto: LAN-адрес не найден, анонсируем 127.0.0.1");
+            "127.0.0.1".to_owned()
+        }),
+        h => h.to_owned(),
+    }
+}
+
 impl Node {
     pub fn new(identity: &NodeIdentity, cfg: Arc<NodeConfig>) -> Result<Self> {
-        // A3: 0.0.0.0 — адрес для bind, но не для анонса пирам (его нельзя набрать)
-        let adv_host = if cfg.node.listen_host == "0.0.0.0" { "127.0.0.1" } else { cfg.node.listen_host.as_str() };
+        // A3: 0.0.0.0 — адрес для bind, но не для анонса пирам (его нельзя набрать):
+        // анонсируем advertise_host (LAN-адрес для других устройств) или 127.0.0.1
+        let adv_host = advertised_host(&cfg.node.listen_host, &cfg.node.advertise_host);
         let addr_str = format!("{}:{}", adv_host, cfg.node.listen_port);
-        let own_contact = Contact::new(
+        let mut own_contact = Contact::new(
             identity.node_id,
             identity.public_key_bytes().to_vec(),
             addr_str.parse().context("listen addr parse")?,
         );
+        own_contact.relay = cfg.tunnel.relay;
+        if !cfg.tunnel.relay { info!("Режим «только клиент»: чужие туннели через этот узел не строятся"); }
         // Канал: TLS 1.3 (mutual, сертификат на identity-ключе) или собственное рукопожатие (§11.3)
         match cfg.security.channel.as_str() {
             "tls" => crate::rpc::install_tls(Arc::new(
@@ -49,6 +125,8 @@ impl Node {
             "ake" => crate::rpc::install_ake(Arc::new(crate::security::ake::AkeSecurity::from_identity(identity))),
             other => anyhow::bail!("security.channel = {other}: допустимо tls или ake"),
         }
+        // соединения между узлами: на каждый запрос или пул (transport.reuse_connections, ТЗ §6 допускает оба)
+        crate::rpc::pool::install(&cfg.transport);
         // узел на конкретном адресе (не 0.0.0.0) и соединяется с него — для сценария с ограниченным underlay
         if let Ok(ip) = cfg.node.listen_host.parse::<std::net::IpAddr>() {
             if !ip.is_unspecified() { crate::rpc::set_local_ip(ip); }
@@ -66,7 +144,8 @@ impl Node {
             identity.clone(), dht.clone(), tunnel_mgr.clone(),
             tunnel_mgr.forwarder.clone(), dht.metrics.clone(), cfg.clone(),
         ).with_history(crate::app::history::History::open(&cfg.node.state_dir))
-         .with_replay_log(&cfg.node.state_dir));
+         .with_replay_log(&cfg.node.state_dir)
+         .with_outbox(&cfg.node.state_dir));
         Ok(Self {
             dht, cfg, own_contact, tunnel_mgr, messenger, identity, routes,
             app_tx, app_rx: std::sync::Mutex::new(Some(app_rx)),
@@ -211,6 +290,25 @@ impl Node {
             });
         }
 
+        // ── Офлайн-доставка: проверка почтовых ящиков DHT и срок жизни своей очереди ───
+        if self.cfg.mailbox.enabled {
+            let msgr = self.messenger.clone();
+            let secs = self.cfg.mailbox.poll_interval_s.max(10);
+            let mut rx = shutdown_rx.clone();
+            tokio::spawn(async move {
+                // сначала дать узлу войти в сеть
+                tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+                msgr.republish_outbox().await;
+                let mut t = tokio::time::interval(std::time::Duration::from_secs(secs));
+                loop {
+                    tokio::select! {
+                        _ = t.tick() => { msgr.poll_mailboxes().await; msgr.expire_outbox().await; }
+                        _ = rx.changed() => break,
+                    }
+                }
+            });
+        }
+
         // ── Accept loop ───────────────────────────────────────────────────
         let mut rx_accept = shutdown_rx.clone();
         loop {
@@ -222,6 +320,12 @@ impl Node {
                             let handler  = self.make_handler();
                             let timeout  = self.cfg.transport.read_timeout_ms;
                             let handshake_ms = self.cfg.transport.connect_timeout_ms;
+                            // Режим соединений — один на всю сеть (ТЗ §6). Без пула — как раньше: простой между кадрами
+                            // не дольше READ_TIMEOUT_MS и запросы соединения по одному. С пулом — простой до
+                            // idle_timeout_ms и до 64 запросов соединения одновременно. Недочитанный кадр — всегда READ_TIMEOUT_MS.
+                            let pooled = self.cfg.transport.reuse_connections;
+                            let idle_ms = if pooled { self.cfg.transport.idle_timeout_ms } else { self.cfg.transport.read_timeout_ms };
+                            let inflight = if pooled { 64 } else { 1 };
                             let mut rx2  = shutdown_rx.clone();
                             tokio::spawn(async move {
                                 let hs_timeout = std::time::Duration::from_millis(handshake_ms);
@@ -241,7 +345,7 @@ impl Node {
                                             }
                                             None => FramedStream::new(Box::new(stream) as BoxedIo, timeout),
                                         } };
-                                        handle_conn(framed, peer_addr, handler).await
+                                        handle_conn(framed, peer_addr, handler, idle_ms, inflight).await
                                     } => {
                                         if let Err(e) = res {
                                             debug!("Connection {} closed: {}", peer_addr, e);
@@ -288,27 +392,55 @@ impl Node {
 }
 
 async fn handle_conn(
-    mut framed: FramedStream<BoxedIo>,
+    framed:  FramedStream<BoxedIo>,
     peer:    SocketAddr,
     handler: RpcHandler,
+    idle_ms: u64,
+    max_inflight: usize,
 ) -> Result<()> {
-    loop {
-        match framed.recv_item().await {
-            ReadItem::Frame(frame) => {
+    // Чтение и запись — в разных задачах, каждый запрос обрабатывается отдельно: соседи с пулом соединений
+    // шлют по одному соединению много запросов, и ретранслятор, ждущий ответа следующего узла, не должен
+    // задерживать остальные. Не больше `max_inflight` запросов одного соединения одновременно
+    // (без пула — 1: запросы соединения строго по очереди, как до введения пула).
+    let max_inflight = max_inflight.max(1);
+    let (io, rest, _) = framed.into_parts();
+    let (rh, mut wh) = tokio::io::split(io);
+    let mut rd = rest.with(rh);
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<Frame>(max_inflight.max(8));
+    let writer = tokio::spawn(async move {
+        while let Some(f) = rx.recv().await {
+            if crate::transport::connection::write_frame(&mut wh, &f).await.is_err() { break; }
+        }
+        use tokio::io::AsyncWriteExt;
+        let _ = wh.shutdown().await;
+    });
+    let handler = Arc::new(handler);
+    let slots = Arc::new(tokio::sync::Semaphore::new(max_inflight));
+    let res = loop {
+        match rd.next(idle_ms).await {
+            Some(ReadItem::Frame(frame)) => {
                 if frame.version != protocol::PROTOCOL_VERSION {
                     warn!("Bad version {} from {} — closing (§10 TZ)", frame.version, peer);
-                    let _ = framed.send(&Frame::error_version(frame.request_id)).await;
-                    return Err(anyhow::anyhow!("bad protocol version"));
+                    let _ = tx.send(Frame::error_version(frame.request_id)).await;
+                    break Err(anyhow::anyhow!("bad protocol version"));
                 }
-                if let Some(resp) = handler.handle(frame).await {
-                    framed.send(&resp).await.map_err(|e| anyhow::anyhow!("{e}"))?;
-                }
+                let Ok(permit) = slots.clone().acquire_owned().await else { break Ok(()) };
+                let (h, tx) = (handler.clone(), tx.clone());
+                tokio::spawn(async move {
+                    if let Some(resp) = h.handle(frame).await { let _ = tx.send(resp).await; }
+                    drop(permit);
+                });
             }
-            ReadItem::Error(e) => {
+            Some(ReadItem::Error(e)) => {
                 warn!("Frame error from {} (§10 TZ — closing): {e}", peer);
-                return Err(anyhow::anyhow!("protocol error: {e}"));
+                break Err(anyhow::anyhow!("protocol error: {e}"));
             }
-            ReadItem::Eof => return Ok(()),
+            Some(ReadItem::Eof) => break Ok(()),
+            None => { debug!("Connection {} idle — closing", peer); break Ok(()); }
         }
-    }
+    };
+    // ответы уже начатых запросов дописываются, затем соединение закрывается
+    drop(tx);
+    let _ = writer.await;
+    res
 }

@@ -45,9 +45,17 @@ enum Msg {
     Files(Value),
     Relays(Value),
     FileSent { name: String, res: Result<Value, String> },
+    Safety { peer: String, res: Result<Value, String> },
+    Deleted { peer: String, res: Result<Value, String> },
 }
 
 struct ChatMsg {
+    /// message_id (hex) — для отчётов о прочтении.
+    id: String,
+    /// Автор (в группе — кто написал).
+    author: String,
+    /// Получатель прочитал (отчёт о прочтении).
+    read: bool,
     mine: bool,
     text: String,
     ts: u64,
@@ -87,6 +95,11 @@ pub struct App {
     new_chat: String,
 
     local: Option<LocalNode>,
+    /// Вспомогательные ретрансляторы (Settings::helpers), запускаются, когда основной узел ответил.
+    helpers: Vec<LocalNode>,
+    helpers_pending: bool,
+    /// QR-код ссылки-приглашения: (ссылка, матрица модулей).
+    qr: Option<(String, usize, Vec<bool>)>,
     node_log: Vec<String>,
     log_at: Instant,
     toasts: Vec<Toast>,
@@ -107,6 +120,13 @@ pub struct App {
     f_target: String,
     f_path: String,
     f_sending: Vec<String>,
+    /// Группы из истории: `g:<id>` → (название, участники).
+    groups: HashMap<String, (String, Vec<String>)>,
+    /// Входящие, о прочтении которых уже сообщено (и вся история на момент запуска).
+    reported: std::collections::HashSet<String>,
+    typing_sent: HashMap<String, Instant>,
+    safety: Option<(String, Result<Value, String>)>,
+    confirm_delete: Option<String>,
 }
 
 fn now_ms() -> u64 { SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0) }
@@ -143,11 +163,12 @@ impl App {
             status: None, conn_err: None, history: vec![], history_loaded: false, chats: vec![],
             seen: HashMap::new(), active: None, pending: vec![], next_pending: 1,
             composer: String::new(), new_chat: String::new(),
-            local: None, node_log: vec![], log_at: Instant::now(), toasts: vec![],
+            local: None, helpers: vec![], helpers_pending: false, qr: None, node_log: vec![], log_at: Instant::now(), toasts: vec![],
             t_ping: String::new(), t_lookup: String::new(), t_route: String::new(),
             t_key: String::new(), t_val: String::new(), tool_out: None, route: None,
             c_name: String::new(), c_id: String::new(), alias_in: String::new(), j_filter: 0,
             files: Value::Null, relays: Value::Null, f_target: String::new(), f_path: String::new(), f_sending: vec![],
+            groups: HashMap::new(), reported: Default::default(), typing_sent: HashMap::new(), safety: None, confirm_delete: None,
         };
         if app.s.mode == Mode::Attach || app.s.autostart { app.connect(); }
         app
@@ -173,7 +194,17 @@ impl App {
     }
 
     fn display_name(&self, id: &str) -> String {
+        if let Some((name, _)) = self.groups.get(id) { return format!("👥 {name}"); }
+        if id == self.my_id() { return "Вы".into(); }
         self.s.contact_name(id).map(str::to_owned).unwrap_or_else(|| format!("{}…", short(id)))
+    }
+
+    fn is_group(id: &str) -> bool { id.starts_with("g:") }
+
+    /// Собеседник печатает (по данным узла: `/api/status` → `typing`).
+    fn typing(&self, peer: &str) -> bool {
+        let now = now_ms();
+        self.status.as_ref().and_then(|s| s["typing"][peer].as_u64()).map(|t| t > now).unwrap_or(false)
     }
 
     fn connect(&mut self) {
@@ -188,6 +219,7 @@ impl App {
                 Ok(n) => {
                     self.toast(format!("Узел запущен (pid {})", n.pid()), GREEN);
                     self.local = Some(n);
+                    self.helpers_pending = self.s.helpers > 0;
                     self.port.store(self.s.gui_port, Ordering::Relaxed);
                 }
                 Err(e) => self.toast(e, RED),
@@ -200,6 +232,8 @@ impl App {
     fn disconnect(&mut self) {
         self.port.store(0, Ordering::Relaxed);
         if let Some(mut n) = self.local.take() { n.stop(); }
+        self.helpers.clear(); // Drop останавливает процессы
+        self.helpers_pending = false;
         self.status = None;
         self.conn_err = None;
         self.history.clear();
@@ -215,7 +249,16 @@ impl App {
                 Msg::History(h) => { if self.port.load(Ordering::Relaxed) != 0 { self.history = h; self.rebuild_chats(); } }
                 Msg::Sent { pending, res } => {
                     self.pending.retain(|p| p.id != pending);
-                    if let Err(e) = res { self.toast(format!("Не доставлено: {e}"), RED); }
+                    match res {
+                        Err(e) => self.toast(format!("Не доставлено: {e}"), RED),
+                        Ok(v) if v["queued"].as_bool() == Some(true) =>
+                            self.toast("Получатель недоступен — сообщение в почтовом ящике DHT, он заберёт его сам", YELLOW),
+                        Ok(v) if v["results"].is_array() => {
+                            let bad = v["results"].as_array().unwrap().iter().filter(|r| r["status"] != "delivered").count();
+                            if bad > 0 { self.toast(format!("Группа: не доставлено сразу {bad} участникам"), YELLOW); }
+                        }
+                        _ => {}
+                    }
                 }
                 Msg::Tool { title, res } => self.tool_out = Some((title, res)),
                 Msg::Route { peer, res } => self.route = Some((peer, res)),
@@ -236,7 +279,7 @@ impl App {
                     Err(e) => self.toast(format!("@{alias}: {e}"), RED),
                 },
                 Msg::Files(v) => self.files = v,
-                Msg::Relays(v) => self.relays = v,
+                Msg::Relays(v) => if !v.is_null() { self.relays = v },
                 Msg::FileSent { name, res } => {
                     self.f_sending.retain(|n| *n != name);
                     match api::ok(res) {
@@ -248,6 +291,14 @@ impl App {
                         Err(e) => self.toast(format!("«{name}» не доставлен: {e}"), RED),
                     }
                 }
+                Msg::Safety { peer, res } => self.safety = Some((peer, res)),
+                Msg::Deleted { peer, res } => match api::ok(res) {
+                    Ok(v) => {
+                        self.toast(format!("Переписка удалена ({} записей)", api::s(&v, "removed")), GREEN);
+                        if self.active.as_deref() == Some(peer.as_str()) { self.active = None; }
+                    }
+                    Err(e) => self.toast(e, RED),
+                },
                 Msg::Alias { name, res } => match api::ok(res) {
                     Ok(v) => {
                         self.toast(format!("Псевдоним @{name} опубликован ({} реплик)", api::s(&v, "stored_on")), GREEN);
@@ -262,15 +313,28 @@ impl App {
 
     fn rebuild_chats(&mut self) {
         let mut map: BTreeMap<String, Chat> = BTreeMap::new();
+        let first_load = !self.history_loaded;
         for e in &self.history {
-            let peer = api::s(e, "peer");
-            if peer.is_empty() { continue; }
+            let author = api::s(e, "peer");
+            if author.is_empty() { continue; }
+            let group = e["group"].as_str().map(str::to_owned);
+            let peer = match &group { Some(g) => format!("g:{g}"), None => author.clone() };
+            if let Some(g) = &group {
+                let members: Vec<String> = e["members"].as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_owned)).collect())
+                    .unwrap_or_default();
+                let name = e["group_name"].as_str().unwrap_or("Группа").to_owned();
+                if !members.is_empty() { self.groups.insert(format!("g:{g}"), (name, members)); }
+            }
             let mine = api::s(e, "dir") == "out";
             let ts = api::u(e, "ts_ms").unwrap_or(0);
+            let id = api::s(e, "message_id");
+            // вся история на момент запуска считается уже прочитанной — отчёты только о новом
+            if first_load && !mine { self.reported.insert(id.clone()); }
             let c = map.entry(peer.clone()).or_insert(Chat { peer, msgs: vec![], last_ts: 0, incoming: 0 });
             c.last_ts = c.last_ts.max(ts);
             if !mine { c.incoming += 1; }
             c.msgs.push(ChatMsg {
+                id, author, read: api::u(e, "read_ms").is_some(),
                 mine, ts,
                 text: api::s(e, "text"),
                 status: api::s(e, "status"),
@@ -344,17 +408,49 @@ impl App {
         let (Some(peer), text) = (self.active.clone(), self.composer.trim().to_owned()) else { return };
         if text.is_empty() { return; }
         self.composer.clear();
+        self.typing_sent.remove(&peer);
         let id = self.next_pending;
         self.next_pending += 1;
         self.pending.push(Pending { id, peer: peer.clone(), text: text.clone(), ts: now_ms() });
         let tx = self.tx.clone();
+        let me = self.my_id();
+        let group = self.groups.get(&peer).cloned();
         self.bg(move |p| {
-            let res = api::ok(api::post(p, "/api/send", &[("target", &peer), ("text", &text)]));
+            let res = match group {
+                Some((name, members)) => {
+                    let m: Vec<String> = members.into_iter().filter(|x| *x != me).collect();
+                    let gid = peer.trim_start_matches("g:").to_owned();
+                    api::ok(api::post(p, "/api/send_group", &[("group_id", &gid), ("name", &name),
+                                                             ("members", &m.join(",")), ("text", &text)]))
+                }
+                None => api::ok(api::post(p, "/api/send", &[("target", &peer), ("text", &text)])),
+            };
             if let Ok(h) = api::get(p, "/api/history", &[("limit", "1000")]) {
                 let _ = tx.send(Msg::History(h["entries"].as_array().cloned().unwrap_or_default()));
             }
             Msg::Sent { pending: id, res }
         });
+    }
+
+    /// Отчёт о прочтении новых входящих в открытой беседе (если включено в настройках).
+    fn report_read(&mut self, peer: &str) {
+        if !self.s.send_receipts || Self::is_group(peer) { return; }
+        let Some(c) = self.chats.iter().find(|c| c.peer == peer) else { return };
+        let ids: Vec<String> = c.msgs.iter().filter(|m| !m.mine && m.id.len() == 32 && m.status == "received" && !self.reported.contains(&m.id))
+            .map(|m| m.id.clone()).collect();
+        if ids.is_empty() { return; }
+        self.reported.extend(ids.iter().cloned());
+        let peer = peer.to_owned();
+        self.bg(move |p| { let _ = api::post(p, "/api/read", &[("target", &peer), ("ids", &ids.join(","))]); Msg::Relays(Value::Null) });
+    }
+
+    /// «Печатает…»: не чаще раза в 4 с, только в личных беседах.
+    fn report_typing(&mut self, peer: &str) {
+        if !self.s.send_typing || Self::is_group(peer) { return; }
+        if self.typing_sent.get(peer).is_some_and(|t| t.elapsed() < Duration::from_secs(4)) { return; }
+        self.typing_sent.insert(peer.to_owned(), Instant::now());
+        let peer = peer.to_owned();
+        self.bg(move |p| { let _ = api::post(p, "/api/typing", &[("target", &peer)]); Msg::Relays(Value::Null) });
     }
 
     fn request_route(&self, peer: String) {
@@ -401,6 +497,18 @@ impl eframe::App for App {
                 self.toast("Процесс узла завершился — см. журнал на вкладке «Подключение»", RED);
             }
         }
+        if self.helpers_pending && self.local.is_some() && self.connected() {
+            self.helpers_pending = false;
+            for i in 1..=self.s.helpers as u16 {
+                match LocalNode::start_helper(&self.s, i) {
+                    Ok(n) => self.helpers.push(n),
+                    Err(e) => { self.toast(format!("ретранслятор {i}: {e}"), RED); break; }
+                }
+            }
+            if !self.helpers.is_empty() {
+                self.toast(format!("Запущено ретрансляторов: {}", self.helpers.len()), GREEN);
+            }
+        }
         self.rail(ctx);
         match self.tab {
             Tab::Chats => self.chats_tab(ctx),
@@ -427,6 +535,7 @@ impl eframe::App for App {
     /// Закрытие окна: остановить узел, запущенный приложением.
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         if let Some(mut n) = self.local.take() { n.stop(); }
+        self.helpers.clear();
     }
 }
 
@@ -565,12 +674,38 @@ impl App {
                     theme::avatar(ui, &peer, &name, 40.0);
                     ui.vertical(|ui| {
                         ui.spacing_mut().item_spacing.y = 0.0;
-                        ui.label(RichText::new(&name).size(17.0).strong());
-                        ui.label(RichText::new(&peer).size(11.5).color(MUTED).monospace());
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new(&name).size(17.0).strong());
+                            if self.s.verified.contains(&peer) { theme::pill(ui, "сверен", GREEN); }
+                        });
+                        if self.typing(&peer) {
+                            ui.label(RichText::new("печатает…").size(12.0).color(ACCENT));
+                        } else if let Some((_, members)) = self.groups.get(&peer) {
+                            let names: Vec<String> = members.iter().map(|m| self.display_name(m)).collect();
+                            ui.label(RichText::new(names.join(", ")).size(11.5).color(MUTED));
+                        } else {
+                            ui.label(RichText::new(&peer).size(11.5).color(MUTED).monospace());
+                        }
                     });
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if ui.button("Маршрут").on_hover_text("Цепочка ретрансляторов текущего туннеля").clicked() {
-                            self.request_route(peer.clone());
+                        if self.confirm_delete.as_deref() == Some(peer.as_str()) {
+                            if ui.add(danger("Удалить переписку?")).clicked() {
+                                let pp = peer.clone();
+                                self.confirm_delete = None;
+                                self.bg(move |p| { let res = api::post(p, "/api/history/delete", &[("peer", &pp)]); Msg::Deleted { peer: pp, res } });
+                            }
+                            if ui.button("Отмена").clicked() { self.confirm_delete = None; }
+                        } else if ui.button("🗑").on_hover_text("Удалить переписку на этом устройстве").clicked() {
+                            self.confirm_delete = Some(peer.clone());
+                        }
+                        if !Self::is_group(&peer) {
+                            if ui.button("Номер безопасности").on_hover_text("Сверить ключ собеседника лично").clicked() {
+                                let pp = peer.clone();
+                                self.bg(move |p| { let res = api::get(p, "/api/safety", &[("peer", &pp)]); Msg::Safety { peer: pp, res } });
+                            }
+                            if ui.button("Маршрут").on_hover_text("Цепочка ретрансляторов текущего туннеля").clicked() {
+                                self.request_route(peer.clone());
+                            }
                         }
                         if ui.button("📋").on_hover_text("Скопировать NodeID").clicked() {
                             ui.ctx().copy_text(peer.clone());
@@ -588,6 +723,33 @@ impl App {
                         route_chain(ui, r);
                     }
                 }
+                let mut verify: Option<bool> = None;
+                if let Some((sp, r)) = &self.safety {
+                    if *sp == peer {
+                        ui.add_space(6.0);
+                        match r {
+                            Ok(v) => {
+                                ui.label(RichText::new("Номер безопасности — у собеседника на экране должны быть те же цифры:").size(12.5).color(MUTED));
+                                let groups: Vec<&str> = v["safety"].as_str().unwrap_or("").split(' ').collect();
+                                for row in groups.chunks(6) {
+                                    ui.label(RichText::new(row.join("  ")).monospace().size(17.0));
+                                }
+                                let ok = self.s.verified.contains(&peer);
+                                ui.horizontal(|ui| {
+                                    if ui.button(if ok { "Снять отметку «сверен»" } else { "✔ Совпадает — отметить сверенным" }).clicked() { verify = Some(!ok); }
+                                    if ui.button("Скрыть").clicked() { verify = Some(ok); }
+                                });
+                            }
+                            Err(e) => { ui.label(RichText::new(e).color(RED)); }
+                        }
+                    }
+                }
+                if let Some(v) = verify {
+                    self.s.verified.retain(|x| *x != peer);
+                    if v { self.s.verified.push(peer.clone()); }
+                    let _ = self.s.save();
+                    self.safety = None;
+                }
             });
 
         egui::TopBottomPanel::bottom("composer")
@@ -599,6 +761,7 @@ impl App {
                         .desired_width(ui.available_width() - 118.0 - ui.spacing().item_spacing.x - 24.0)
                         .margin(Margin::symmetric(12, 10)));
                     let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                    if r.changed() && !self.composer.trim().is_empty() { self.report_typing(&peer); }
                     if ui.add_sized([118.0, 40.0], primary("Отправить →")).clicked() || enter {
                         self.send();
                         r.request_focus();
@@ -615,22 +778,29 @@ impl App {
                         ui.add_space(40.0);
                         ui.vertical_centered(|ui| ui.label(RichText::new("Сообщений пока нет — напишите первым").color(MUTED)));
                     }
+                    let group = Self::is_group(&peer);
                     if let Some(c) = chat {
-                        for m in &c.msgs { self.bubble(ui, m); }
+                        for m in &c.msgs { self.bubble(ui, m, group); }
                     }
                     for p in self.pending.iter().filter(|p| p.peer == peer) {
-                        let m = ChatMsg { mine: true, text: p.text.clone(), ts: p.ts, status: "pending".into(),
+                        let m = ChatMsg { id: String::new(), author: String::new(), read: false,
+                                          mine: true, text: p.text.clone(), ts: p.ts, status: "pending".into(),
                                           rtt: None, lookup: None, build: None, send: None, error: None };
-                        self.bubble(ui, &m);
+                        self.bubble(ui, &m, group);
                     }
+                    if self.typing(&peer) { ui.label(RichText::new("печатает…").color(ACCENT).size(13.0)); }
                 });
             });
+        if ui.ctx().input(|i| i.focused) { self.report_read(&peer); }
     }
 
-    fn bubble(&self, ui: &mut egui::Ui, m: &ChatMsg) {
+    fn bubble(&self, ui: &mut egui::Ui, m: &ChatMsg, group: bool) {
         let max_w = (ui.available_width() * 0.66).max(240.0);
         let text = if m.text.is_empty() { "—" } else { m.text.as_str() };
         let (icon, icon_color) = match m.status.as_str() {
+            _ if m.read => ("✔✔ прочитано", ACCENT),
+            "queued" => ("🕓 в почтовом ящике", YELLOW),
+            "partial" => ("✔ не всем", YELLOW),
             "delivered" => ("✔✔", GREEN),
             "sent" => ("✔", TEXT),
             "pending" => ("⏳", YELLOW),
@@ -658,6 +828,9 @@ impl App {
                     ui.vertical(|ui| {
                         ui.spacing_mut().item_spacing.y = 2.0;
                         ui.spacing_mut().interact_size.y = 14.0;
+                        if group && !m.mine {
+                            ui.label(RichText::new(self.display_name(&m.author)).size(12.5).strong().color(theme::color_for(&m.author)));
+                        }
                         ui.add(egui::Label::new(RichText::new(text).color(TEXT)).wrap());
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 6.0;
@@ -677,6 +850,8 @@ impl App {
                         m.build.map(|b| format!("построен за {b} мс")).unwrap_or_else(|| "уже был установлен".into()),
                         ms(m.send)),
                     "pending" => "Отправляется: lookup → туннель → E2E → ожидание APP_ACK".into(),
+                    "queued" => format!("Получатель был недоступен — сообщение лежит в почтовом ящике DHT, он заберёт его сам.\n{}",
+                                        m.error.clone().unwrap_or_default()),
                     "sent" => "Отправлено без ожидания подтверждения".into(),
                     _ => format!("Не доставлено: {}", m.error.clone().unwrap_or_default()),
                 };
@@ -722,6 +897,14 @@ impl App {
                 }
             });
             ui.label(RichText::new("Псевдоним — подписанная запись в DHT: по @имени собеседники найдут ваш NodeID. Занятое имя перезаписать нельзя.").size(12.5).color(MUTED));
+        });
+        ui.add_space(12.0);
+
+        card(ui, |ui| {
+            section_title(ui, "Приватность");
+            let mut changed = ui.checkbox(&mut self.s.send_typing, "Сообщать собеседнику «печатает…» (раз в 4 с, только по открытому туннелю)").changed();
+            changed |= ui.checkbox(&mut self.s.send_receipts, "Отправлять отчёты о прочтении").changed();
+            if changed { let _ = self.s.save(); }
         });
         ui.add_space(12.0);
 
@@ -1146,6 +1329,22 @@ impl App {
                         });
                         ui.end_row();
                         ui.label("Автозапуск"); ui.checkbox(&mut self.s.autostart, "запускать узел при старте приложения"); ui.end_row();
+                        ui.label("Локальная сеть");
+                        ui.vertical(|ui| {
+                            ui.checkbox(&mut self.s.lan, "доступен с других устройств (телефон, другой ПК)");
+                            ui.label(RichText::new("узел сообщает пирам свой LAN-адрес (--advertise auto); порт P2P должен быть открыт в брандмауэре")
+                                .size(12.0).color(MUTED));
+                        });
+                        ui.end_row();
+                        ui.label("Ретрансляторы");
+                        ui.vertical(|ui| {
+                            ui.add(egui::DragValue::new(&mut self.s.helpers).range(0..=6).suffix(" шт."));
+                            ui.label(RichText::new(format!(
+                                "запустить рядом вспомогательные узлы (порты {}…): туннелю нужно ≥ 2 ретранслятора, \
+                                 а в сети «телефон + компьютер» их больше нет", self.s.listen_port.saturating_add(1)))
+                                .size(12.0).color(MUTED));
+                        });
+                        ui.end_row();
                     }
                     Mode::Attach => {
                         ui.label("Порт API узла"); ui.add(egui::DragValue::new(&mut self.s.attach_port).range(1..=65535)); ui.end_row();
@@ -1171,6 +1370,8 @@ impl App {
             ui.label(RichText::new(line.1).color(line.0).size(12.5));
         });
 
+        if self.connected() { self.phone_card(ui); }
+
         if let Some(n) = &self.local {
             if self.log_at.elapsed() > Duration::from_millis(1500) {
                 self.node_log = n.log_tail(300);
@@ -1191,6 +1392,62 @@ impl App {
                 });
             });
         }
+    }
+
+    /// Подключение телефона: QR со ссылкой-приглашением (адрес для bootstrap + NodeID).
+    fn phone_card(&mut self, ui: &mut egui::Ui) {
+        let link = self.status.as_ref().map(|s| api::s(s, "link")).unwrap_or_default();
+        if link.is_empty() { return; }
+        if self.qr.as_ref().map(|q| q.0 != link).unwrap_or(true) {
+            self.qr = qrcode::QrCode::new(link.as_bytes()).ok().map(|c| {
+                let w = c.width();
+                (link.clone(), w, c.to_colors().into_iter().map(|m| m == qrcode::Color::Dark).collect())
+            });
+        }
+        let local_only = link.contains("://127.");
+        ui.add_space(12.0);
+        card(ui, |ui| {
+            section_title(ui, "Подключить телефон");
+            ui.horizontal_top(|ui| {
+                if let Some((_, w, cells)) = &self.qr {
+                    let px = 5.0;
+                    let quiet = 4.0 * px;
+                    let side = *w as f32 * px + 2.0 * quiet;
+                    let (rect, _) = ui.allocate_exact_size(Vec2::splat(side), egui::Sense::hover());
+                    let p = ui.painter();
+                    p.rect_filled(rect, CornerRadius::same(8), Color32::WHITE);
+                    for (i, dark) in cells.iter().enumerate() {
+                        if !*dark { continue; }
+                        let (x, y) = ((i % w) as f32, (i / w) as f32);
+                        let min = rect.min + Vec2::new(quiet + x * px, quiet + y * px);
+                        p.rect_filled(egui::Rect::from_min_size(min, Vec2::splat(px)), CornerRadius::ZERO, Color32::BLACK);
+                    }
+                }
+                ui.add_space(12.0);
+                ui.vertical(|ui| {
+                    ui.label("В приложении на Android: вкладка «Узел» → «Сканировать QR» (или вставьте ссылку).");
+                    ui.label(RichText::new("Телефон возьмёт этот узел как bootstrap и добавит его в контакты.").color(MUTED).size(13.0));
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(&link).monospace().size(12.0));
+                        if ui.small_button("Копировать").clicked() {
+                            ui.ctx().copy_text(link.clone());
+                            self.toast("Ссылка скопирована", GREEN);
+                        }
+                    });
+                    ui.add_space(6.0);
+                    if local_only {
+                        pill(ui, "узел анонсирует 127.0.0.1 — включите «Локальная сеть» и перезапустите", YELLOW);
+                    } else {
+                        pill(ui, "доступен в локальной сети", GREEN);
+                    }
+                    let relays = self.helpers.len();
+                    let peers = self.status.as_ref().and_then(|s| s["routing"]["total_contacts"].as_u64()).unwrap_or(0) as usize;
+                    ui.label(RichText::new(format!("ретрансляторов запущено приложением: {relays}; известно пиров: {peers}"))
+                        .size(12.5).color(if relays + peers >= 3 { MUTED } else { YELLOW }));
+                });
+            });
+        });
     }
 
     fn toasts_ui(&mut self, ctx: &egui::Context) {

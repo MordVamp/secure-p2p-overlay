@@ -24,7 +24,8 @@ fn ident(tag: &str) -> NodeIdentity { NodeIdentity::load_or_create(&tmp(tag)).un
 fn entry(i: u64) -> HistoryEntry {
     HistoryEntry { ts_ms: i, dir: "out".into(), peer: "ab".into(), message_id: format!("{i}"),
                    status: "delivered".into(), text: Some(format!("m{i}")), rtt_ms: Some(i), error: None,
-                   lookup_ms: None, tunnel_build_ms: None, tunnel_send_ms: Some(i) }
+                   lookup_ms: None, tunnel_build_ms: None, tunnel_send_ms: Some(i),
+                   group: None, group_name: None, members: None, read_ms: None }
 }
 
 #[tokio::test]

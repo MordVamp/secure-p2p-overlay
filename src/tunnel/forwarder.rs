@@ -138,22 +138,10 @@ impl TunnelForwarder {
                 payload:    Bytes::from(encode(&payload)?),
             };
 
-            let mut stream = crate::rpc::dial_expect(
-                next_hop_addr,
-                self.cfg.transport.connect_timeout_ms,
-                self.cfg.transport.read_timeout_ms,
-                next_hop_id.as_ref(),
-            ).await?;
-
-            stream.send(&frame).await.map_err(|e| anyhow::anyhow!("{e}"))?;
-
-            // Ждём ACK
-            use tokio::time::{timeout, Duration};
-            let ack_frame = timeout(
-                Duration::from_millis(self.cfg.tunnel.ack_timeout_ms),
-                stream.recv(),
-            ).await
-                .map_err(|_| anyhow::anyhow!("first hop {next_hop_addr} ACK timeout for seq={seq}"))??;
+            // новое соединение или из пула (transport.reuse_connections); ждём ACK всей цепочки
+            let (ack_frame, _) = crate::rpc::pool::request(crate::rpc::pool::Scope::Tunnel, next_hop_addr, next_hop_id.as_ref(), frame,
+                self.cfg.transport.connect_timeout_ms, self.cfg.transport.read_timeout_ms, self.cfg.tunnel.ack_timeout_ms).await?
+                .ok_or_else(|| anyhow::anyhow!("first hop {next_hop_addr} ACK timeout for seq={seq}"))?;
 
             // relay отвечает ERROR, если не смог переслать кадр дальше по цепочке; описание — причина с дальнего конца
             if ack_frame.msg_type != MsgType::TunnelAck || ack_frame.request_id != request_id {

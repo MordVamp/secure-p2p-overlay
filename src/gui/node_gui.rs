@@ -14,6 +14,27 @@ use crate::types::{now_ms, NodeId};
 
 const PAGE: &str = include_str!("node.html");
 
+/// Номер безопасности пары узлов (как «safety number»): 60 цифр, одинаковые у обоих собеседников.
+/// Совпадение при личной сверке значит, что ключ собеседника не подменён (NodeID = SHA-256 ключа).
+pub fn safety_number(a: &NodeId, b: &NodeId) -> String {
+    use sha2::{Digest, Sha256};
+    let (lo, hi) = if a.0 <= b.0 { (a, b) } else { (b, a) };
+    let mut h = Sha256::new();
+    h.update(b"p2p-overlay-safety-v1");
+    h.update(lo.0);
+    h.update(hi.0);
+    let d = h.finalize();
+    // 6 кусков по 5 байт → 10-значные числа → 12 групп по 5 цифр
+    let mut groups = vec![];
+    for c in d[..30].chunks(5) {
+        let n = c.iter().fold(0u64, |acc, &x| (acc << 8) | x as u64) % 10_000_000_000;
+        let s = format!("{n:010}");
+        groups.push(s[..5].to_owned());
+        groups.push(s[5..].to_owned());
+    }
+    groups.join(" ")
+}
+
 fn parse_node_id(s: &str) -> Result<NodeId, String> {
     let b = hex::decode(s.trim()).map_err(|_| "target: ожидается hex".to_string())?;
     let arr: [u8; 32] = b.try_into().map_err(|_| "target: нужно 64 hex-символа".to_string())?;
@@ -40,9 +61,13 @@ async fn route(node: Arc<Node>, req: Request) -> Response {
             let routing = node.dht.export_routing_table().await;
             let tunnels = node.tunnel_mgr.export_json().await;
             let store   = node.dht.export_store().await;
+            let pool    = crate::rpc::pool::stats().await;
             Response::json(json!({
                 "node_id": node.own_contact.node_id.to_hex(),
                 "addr":    format!("{}:{}", node.own_contact.host, node.own_contact.port),
+                // ссылка-приглашение (QR в desktop/Android): адрес для bootstrap + NodeID для контакта
+                "link":    format!("p2p-overlay://{}:{}?id={}", node.own_contact.host, node.own_contact.port,
+                                   node.own_contact.node_id.to_hex()),
                 "level":   format!("{:?}", node.cfg.level),
                 "channel": node.cfg.security.channel,
                 "k":       node.cfg.dht.k_bucket_size,
@@ -52,7 +77,17 @@ async fn route(node: Arc<Node>, req: Request) -> Response {
                 "store":   store,
                 "bootstrap": node.dht.bootstrap_json(),
                 // что умеет узел: клиенты (desktop-приложение) включают только поддержанные разделы
-                "features": { "messages": true, "aliases": true, "history": true, "files": true, "calls": false },
+                "features": { "messages": true, "aliases": true, "history": true, "files": true, "calls": false,
+                              "events": true, "typing": true, "read_receipts": true, "groups": true,
+                              "mailbox": node.cfg.mailbox.enabled },
+                // режим «только клиент»: узел не ретранслирует чужие туннели
+                "relay":   node.cfg.tunnel.relay,
+                "typing":  node.messenger.typing_now().await,
+                "outbox":  node.messenger.outbox_summary().await,
+                "events_seq": node.messenger.events.last_seq(),
+                // соединения между узлами: пул (transport.reuse_connections) — открыто всего / запросов по открытому / открыто сейчас
+                "conn_pool": { "enabled": crate::rpc::pool::enabled(), "scope": crate::rpc::pool::scope(),
+                               "opened": pool.0, "reused": pool.1, "open": pool.2 },
                 "now_ms":  now_ms(),
             }))
         }
@@ -118,11 +153,12 @@ async fn route(node: Arc<Node>, req: Request) -> Response {
             // ждём APP_ACK: «доставлено» = получатель расшифровал, проверил подпись и подтвердил
             match node.messenger.send_text_acked(target, text, std::time::Duration::from_secs(8)).await {
                 Ok(r) => Response::json(json!({
-                    "ok": true, "delivered": true, "target": target.to_hex(), "message_id": r.message_id, "rtt_ms": r.rtt_ms,
+                    "ok": true, "delivered": !r.queued, "target": target.to_hex(), "message_id": r.message_id, "rtt_ms": r.rtt_ms,
                     "lookup_ms": r.lookup_ms, "tunnel_reused": r.tunnel_build_ms.is_none(),
                     "tunnel_build_ms": r.tunnel_build_ms, "tunnel_send_ms": r.tunnel_send_ms,
                     "rebuilt_after_failure": r.rebuilt_after_failure, "failover": r.failover,
                     "detect_ms": r.detect_ms, "switch_ms": r.switch_ms, "wire_bytes": r.wire_bytes,
+                    "queued": r.queued, "queued_reason": r.queued_reason,
                 })),
                 Err(e)  => Response::json(json!({ "ok": false, "delivered": false, "error": e.to_string() })),
             }
@@ -136,6 +172,83 @@ async fn route(node: Arc<Node>, req: Request) -> Response {
                 Ok(r)  => Response::json(json!({ "ok": true, "report": r })),
                 Err(e) => Response::json(json!({ "ok": false, "error": e.to_string() })),
             }
+        }
+        ("/api/events", false) => {
+            let since = req.query.get("since").and_then(|s| s.parse().ok()).unwrap_or(0u64);
+            let wait = req.query.get("timeout").and_then(|s| s.parse().ok()).unwrap_or(25u64).min(30);
+            let (last, ev) = node.messenger.events.wait(since, std::time::Duration::from_secs(wait)).await;
+            Response::json(json!({ "seq": last, "events": ev }))
+        }
+        ("/api/typing", true) => {
+            let target = match resolve_target(&node, req.query.get("target").map(|s| s.as_str()).unwrap_or("")).await {
+                Ok(t) => t, Err(e) => return Response::error(400, &e),
+            };
+            match node.messenger.send_typing(target).await {
+                Ok(sent) => Response::json(json!({ "ok": true, "sent": sent })),
+                Err(e) => Response::json(json!({ "ok": false, "error": e.to_string() })),
+            }
+        }
+        ("/api/read", true) => {
+            let target = match resolve_target(&node, req.query.get("target").map(|s| s.as_str()).unwrap_or("")).await {
+                Ok(t) => t, Err(e) => return Response::error(400, &e),
+            };
+            let ids: Vec<String> = req.query.get("ids").map(|s| s.split(',').map(|x| x.trim().to_owned())
+                .filter(|x| !x.is_empty()).collect()).unwrap_or_default();
+            match node.messenger.send_read(target, &ids).await {
+                Ok(()) => Response::json(json!({ "ok": true })),
+                Err(e) => Response::json(json!({ "ok": false, "error": e.to_string() })),
+            }
+        }
+        ("/api/send_group", true) => {
+            let (Some(gid), Some(text)) = (req.query.get("group_id"), req.query.get("text").filter(|t| !t.is_empty()))
+                else { return Response::error(400, "нужны group_id и text"); };
+            let name = req.query.get("name").cloned().unwrap_or_default();
+            let mut members = vec![];
+            for m in req.query.get("members").map(|s| s.as_str()).unwrap_or("").split(',').filter(|m| !m.trim().is_empty()) {
+                match parse_node_id(m) { Ok(id) => members.push(id), Err(e) => return Response::error(400, &e) }
+            }
+            if members.is_empty() || members.len() > 32 { return Response::error(400, "участников: 1..32"); }
+            match node.messenger.send_group(gid, &name, &members, text, std::time::Duration::from_secs(8)).await {
+                Ok(r) => Response::json(json!({ "ok": true, "results": r })),
+                Err(e) => Response::json(json!({ "ok": false, "error": e.to_string() })),
+            }
+        }
+        ("/api/history/delete", true) => {
+            let Some(peer) = req.query.get("peer").filter(|p| !p.is_empty()) else { return Response::error(400, "нужен peer"); };
+            match node.messenger.delete_history(peer).await {
+                Ok(n) => Response::json(json!({ "ok": true, "removed": n })),
+                Err(e) => Response::json(json!({ "ok": false, "error": e.to_string() })),
+            }
+        }
+        ("/api/watch", true) => {
+            for p in req.query.get("peers").map(|s| s.as_str()).unwrap_or("").split(',').filter(|p| !p.trim().is_empty()) {
+                if let Ok(id) = parse_node_id(p) { node.messenger.watch_peer(id).await; }
+            }
+            Response::json(json!({ "ok": true }))
+        }
+        ("/api/mailbox/poll", true) => Response::json(json!({ "ok": true, "received": node.messenger.poll_mailboxes().await })),
+        ("/api/safety", false) => {
+            let peer = match parse_node_id(req.query.get("peer").map(|s| s.as_str()).unwrap_or("")) {
+                Ok(t) => t, Err(e) => return Response::error(400, &e),
+            };
+            Response::json(json!({ "peer": peer.to_hex(), "safety": safety_number(&node.own_contact.node_id, &peer) }))
+        }
+        // план звонков, шаг 0: измерительный поток (как голос — 50 пакетов/с) и результаты у получателя
+        ("/api/probe", true) => {
+            let target = match resolve_target(&node, req.query.get("target").map(|s| s.as_str()).unwrap_or("")).await {
+                Ok(t) => t, Err(e) => return Response::error(400, &e),
+            };
+            let q = |k: &str, d: u64| req.query.get(k).and_then(|v| v.parse().ok()).unwrap_or(d);
+            let stream = req.query.get("stream").cloned().unwrap_or_else(|| "probe".into());
+            let (count, interval, size) = (q("count", 250).min(5000) as u32, q("interval_ms", 20).max(1), q("size", 80) as usize);
+            match node.messenger.probe_stream(target, &stream, count, interval, size).await {
+                Ok(v) => Response::json(json!({ "ok": true, "report": v })),
+                Err(e) => Response::json(json!({ "ok": false, "error": e.to_string() })),
+            }
+        }
+        ("/api/probe_results", false) => {
+            let stream = req.query.get("stream").cloned().unwrap_or_else(|| "probe".into());
+            Response::json(json!({ "stream": stream, "packets": node.messenger.probe_results(&stream).await }))
         }
         ("/api/relays", false) => Response::json(json!({ "profiles": node.tunnel_mgr.profiles_json().await })),
         ("/api/files", false) => {

@@ -1,7 +1,10 @@
 //! gui/http.rs — минимальный HTTP/1.1 сервер без внешних зависимостей.
 //!
 //! Только localhost. Защита: проверка Host (DNS-rebinding), для POST —
-//! проверка Origin (CSRF со сторонних страниц).
+//! проверка Origin (CSRF со сторонних страниц). Если задана переменная окружения
+//! `P2P_API_TOKEN`, каждый запрос `/api/*` должен нести заголовок `X-Api-Token` с этим
+//! значением: на телефоне к `127.0.0.1` может обратиться любое установленное приложение,
+//! токен знает только запустившее узел приложение.
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -45,19 +48,28 @@ where
 }
 
 pub async fn serve(port: u16, h: Handler) -> Result<()> {
+    let token: Option<Arc<String>> = std::env::var("P2P_API_TOKEN").ok().filter(|t| t.len() >= 16).map(Arc::new);
+    if token.is_some() { info!("GUI: API требует токен (P2P_API_TOKEN)"); }
+    // переменная больше не нужна — не наследуется процессами, которые узел мог бы запустить
+    std::env::remove_var("P2P_API_TOKEN");
     let addr = format!("127.0.0.1:{port}");
     let listener = TcpListener::bind(&addr).await.with_context(|| format!("GUI bind {addr}"))?;
     info!("GUI: http://{addr}/");
     loop {
         let (sock, _) = listener.accept().await?;
-        let h = h.clone();
+        let (h, token) = (h.clone(), token.clone());
         tokio::spawn(async move {
-            if let Err(e) = handle_conn(sock, h).await { debug!("GUI conn: {e}"); }
+            if let Err(e) = handle_conn(sock, h, token).await { debug!("GUI conn: {e}"); }
         });
     }
 }
 
-async fn handle_conn(mut s: TcpStream, h: Handler) -> Result<()> {
+/// Сравнение без раннего выхода (время не зависит от того, где расходятся строки).
+fn ct_eq(a: &[u8], b: &[u8]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
+async fn handle_conn(mut s: TcpStream, h: Handler, token: Option<Arc<String>>) -> Result<()> {
     let mut buf = Vec::with_capacity(2048);
     let mut chunk = [0u8; 1024];
     loop {
@@ -77,11 +89,13 @@ async fn handle_conn(mut s: TcpStream, h: Handler) -> Result<()> {
 
     let mut host = String::new();
     let mut origin: Option<String> = None;
+    let mut api_token: Option<String> = None;
     for l in lines {
         if let Some((k, v)) = l.split_once(':') {
             match k.trim().to_ascii_lowercase().as_str() {
                 "host"   => host = v.trim().to_owned(),
                 "origin" => origin = Some(v.trim().to_owned()),
+                "x-api-token" => api_token = Some(v.trim().to_owned()),
                 _ => {}
             }
         }
@@ -97,6 +111,10 @@ async fn handle_conn(mut s: TcpStream, h: Handler) -> Result<()> {
     } else if method == "POST" && origin.as_deref().map(|o| !host_ok(o.trim_start_matches("http://"))).unwrap_or(false) {
         warn!("GUI: rejected Origin={origin:?}");
         Response::error(403, "bad origin")
+    } else if token.as_ref().is_some_and(|t| path.starts_with("/api/")
+                   && !api_token.as_deref().is_some_and(|a| ct_eq(a.as_bytes(), t.as_bytes()))) {
+        warn!("GUI: запрос {path} без верного X-Api-Token");
+        Response::error(401, "нужен X-Api-Token")
     } else if method != "GET" && method != "POST" {
         Response::error(405, "method not allowed")
     } else {
@@ -107,7 +125,7 @@ async fn handle_conn(mut s: TcpStream, h: Handler) -> Result<()> {
         h(Request { method, path: path.to_owned(), query }).await
     };
 
-    let reason = match resp.status { 200 => "OK", 400 => "Bad Request", 403 => "Forbidden", 404 => "Not Found", 405 => "Method Not Allowed", _ => "Error" };
+    let reason = match resp.status { 200 => "OK", 400 => "Bad Request", 401 => "Unauthorized", 403 => "Forbidden", 404 => "Not Found", 405 => "Method Not Allowed", _ => "Error" };
     let head = format!(
         "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n",
         resp.status, reason, resp.ctype, resp.body.len()

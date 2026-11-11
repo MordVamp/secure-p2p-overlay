@@ -165,6 +165,9 @@ pub enum ReadItem {
 impl FrameReader {
     pub fn new() -> Self { Self::default() }
 
+    /// Сколько байт недочитанного кадра в буфере (0 — граница между кадрами).
+    pub fn buffered(&self) -> usize { self.buf.len() }
+
     /// Подать новые байты; вернуть все полностью прочитанные кадры/ошибки.
     pub fn feed(&mut self, data: &[u8]) -> Vec<ReadItem> {
         self.buf.extend_from_slice(data);

@@ -47,6 +47,11 @@ struct Cli {
     #[arg(long)]
     host: Option<String>,
 
+    /// Адрес для пиров при прослушивании 0.0.0.0: IP в локальной сети или `auto`
+    /// (подключение телефона/другого компьютера). Без флага — 127.0.0.1.
+    #[arg(long)]
+    advertise: Option<String>,
+
     /// Канал между узлами: tls (TLS 1.3) или ake (собственное рукопожатие, ТЗ §11.3); переопределяет конфиг
     #[arg(long)]
     channel: Option<String>,
@@ -58,6 +63,26 @@ struct Cli {
     /// Размер пула туннелей к одному получателю (переопределяет tunnel.pool_size)
     #[arg(long)]
     pool_size: Option<usize>,
+
+    /// Переиспользовать соединения между узлами (пул; переопределяет transport.reuse_connections)
+    #[arg(long)]
+    reuse_connections: bool,
+
+    /// Что идёт через пул: tunnels (по умолчанию; DHT — соединение на каждый запрос) | all
+    #[arg(long)]
+    pool_scope: Option<String>,
+
+    /// Режим «только клиент»: не быть ретранслятором чужих туннелей (экономия батареи и трафика)
+    #[arg(long)]
+    no_relay: bool,
+
+    /// Период обновления бакетов DHT, с (переопределяет dht.refresh_interval_seconds)
+    #[arg(long)]
+    refresh_interval: Option<u64>,
+
+    /// Период проверки почтовых ящиков DHT (офлайн-доставка), с; 0 — выключить офлайн-доставку
+    #[arg(long)]
+    mailbox_poll: Option<u64>,
 
     /// Эксперимент: вероятность, что этот узел как ретранслятор откажет в пересылке (0..1)
     #[arg(long)]
@@ -88,10 +113,23 @@ async fn main() -> Result<()> {
     if !cli.bootstrap.is_empty() { cfg.node.bootstrap_peers = cli.bootstrap; }
     if let Some(c) = cli.channel { cfg.security.channel = c; }
     if let Some(h) = cli.host { cfg.node.listen_host = h; }
+    if let Some(a) = cli.advertise { cfg.node.advertise_host = a; }
     if let Some(s) = cli.relay_selection { cfg.tunnel.relay_selection = s; }
     if let Some(p) = cli.pool_size { cfg.tunnel.pool_size = p; }
     if let Some(d) = cli.fault_drop { cfg.fault.drop = d.clamp(0.0, 1.0); }
     if let Some(d) = cli.fault_delay_ms { cfg.fault.delay_ms = d; }
+    if cli.no_relay { cfg.tunnel.relay = false; }
+    if cli.reuse_connections { cfg.transport.reuse_connections = true; }
+    if let Some(s) = cli.pool_scope { cfg.transport.pool_scope = s; }
+    if !["tunnels", "all"].contains(&cfg.transport.pool_scope.as_str()) {
+        anyhow::bail!("transport.pool_scope = {}: допустимо tunnels, all", cfg.transport.pool_scope);
+    }
+    if let Some(s) = cli.refresh_interval { cfg.dht.refresh_interval_seconds = s.max(10); }
+    match cli.mailbox_poll {
+        Some(0) => cfg.mailbox.enabled = false,
+        Some(s) => cfg.mailbox.poll_interval_s = s.max(10),
+        None => {}
+    }
     if !["closest", "random", "rating"].contains(&cfg.tunnel.relay_selection.as_str()) {
         anyhow::bail!("tunnel.relay_selection = {}: допустимо closest, random, rating", cfg.tunnel.relay_selection);
     }

@@ -53,6 +53,9 @@ cargo run --bin p2p-orchestrator -- --gui-port 8080          # http://127.0.0.1:
 
 # настольное приложение (чаты, контакты, @псевдонимы, сеть, журнал) — само запускает свой узел
 cargo run -p p2p-desktop
+
+# Android: тот же узел на телефоне, подключение к компьютеру по QR → android/README.md
+android/build_node.sh && (cd android && ./gradlew assembleDebug)
 ```
 
 ![Настольное приложение](docs/img/desktop_chat.png)
@@ -71,7 +74,7 @@ cargo run -p p2p-desktop
 | Туннели | ≥2 relay (продвинутый — 3), `max_hops`, `hops_left`, уникальный `tunnel_id`; контроль доступности по сквозному TUNNEL_ACK; **пул туннелей** с переключением на резервный; **профили ретрансляторов** и стратегии выбора `closest / random / rating` |
 | Сообщения | **E2E** (X25519 + HKDF + AES-256-GCM), подпись Ed25519, анти-replay (окно 10 мин, переживает перезапуск), **APP_ACK**, диагностика маршрута, история, **подписанные псевдонимы** `@имя`, **передача файлов** (блоки 40 КиБ, окно подтверждений, SHA-256) |
 | Метрики | CSV/JSON по lookup, туннелям; сценарии 01–10 и продвинутые (`failover`, `strategy`, `files`, `channel`, `underlay`) с `meta.json` и графиками SVG |
-| GUI | локальная веб-панель узла и оркестратор (только `127.0.0.1`); **настольное приложение** `p2p-desktop` (egui) |
+| GUI | локальная веб-панель узла и оркестратор (только `127.0.0.1`); **настольное приложение** `p2p-desktop` (egui); **Android-приложение** — настоящий узел на телефоне (Rust под Android + Kotlin/Compose), подключение к ПК по QR, чаты и файлы |
 
 Что **не** реализовано или с ограничениями — см. [модель угроз](docs/THREAT_MODEL.md#остаточные-риски) и [COMPLIANCE](docs/requirements/COMPLIANCE_2026-10-26.md).
 
@@ -90,6 +93,7 @@ src/
   node/, gui/, metrics/    — сервер узла, веб-панель, сбор метрик
   acceptance.rs, orchestrator.rs — приёмочный прогон и оркестратор кластера
 desktop/                   — настольное приложение p2p-desktop (egui), только через HTTP API узла
+android/                   — Android-приложение (Kotlin, Jetpack Compose) + build_node.sh: p2p-node под Android в APK
 tests/                     — unit/интеграционные и негативные тесты
 config/                    — node_config.yaml и примеры
 scripts/                   — run_acceptance.sh, run_star.sh, run_ring.sh, run_tests.sh; python/ — запасные версии драйвера и графиков

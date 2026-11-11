@@ -49,7 +49,8 @@
 | [dev/CROSSLINKS.md](dev/CROSSLINKS.md) | Все перекрёстные ссылки и причины их существования |
 | [dev/IMPROVEMENTS.md](dev/IMPROVEMENTS.md) | Аудит улучшений: критичные, технические, концептуальные |
 | [dev/COMMANDS.md](dev/COMMANDS.md) | Справочник всех команд (CLI, тесты, скрипты) |
-| [dev/ARCHITECTURE_DECISIONS.md](dev/ARCHITECTURE_DECISIONS.md) | Журнал архитектурных решений (ADR-01…33) |
+| [dev/ARCHITECTURE_DECISIONS.md](dev/ARCHITECTURE_DECISIONS.md) | Журнал архитектурных решений (ADR-01…38) |
+| [dev/TRANSPORT_OPTIONS.md](dev/TRANSPORT_OPTIONS.md) | **Транспорт и соединения: варианты, ТЗ, QUIC (почему только дополнительно), план звонков** |
 | [dev/GUI.md](dev/GUI.md) | Веб-панель узла, оркестратор, настольное приложение |
 | [dev/plannow.md](dev/plannow.md) | Текущий план: что сделано, что осталось |
 | [requirements/COMPLIANCE_2026-10-26.md](requirements/COMPLIANCE_2026-10-26.md) | Соответствие ТЗ по коду (обновляется) |

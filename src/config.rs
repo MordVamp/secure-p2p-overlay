@@ -39,6 +39,28 @@ pub struct NodeConfig {
     /// Только для экспериментов: внесение отказов на этом узле как ретрансляторе.
     #[serde(default)]
     pub fault:     FaultConfig,
+    /// Офлайн-доставка через «почтовые ящики» в DHT.
+    #[serde(default)]
+    pub mailbox:   MailboxConfig,
+}
+
+/// Офлайн-доставка: сообщение, не доставленное через туннель, отправитель кладёт в подписанную
+/// запись DHT `mbox:<получатель>:<отправитель>`; получатель периодически забирает её сам
+/// (исходящими запросами — работает и за NAT) и подтверждает APP_ACK.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MailboxConfig {
+    pub enabled: bool,
+    /// Как часто получатель проверяет ящики известных собеседников.
+    pub poll_interval_s: u64,
+    /// Сообщения старше этого срока не ставятся в очередь и не принимаются из ящика.
+    pub max_age_s: u64,
+    /// Не больше стольких сообщений в одном ящике (старые вытесняются).
+    pub max_messages: usize,
+}
+
+impl Default for MailboxConfig {
+    fn default() -> Self { Self { enabled: true, poll_interval_s: 60, max_age_s: 7 * 24 * 3600, max_messages: 20 } }
 }
 
 /// Внесение отказов (эксперимент «стратегии выбора ретрансляторов»): ретранслятор с вероятностью `drop`
@@ -116,9 +138,30 @@ pub struct TransportConfig {
     pub protocol_version:       u8,
     /// CONNECT_TIMEOUT_MS (§5)
     pub connect_timeout_ms:     u64,
-    /// READ_TIMEOUT_MS (§5)
+    /// READ_TIMEOUT_MS (§5): ожидание ответа на запрос и дочитывание начатого кадра.
     pub read_timeout_ms:        u64,
+    /// Переиспользовать соединения между узлами (ТЗ §6 допускает оба подхода): одно TLS/AKE-соединение к соседу
+    /// на много запросов. `false` — новое соединение на каждый запрос (как до 11.11.2026).
+    #[serde(default)]
+    pub reuse_connections:      bool,
+    /// Простой соединения без начатого кадра: входящее закрывается через `idle_timeout_ms`,
+    /// исходящее из пула — через половину этого времени (раньше сервера, чтобы не писать в закрытое).
+    #[serde(default = "default_idle_ms")]
+    pub idle_timeout_ms:        u64,
+    /// Не больше стольких исходящих соединений в пуле (старые по последнему использованию закрываются).
+    #[serde(default = "default_pool_max")]
+    pub pool_max:               usize,
+    /// Что идёт через пул при `reuse_connections`: `tunnels` — только трафик туннелей (TUNNEL_BUILD, TUNNEL_DATA)
+    /// к выбранным ретрансляторам, DHT (PING, FIND_NODE, STORE, FIND_VALUE) — по-прежнему соединение на запрос;
+    /// `all` — всё через пул.
+    #[serde(default = "default_pool_scope")]
+    pub pool_scope:             String,
 }
+
+fn default_pool_scope() -> String { "tunnels".into() }
+
+fn default_idle_ms() -> u64 { 60_000 }
+fn default_pool_max() -> usize { 128 }
 
 impl Default for TransportConfig {
     fn default() -> Self {
@@ -127,6 +170,10 @@ impl Default for TransportConfig {
             protocol_version:   1,
             connect_timeout_ms: 3000,
             read_timeout_ms:    5000,
+            reuse_connections:  false,
+            idle_timeout_ms:    default_idle_ms(),
+            pool_max:           default_pool_max(),
+            pool_scope:         default_pool_scope(),
         }
     }
 }
@@ -144,7 +191,13 @@ pub struct TunnelConfig {
     /// Выбор ретрансляторов: `closest` (по XOR к получателю), `random`, `rating` (по профилю) — §12, продвинутый уровень.
     #[serde(default = "default_selection")]
     pub relay_selection:    String,
+    /// Быть ретранслятором чужих туннелей. `false` — «только клиент»: узел участвует в DHT,
+    /// строит свои туннели и принимает адресованные ему, но не пересылает чужой трафик.
+    #[serde(default = "default_true")]
+    pub relay:              bool,
 }
+
+fn default_true() -> bool { true }
 
 fn default_selection() -> String { "closest".into() }
 
@@ -158,6 +211,7 @@ impl Default for TunnelConfig {
             build_timeout_ms: 15000,
             ack_timeout_ms:   5000,
             relay_selection:  default_selection(),
+            relay:            true,
         }
     }
 }
@@ -189,6 +243,11 @@ pub struct NodeParams {
     pub listen_host:     String,
     /// LISTEN_PORT (§5)
     pub listen_port:     u16,
+    /// Адрес, который узел сообщает пирам, если слушает на 0.0.0.0: IP в локальной сети
+    /// («auto» — определить по маршруту по умолчанию). Пусто — 127.0.0.1 (все узлы на одной машине).
+    /// Нужен, чтобы к узлу подключались другие устройства (телефон ↔ компьютер).
+    #[serde(default)]
+    pub advertise_host:  String,
     /// BOOTSTRAP_PEERS (§5): начальные контакты (может быть пустым у seed-узла)
     pub bootstrap_peers: Vec<String>,
     /// LOG_LEVEL (§5)
@@ -202,6 +261,7 @@ impl Default for NodeParams {
             state_dir:       PathBuf::from("./state"),
             listen_host:     "0.0.0.0".to_string(),
             listen_port:     7000,
+            advertise_host:  String::new(),
             bootstrap_peers: vec![],
             log_level:       "INFO".to_string(),
             metrics_dir:     PathBuf::from("./metrics"),

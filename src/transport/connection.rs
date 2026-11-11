@@ -102,6 +102,58 @@ impl<S: AsyncReadExt + AsyncWriteExt + Unpin + Send> FramedStream<S> {
     }
 
     pub fn into_inner(self) -> S { self.inner }
+
+    /// Разобрать на части: поток, уже прочитанные байты/кадры и NodeID пира — чтобы читать и писать
+    /// из разных задач (соединение с несколькими запросами одновременно).
+    pub fn into_parts(self) -> (S, FrameRead<()>, Option<crate::types::NodeId>) {
+        let rest = FrameRead { inner: (), reader: self.reader, pending: self.pending.into(), read_ms: self.timeout_ms };
+        (self.inner, rest, self.peer_node_id)
+    }
+}
+
+/// Чтение кадров из половины потока. Отличает **простой** между кадрами (ждём до `idle_ms`, затем `None`)
+/// от **недочитанного кадра** (ждём не дольше `READ_TIMEOUT_MS`, затем ошибка) — для долгих соединений.
+pub struct FrameRead<R> {
+    inner:   R,
+    reader:  FrameReader,
+    pending: std::collections::VecDeque<ReadItem>,
+    read_ms: u64,
+}
+
+impl FrameRead<()> {
+    /// Подставить половину потока для чтения (буфер, начатый `FramedStream`, сохраняется).
+    pub fn with<R>(self, inner: R) -> FrameRead<R> {
+        FrameRead { inner, reader: self.reader, pending: self.pending, read_ms: self.read_ms }
+    }
+}
+
+impl<R: tokio::io::AsyncRead + Unpin> FrameRead<R> {
+    /// Следующий элемент; `None` — соединение простаивало `idle_ms` без начатого кадра.
+    pub async fn next(&mut self, idle_ms: u64) -> Option<ReadItem> {
+        loop {
+            if let Some(it) = self.pending.pop_front() { return Some(it); }
+            let wait = if self.reader.buffered() == 0 { idle_ms } else { self.read_ms };
+            let mut chunk = [0u8; READ_CHUNK];
+            let n = match timeout(Duration::from_millis(wait), self.inner.read(&mut chunk)).await {
+                Err(_) if self.reader.buffered() == 0 => return None,
+                Err(_) => return Some(ReadItem::Error(FrameError::Io(io::Error::new(
+                    io::ErrorKind::TimedOut, "read timeout: кадр не дочитан")))),
+                Ok(Err(e)) if e.kind() == io::ErrorKind::UnexpectedEof => return Some(ReadItem::Eof),
+                Ok(Err(e)) => return Some(ReadItem::Error(FrameError::Io(e))),
+                Ok(Ok(0)) => return Some(ReadItem::Eof),
+                Ok(Ok(n)) => n,
+            };
+            self.pending.extend(self.reader.feed(&chunk[..n]));
+        }
+    }
+}
+
+/// Записать кадр целиком в половину потока.
+pub async fn write_frame<W: tokio::io::AsyncWrite + Unpin>(w: &mut W, frame: &Frame) -> Result<(), FrameError> {
+    let bytes = frame.encode()?;
+    w.write_all(&bytes).await?;
+    w.flush().await?;
+    Ok(())
 }
 
 // Специализация для TcpStream: выдать поток для spawn_conn_reader

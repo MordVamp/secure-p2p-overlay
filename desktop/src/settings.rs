@@ -33,6 +33,17 @@ pub struct Settings {
     pub state_dir:   String,
     pub attach_port: u16,
     pub autostart:   bool,
+    /// Доступ из локальной сети: узел анонсирует LAN-адрес (`--advertise auto`) — к нему
+    /// может подключиться телефон (Android-приложение) или другой компьютер.
+    pub lan:         bool,
+    /// Сколько вспомогательных ретрансляторов запускать рядом с узлом (туннелю нужно ≥ 2
+    /// промежуточных узла; в сети «телефон + компьютер» их больше негде взять).
+    pub helpers:     u8,
+    /// Сообщать собеседнику «печатает…» и отправлять отчёты о прочтении.
+    pub send_typing:   bool,
+    pub send_receipts: bool,
+    /// Собеседники, чей номер безопасности сверен.
+    pub verified:    Vec<String>,
     /// Псевдоним, зарегистрированный этим узлом из приложения (для отображения).
     pub my_alias:    String,
     pub contacts:    Vec<Contact>,
@@ -50,6 +61,11 @@ impl Default for Settings {
                 .to_string_lossy().into_owned(),
             attach_port: 7690,
             autostart: false,
+            lan: false,
+            helpers: 0,
+            send_typing: true,
+            send_receipts: true,
+            verified: vec![],
             my_alias: String::new(),
             contacts: vec![],
         }

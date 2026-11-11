@@ -45,6 +45,8 @@ static TLS: std::sync::OnceLock<Arc<crate::security::tls::TlsSecurity>> = std::s
 
 /// Включить TLS 1.3 (mutual, Ed25519) для всех исходящих и входящих соединений процесса.
 /// Узел — один на процесс; без вызова (юнит-тесты) используется голый TCP.
+pub mod pool;
+
 pub fn install_tls(t: Arc<crate::security::tls::TlsSecurity>) { let _ = TLS.set(t); }
 
 /// Установленный TLS-провайдер (если есть).
@@ -104,37 +106,6 @@ pub async fn dial_expect(addr: SocketAddr, connect_timeout_ms: u64, read_timeout
         }
         None => Ok(FramedStream::new(Box::new(stream) as BoxedIo, read_timeout_ms)),
     }
-}
-
-/// E1-6 / E24-E26: Запустить фоновую задачу чтения ответов из исходящего соединения.
-///
-/// Читает кадры из `stream` и доставляет их в `pending` по `request_id`.
-/// Задача завершается при EOF или ошибке чтения.
-fn spawn_conn_reader(
-    mut stream: FramedStream<BoxedIo>,
-    pending:    Arc<PendingRpc>,
-) {
-    use crate::transport::framing::ReadItem;
-    tokio::spawn(async move {
-        loop {
-            match stream.recv_item().await {
-                ReadItem::Frame(frame) => {
-                    debug!("← outbound reader {:?} req={:x?}",
-                        frame.msg_type, &frame.request_id[..4]);
-                    // Доставляем ответы ожидающим RPC-вызовам
-                    pending.deliver(frame.request_id, frame).await;
-                }
-                ReadItem::Error(e) => {
-                    warn!("outbound conn reader error: {e}");
-                    break;
-                }
-                ReadItem::Eof => {
-                    debug!("outbound conn reader: EOF");
-                    break;
-                }
-            }
-        }
-    });
 }
 
 fn make_error_frame(request_id: [u8; 16], code: u16, desc: String) -> Frame {
@@ -411,6 +382,8 @@ impl RpcHandler {
 // ── RpcClient ─────────────────────────────────────────────────────────────────
 
 pub struct RpcClient {
+    /// Ответы теперь приходят через `pool::request`; поле оставлено ради совместимости конструктора.
+    #[allow(dead_code)]
     pending:         Arc<PendingRpc>,
     ping_timeout_ms: u64,
     rpc_timeout_ms:  u64,
@@ -437,17 +410,9 @@ impl RpcClient {
             payload: Bytes::from(payload::encode(&ping)?),
         };
 
-        let rx = self.pending.register(request_id).await;
-
-        // Dial → send → spawn reader task
-        let mut stream = dial(addr, connect_timeout_ms, read_timeout_ms).await?;
-        let peer_tls_id = stream.peer_node_id().copied();
-        stream.send(&frame).await.map_err(|e| anyhow::anyhow!("{e}"))?;
-        spawn_conn_reader(stream.into_raw_stream(), self.pending.clone());
-
-        // Ждём ответ через channel
-        let resp = timeout(Duration::from_millis(self.ping_timeout_ms), rx).await
-            .map_err(|_| anyhow::anyhow!("PING timeout"))??;
+        // новое соединение или из пула (transport.reuse_connections)
+        let (resp, peer_tls_id) = pool::request(pool::Scope::Dht, addr, None, frame, connect_timeout_ms, read_timeout_ms, self.ping_timeout_ms)
+            .await?.ok_or_else(|| anyhow::anyhow!("PING timeout"))?;
         if resp.msg_type == MsgType::Error {
             let e: ErrorPayload = payload::decode(&resp.payload)?;
             bail!("PING ERROR {}: {}", e.code, e.description);
@@ -486,14 +451,8 @@ impl RpcClient {
             payload: Bytes::from(payload::encode(&req)?),
         };
 
-        let rx = self.pending.register(request_id).await;
-
-        let mut stream = dial_expect(addr, connect_timeout_ms, read_timeout_ms, expected).await?;
-        stream.send(&frame).await.map_err(|e| anyhow::anyhow!("{e}"))?;
-        spawn_conn_reader(stream.into_raw_stream(), self.pending.clone());
-
-        let resp = timeout(Duration::from_millis(self.rpc_timeout_ms), rx).await
-            .map_err(|_| anyhow::anyhow!("FIND_NODE timeout"))??;
+        let (resp, _) = pool::request(pool::Scope::Dht, addr, expected, frame, connect_timeout_ms, read_timeout_ms, self.rpc_timeout_ms)
+            .await?.ok_or_else(|| anyhow::anyhow!("FIND_NODE timeout"))?;
         if resp.msg_type == MsgType::Error {
             let e: ErrorPayload = payload::decode(&resp.payload)?;
             bail!("FIND_NODE ERROR {}: {}", e.code, e.description);
@@ -536,13 +495,8 @@ impl RpcClient {
             flags: FrameFlags::empty(), request_id,
             payload: Bytes::from(payload::encode(&req)?),
         };
-        let rx = self.pending.register(request_id).await;
-        let mut stream = dial_expect(addr, connect_timeout_ms, read_timeout_ms, expected).await?;
-        stream.send(&frame).await.map_err(|e| anyhow::anyhow!("{e}"))?;
-        spawn_conn_reader(stream.into_raw_stream(), self.pending.clone());
-
-        let resp = timeout(Duration::from_millis(self.rpc_timeout_ms), rx).await
-            .map_err(|_| anyhow::anyhow!("STORE timeout"))??;
+        let (resp, _) = pool::request(pool::Scope::Dht, addr, expected, frame, connect_timeout_ms, read_timeout_ms, self.rpc_timeout_ms)
+            .await?.ok_or_else(|| anyhow::anyhow!("STORE timeout"))?;
         if resp.msg_type == MsgType::Error {
             let e: ErrorPayload = payload::decode(&resp.payload)?;
             anyhow::bail!("STORE ERROR {}: {}", e.code, e.description);
@@ -566,13 +520,8 @@ impl RpcClient {
             flags: FrameFlags::empty(), request_id,
             payload: Bytes::from(payload::encode(&req)?),
         };
-        let rx = self.pending.register(request_id).await;
-        let mut stream = dial_expect(addr, connect_timeout_ms, read_timeout_ms, expected).await?;
-        stream.send(&frame).await.map_err(|e| anyhow::anyhow!("{e}"))?;
-        spawn_conn_reader(stream.into_raw_stream(), self.pending.clone());
-
-        let resp = timeout(Duration::from_millis(self.rpc_timeout_ms), rx).await
-            .map_err(|_| anyhow::anyhow!("FIND_VALUE timeout"))??;
+        let (resp, _) = pool::request(pool::Scope::Dht, addr, expected, frame, connect_timeout_ms, read_timeout_ms, self.rpc_timeout_ms)
+            .await?.ok_or_else(|| anyhow::anyhow!("FIND_VALUE timeout"))?;
         if resp.msg_type == MsgType::Error {
             let e: ErrorPayload = payload::decode(&resp.payload)?;
             anyhow::bail!("FIND_VALUE ERROR {}: {}", e.code, e.description);
@@ -608,6 +557,11 @@ impl RpcHandler {
         );
         // A5: relay запоминает следующий hop для пересылки TUNNEL_DATA
         if let Some(next) = &req.next_hop {
+            // режим «только клиент»: конечным узлом быть можно, ретранслятором — нет
+            if !self.cfg.tunnel.relay {
+                anyhow::bail!("TUNNEL_BUILD: узел {} в режиме «только клиент», не ретранслирует",
+                              self.own_contact.host_port());
+            }
             if next.node_id == self.own_contact.node_id {
                 anyhow::bail!("TUNNEL_BUILD: next_hop указывает на этот же узел");
             }
@@ -667,8 +621,6 @@ impl RpcHandler {
                 bail!("ретранслятор {} отказал (внесённый отказ)", self.own_contact.host_port());
             }
             // по адресу следующего hop должен ответить именно тот узел, что был согласован при TUNNEL_BUILD
-            let mut stream = dial_expect(next, self.cfg.transport.connect_timeout_ms,
-                                         self.cfg.transport.read_timeout_ms, next_id.as_ref()).await?;
             let fwd = Frame {
                 version:    crate::protocol::PROTOCOL_VERSION,
                 msg_type:   MsgType::TunnelData,
@@ -679,10 +631,10 @@ impl RpcHandler {
                     hops_left: p.hops_left - 1,
                 })?),
             };
-            stream.send(&fwd).await.map_err(|e| anyhow::anyhow!("{e}"))?;
-            let ack = timeout(Duration::from_millis(self.cfg.tunnel.ack_timeout_ms), stream.recv()).await
-                .map_err(|_| anyhow::anyhow!("next hop {next} ACK timeout"))?
-                .map_err(|e| anyhow::anyhow!("next hop {next} recv: {e}"))?;
+            let (ack, _) = pool::request(pool::Scope::Tunnel, next, next_id.as_ref(), fwd, self.cfg.transport.connect_timeout_ms,
+                                         self.cfg.transport.read_timeout_ms, self.cfg.tunnel.ack_timeout_ms).await
+                .map_err(|e| anyhow::anyhow!("next hop {next}: {e}"))?
+                .ok_or_else(|| anyhow::anyhow!("next hop {next} ACK timeout"))?;
             if ack.msg_type != MsgType::TunnelAck {
                 // причина с дальнего конца цепочки — для определения виновного узла
                 let why = payload::decode::<ErrorPayload>(&ack.payload).map(|e| e.description).unwrap_or_default();

@@ -163,6 +163,7 @@ relay[i] ← TUNNEL_BUILD{tunnel_id, initiator, hop_index = i, total_hops, ttl, 
 relay[i] → TUNNEL_BUILD_OK{tunnel_id, relay = свой Contact, hop_index}
 ```
 
+Кандидатами не берутся узлы с `relay = false` в контакте (режим «только клиент», §5.5).
 Relay проверяет: пара NodeID/ключ инициатора и `next_hop`; `1 ≤ total_hops ≤ max_hops` (5); `hop_index < total_hops`;
 `next_hop` ≠ сам relay и ≠ инициатор; `tunnel_id` ещё не используется. Затем он запоминает `tunnel_id → next_hop` на
 `min(ttl, tunnel.ttl_seconds)` (600 с). Инициатор проверяет, что ответил именно выбранный relay (NodeID и ключ в
@@ -212,6 +213,13 @@ DEAD-туннель удаляется. Если в пуле не осталос
 в предыдущих попытках. Если отказ обнаружен посреди отправки, тот же конверт отправляется повторно, один раз (ADR-21).
 Туннели однонаправленные: ответы и APP_ACK получатель отправляет по своему туннелю.
 
+### 5.5. Режим «только клиент»
+
+`tunnel.relay: false` (`--no-relay`, телефон в режиме «Эконом»): узел участвует в DHT, строит свои туннели и является
+конечным узлом чужих, но не пересылает чужой трафик. Он сообщает это полем `relay: false` в своём `Contact`, которое
+расходится в PING и FIND_NODE (у записей без поля — `true`). Инициаторы не выбирают такие узлы ретрансляторами; если
+выбор всё же произошёл (устаревший контакт), узел отвечает ERROR на TUNNEL_BUILD с `next_hop`.
+
 ## 6. E2E-конверт
 
 Relay видят только конверт (`security/e2e.rs`; схема ECIES / sealed box, по смыслу как HPKE в режиме Base):
@@ -232,8 +240,10 @@ ct     = AES-256-GCM(K, nonce, plaintext = msgpack(AppMessage), aad = "p2p-e2e-v
 ### 7.1. Сообщение
 
 ```
-AppMessage = {message_id: UUIDv4 (16), kind: Text | Ack | System, from, to, timestamp_ms, payload, signature, sender_pubkey}
-signing_bytes = message_id ‖ kind(1 = Text, 2 = Ack, 3 = System) ‖ from ‖ to ‖ timestamp_ms(u64 BE) ‖ payload
+AppMessage = {message_id: UUIDv4 (16), kind, from, to, timestamp_ms, payload, signature, sender_pubkey}
+kind: 1 Text · 2 Ack · 3 System · 4–7 FileOffer/FileBlock/FileAck/FileDone (§7.5) · 8 Typing · 9 Read · 10 GroupText (§7.6)
+      · 11 Probe — измерительный пакет потока {stream, seq, sent_us, pad} (план звонков, шаг 0), без ACK и истории
+signing_bytes = message_id ‖ kind(1 байт) ‖ from ‖ to ‖ timestamp_ms(u64 BE) ‖ payload
 signature     = Ed25519(sender_sk, signing_bytes)          // sign-then-encrypt: подпись внутри конверта
 ```
 
@@ -279,10 +289,52 @@ B → A  FileAck (последний) и FileDone {transfer_id, ok, error} — �
   Неполный файл удаляется, если блоков не было `files.incomplete_timeout_s` (60 с). Возобновление не реализовано.
 - Подтверждения FileAck/FileDone засчитываются, только если пришли от получателя файла.
 
+### 7.6. «Печатает», прочтение, группы
+
+Те же подписанные и зашифрованные `AppMessage`, без APP_ACK:
+
+| kind | payload | Отправка | Приём |
+|---|---|---|---|
+| `Typing` (8) | пусто | не чаще раза в 4 с и **только по уже установленному туннелю** (ради индикатора туннель не строится) | событие `typing` на 6 с; в историю не пишется |
+| `Read` (9) | `ReadBody{ids: [message_id]}` (≤ 200) | клиент при открытии беседы, по новым входящим (опция) | строка-обновление истории `dir = "status"` с `read_ms`; применяется только к **своим** сообщениям этому же собеседнику |
+| `GroupText` (10) | `GroupBody{group_id, name, members[], text}` | копия каждому участнику, своё E2E для каждого, ожидание APP_ACK от всех | отправитель обязан быть в `members`; запись истории с `group`, `group_name`, `members` |
+
+Группа существует только у клиентов: её состав едет в каждом сообщении, по нему клиенты восстанавливают группу из
+истории. У отправителя одна запись истории с собеседником `g:<group_id>` и статусом `delivered`, `queued` или `partial`.
+
+### 7.7. Офлайн-доставка (почтовые ящики DHT)
+
+Если сообщение (Text или GroupText) не доставлено через туннель или нет APP_ACK, а `mailbox.enabled`:
+
+```text
+отправитель: outbox[получатель] += {id, ts, E2E-конверт}         // <state_dir>/outbox.json, ≤ mailbox.max_messages, ≤ 40 КиБ
+             STORE key = SHA-256("mbox:" ‖ hex(получатель) ‖ ":" ‖ hex(отправитель)),
+                   value = MailboxBody{msgs: [конверт…]}, подписано отправителем   // republish, пока отправитель в сети
+получатель:  раз в mailbox.poll_interval_s — FIND_VALUE ящиков всех собеседников из истории и /api/watch
+             принять запись, только если publisher = владелец ящика;
+             для каждого конверта: расшифровать → from = владелец → подпись → тип Text/GroupText →
+             повтор: message_id уже в истории приёма → только APP_ACK; иначе окно анти-replay = mailbox.max_age_s
+             → как обычное входящее (история, событие, APP_ACK)
+отправитель: APP_ACK на id из outbox → удалить, переопубликовать ящик, статус в истории → delivered
+```
+
+Получатель забирает письма **исходящими** запросами, поэтому ящик работает и для узла, к которому нельзя подключиться
+снаружи (телефон за NAT), если он может достучаться до узлов DHT. Сообщения старше `mailbox.max_age_s` (7 суток)
+удаляются из очереди со статусом `failed`.
+
+### 7.8. Номер безопасности
+
+`SHA-256("p2p-overlay-safety-v1" ‖ min(id_a, id_b) ‖ max(id_a, id_b))`, первые 30 байт → 6 чисел по 5 байт mod 10¹⁰ →
+12 групп по 5 цифр. Одинаков у обоих собеседников; так как NodeID = SHA-256 ключа, совпадение при личной сверке
+подтверждает, что ключ собеседника не подменён (`GET /api/safety?peer=`).
+
 ## 8. Локальный HTTP API узла
 
-Только `127.0.0.1`, проверка `Host` (защита от DNS-rebinding) и `Origin` для POST; аутентификации нет. Полный список
-эндпоинтов — [USERGUIDE §5](../../USERGUIDE.md#5-веб-панель-и-http-api).
+Только `127.0.0.1`, проверка `Host` (защита от DNS-rebinding) и `Origin` для POST. Если узлу задан `P2P_API_TOKEN`
+(Android — всегда), каждый `/api/*` требует заголовок `X-Api-Token` (иначе 401). `GET /api/events?since=N&timeout=25` —
+«долгий» запрос: ответ сразу, как появилось событие с номером > N (`message`, `typing`, `read`, `status`, `file`,
+`history`), иначе пустой по тайм-ауту — клиенты получают push без частого опроса. Полный список
+эндпоинтов — [USERGUIDE §6](../../USERGUIDE.md#6-веб-панель-и-http-api).
 
 ## 9. Примеры payload (логическое представление MessagePack)
 

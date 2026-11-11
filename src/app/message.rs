@@ -17,6 +17,40 @@ pub enum MessageKind {
     FileBlock,
     FileAck,
     FileDone,
+    /// «Печатает…»: пустой payload, без подтверждения и без записи в историю (опция клиента).
+    Typing,
+    /// Отчёт о прочтении: payload = `ReadBody` (message_id прочитанных сообщений).
+    Read,
+    /// Сообщение группового чата: payload = `GroupBody`. Группа — на стороне клиентов: отправитель
+    /// рассылает копию каждому участнику (своё E2E-шифрование для каждого), состав едет в сообщении.
+    GroupText,
+    /// Измерительный пакет потока (план звонков, шаг 0): payload = `ProbeBody`. Без подтверждения и истории;
+    /// получатель запоминает время прихода — задержка в одну сторону, джиттер, потери.
+    Probe,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProbeBody {
+    pub stream:  String,
+    pub seq:     u32,
+    /// Время отправки по часам отправителя (unix ms; на стенде одной машины часы общие).
+    pub sent_us: u64,
+    pub pad:     Vec<u8>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReadBody {
+    pub ids: Vec<Vec<u8>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GroupBody {
+    /// Случайный идентификатор группы (hex), задаёт создатель.
+    pub group_id: String,
+    pub name:     String,
+    /// NodeID участников (hex), включая отправителя.
+    pub members:  Vec<String>,
+    pub text:     String,
 }
 
 impl MessageKind {
@@ -25,6 +59,7 @@ impl MessageKind {
         match self {
             MessageKind::Text => 1, MessageKind::Ack => 2, MessageKind::System => 3,
             MessageKind::FileOffer => 4, MessageKind::FileBlock => 5, MessageKind::FileAck => 6, MessageKind::FileDone => 7,
+            MessageKind::Typing => 8, MessageKind::Read => 9, MessageKind::GroupText => 10, MessageKind::Probe => 11,
         }
     }
 }
@@ -106,6 +141,12 @@ impl AppMessage {
         if self.kind == MessageKind::Text {
             std::str::from_utf8(&self.payload).ok()
         } else { None }
+    }
+
+    /// Тело группового сообщения.
+    pub fn group(&self) -> Option<GroupBody> {
+        if self.kind != MessageKind::GroupText { return None; }
+        crate::protocol::payload::decode(&self.payload).ok()
     }
 
     pub fn message_id_hex(&self) -> String { hex::encode(&self.message_id[..4.min(self.message_id.len())]) }

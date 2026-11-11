@@ -23,7 +23,18 @@ use tracing::{info, warn};
 
 use crate::app::files::{BlockOutcome, FileAck, FileBlock, FileDone, FileOffer, FileStore, TransferInfo, safe_name, sha256_file, MAX_BLOCK};
 use crate::app::history::{History, HistoryEntry};
-use crate::app::message::{AppMessage, MessageKind};
+use crate::app::events::EventBus;
+use crate::app::mailbox::{self, MailboxBody, Outbox, Queued};
+use crate::app::message::{AppMessage, GroupBody, MessageKind, ProbeBody, ReadBody};
+
+/// Время в микросекундах (для измерительных пакетов: на 20-мс потоке миллисекунд мало).
+pub fn now_us() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_micros() as u64).unwrap_or(0)
+}
+
+/// Принятый измерительный пакет.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ProbeRx { pub stream: String, pub seq: u32, pub sent_us: u64, pub recv_us: u64, pub from: String }
 use crate::config::NodeConfig;
 use crate::dht::node::DhtNode;
 use crate::identity::node_identity::NodeIdentity;
@@ -50,6 +61,10 @@ pub struct SendReport {
     pub tunnel_send_ms:  u64,
     /// Маршрут отказал во время этой отправки и был перестроен.
     pub rebuilt_after_failure: bool,
+    /// Не доставлено через туннель — поставлено в почтовый ящик DHT (офлайн-доставка).
+    pub queued:          bool,
+    /// Причина, по которой сообщение ушло в ящик.
+    pub queued_reason:   Option<String>,
     /// Полное время до APP_ACK (заполняет send_text_acked).
     pub rtt_ms:          u64,
     /// Размер отправленного E2E-конверта, байт (для доли служебного трафика).
@@ -102,6 +117,24 @@ pub struct Messenger {
     files:      Mutex<FileStore>,
     file_waiters: Mutex<HashMap<Vec<u8>, (NodeId, mpsc::Sender<(AppMessage, usize)>)>>,
     transfers:  Mutex<VecDeque<TransferInfo>>,
+    /// События для клиентов (push, `/api/events`).
+    pub events: Arc<EventBus>,
+    /// Офлайн-доставка: очередь неотправленного и дополнительные собеседники для проверки ящиков.
+    outbox:     Mutex<Outbox>,
+    watch:      Mutex<std::collections::HashSet<NodeId>>,
+    /// «Печатает»: собеседник → до какого момента показывать.
+    typing:     Mutex<HashMap<NodeId, u64>>,
+    /// Принятые измерительные пакеты (до 50 000).
+    probes:     Mutex<VecDeque<ProbeRx>>,
+}
+
+/// Результат групповой рассылки по одному участнику.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct GroupResult {
+    pub member: String,
+    /// delivered | queued | failed
+    pub status: String,
+    pub error:  Option<String>,
 }
 
 impl Messenger {
@@ -118,7 +151,15 @@ impl Messenger {
                seen: Mutex::new(crate::app::replay::ReplayGuard::in_memory()), waiting: Mutex::new(Default::default()),
                keys: Mutex::new(Default::default()), history: None,
                files: Mutex::new(files),
-               file_waiters: Mutex::new(Default::default()), transfers: Mutex::new(VecDeque::new()) }
+               file_waiters: Mutex::new(Default::default()), transfers: Mutex::new(VecDeque::new()),
+               events: Arc::new(EventBus::new()), outbox: Mutex::new(Outbox::in_memory()),
+               watch: Mutex::new(Default::default()), typing: Mutex::new(Default::default()),
+               probes: Mutex::new(VecDeque::new()) }
+    }
+
+    /// Хранить очередь офлайн-доставки в `<state_dir>/outbox.json` (переживает перезапуск).
+    pub fn with_outbox(self, state_dir: &std::path::Path) -> Self {
+        Self { outbox: Mutex::new(Outbox::load(state_dir)), ..self }
     }
 
     /// Хранить принятые message_id в `<state_dir>/replay.log` — повтор отвергается и после перезапуска.
@@ -145,6 +186,7 @@ impl Messenger {
             lookup_ms:       rep.and_then(|r| r.lookup_ms),
             tunnel_build_ms: rep.and_then(|r| r.tunnel_build_ms),
             tunnel_send_ms:  rep.map(|r| r.tunnel_send_ms),
+            group: None, group_name: None, members: None, read_ms: None,
         }).await;
     }
 
@@ -267,8 +309,7 @@ impl Messenger {
             Ok(r) => r,
             Err(e) => {
                 self.waiting.lock().await.remove(&id);
-                self.log("out", &target, &msg, "failed", None, Some(e.to_string())).await;
-                return Err(e);
+                return self.fail_or_queue(target, &msg, e.to_string()).await;
             }
         };
         info!("→ msg {} to {} ({} bytes), ждём APP_ACK", msg.message_id_hex(), target.short(), text.len());
@@ -280,11 +321,312 @@ impl Messenger {
             }
             _ => {
                 self.waiting.lock().await.remove(&id);
-                let err = format!("нет подтверждения доставки за {} мс", wait.as_millis());
-                self.log("out", &target, &msg, "failed", None, Some(err.clone())).await;
-                bail!(err)
+                self.fail_or_queue(target, &msg, format!("нет подтверждения доставки за {} мс", wait.as_millis())).await
             }
         }
+    }
+
+    /// Не доставлено: при включённой офлайн-доставке — в почтовый ящик DHT (статус queued), иначе ошибка.
+    async fn fail_or_queue(&self, target: NodeId, msg: &AppMessage, err: String) -> Result<SendReport> {
+        if self.cfg.mailbox.enabled {
+            match self.queue_offline(target, msg).await {
+                Ok(()) => {
+                    let why = format!("{err}; сообщение в почтовом ящике DHT — получатель заберёт его сам");
+                    self.log("out", &target, msg, "queued", None, Some(why.clone())).await;
+                    return Ok(SendReport { message_id: hex::encode(&msg.message_id), queued: true,
+                                           queued_reason: Some(err), ..Default::default() });
+                }
+                Err(e) => warn!("офлайн-очередь к {}: {e}", target.short()),
+            }
+        }
+        self.log("out", &target, msg, "failed", None, Some(err.clone())).await;
+        bail!(err)
+    }
+
+    // ── офлайн-доставка (почтовые ящики DHT) ────────────────────────────────
+
+    /// Зашифровать сообщение для получателя и положить в его ящик.
+    async fn queue_offline(&self, target: NodeId, msg: &AppMessage) -> Result<()> {
+        let pk = match self.known_key(&target).await {
+            Some(k) => k,
+            None => self.recipient_pubkey(&target).await?,
+        };
+        let env = crate::security::e2e::seal(&target, &pk, &encode(msg)?)?;
+        self.outbox.lock().await.push(&target, Queued {
+            id: hex::encode(&msg.message_id), ts_ms: msg.timestamp_ms, envelope: hex::encode(env),
+        }, self.cfg.mailbox.max_messages);
+        self.publish_mailbox(target).await;
+        info!("msg {} → почтовый ящик DHT для {}", msg.message_id_hex(), target.short());
+        Ok(())
+    }
+
+    /// Опубликовать (обновить) ящик для `to`. Ошибка кворума не фатальна: запись осталась
+    /// локально и уйдёт на реплики при republish.
+    async fn publish_mailbox(&self, to: NodeId) {
+        let body = self.outbox.lock().await.body(&to);
+        let Ok(v) = encode(&body) else { return };
+        if let Err(e) = self.dht.put(&self.identity, mailbox::key(&to, &self.identity.node_id), v,
+                                     self.cfg.dht.ttl_seconds).await {
+            warn!("почтовый ящик для {}: {e}", to.short());
+        }
+    }
+
+    /// После перезапуска: заново опубликовать ящики из сохранённой очереди.
+    pub async fn republish_outbox(&self) {
+        let rs = self.outbox.lock().await.recipients();
+        for r in rs {
+            let Ok(b) = hex::decode(&r) else { continue };
+            let Ok(arr) = <[u8; 32]>::try_from(b.as_slice()) else { continue };
+            self.publish_mailbox(NodeId(arr)).await;
+        }
+    }
+
+    /// Проверять ящик этого собеседника (кроме тех, с кем уже есть переписка).
+    pub async fn watch_peer(&self, id: NodeId) { self.watch.lock().await.insert(id); }
+
+    /// Очередь офлайн-доставки: получатель → число сообщений.
+    pub async fn outbox_summary(&self) -> std::collections::BTreeMap<String, usize> {
+        self.outbox.lock().await.summary()
+    }
+
+    /// Выбросить из очереди сообщения старше `mailbox.max_age_s` (статус failed).
+    pub async fn expire_outbox(&self) {
+        let gone = self.outbox.lock().await.expire(self.cfg.mailbox.max_age_s * 1000);
+        for (to, ids) in gone {
+            let Ok(b) = hex::decode(&to) else { continue };
+            let Ok(arr) = <[u8; 32]>::try_from(b.as_slice()) else { continue };
+            let id = NodeId(arr);
+            if let Some(h) = &self.history {
+                for m in &ids { h.append(&HistoryEntry::status_update(&to, m, Some("failed"), None)).await; }
+            }
+            self.publish_mailbox(id).await;
+        }
+    }
+
+    /// Проверить ящики собеседников: забрать, расшифровать, подтвердить. Возвращает число новых сообщений.
+    pub async fn poll_mailboxes(self: &Arc<Self>) -> usize {
+        let me = self.identity.node_id;
+        let mut peers: Vec<NodeId> = self.watch.lock().await.iter().copied().collect();
+        if let Some(h) = &self.history {
+            for p in h.peers().await {
+                if let Ok(b) = hex::decode(&p) {
+                    if let Ok(arr) = <[u8; 32]>::try_from(b.as_slice()) {
+                        if !peers.contains(&NodeId(arr)) { peers.push(NodeId(arr)); }
+                    }
+                }
+            }
+        }
+        let mut got = 0;
+        for p in peers {
+            let Some(rec) = self.dht.get(&mailbox::key(&me, &p)).await else { continue };
+            // ящик пишет только сам отправитель: запись другого публикатора игнорируется
+            if rec.publisher != p { warn!("почтовый ящик {}: запись подписана другим узлом, отброшена", p.short()); continue; }
+            let Ok(body) = decode::<MailboxBody>(&rec.value) else { continue };
+            for env in body.msgs {
+                match self.accept_mailbox(p, env).await {
+                    Ok(true) => got += 1,
+                    Ok(false) => {}
+                    Err(e) => warn!("почтовый ящик {}: {e}", p.short()),
+                }
+            }
+        }
+        if got > 0 { info!("почтовые ящики DHT: получено {got} сообщений"); }
+        got
+    }
+
+    /// Одно письмо из ящика `from`. Ok(true) — новое сообщение, Ok(false) — уже было (повторно подтверждено).
+    async fn accept_mailbox(self: &Arc<Self>, from: NodeId, env: Vec<u8>) -> Result<bool> {
+        let plain = crate::security::e2e::open(&self.identity, &env)?;
+        let msg: AppMessage = decode(&plain).map_err(|e| anyhow::anyhow!("AppMessage decode: {e}"))?;
+        if msg.from != from { bail!("отправитель письма не совпадает с владельцем ящика"); }
+        if !self.verify_signature(&msg).await { bail!("неверная подпись письма"); }
+        if !matches!(msg.kind, MessageKind::Text | MessageKind::GroupText) { bail!("в ящике допускаются только сообщения"); }
+        let id_hex = hex::encode(&msg.message_id);
+        let dup = match &self.history { Some(h) => h.has_incoming(&id_hex).await, None => false };
+        if dup {
+            // уже получено (например, APP_ACK потерялся) — подтвердить ещё раз, чтобы отправитель убрал из ящика
+            let me = self.clone();
+            let (pk, id) = (msg.sender_pubkey.clone(), msg.message_id.clone());
+            tokio::spawn(async move { me.send_ack(from, pk, id).await });
+            return Ok(false);
+        }
+        self.seen.lock().await.check_window(&msg.message_id, msg.timestamp_ms, self.cfg.mailbox.max_age_s * 1000)
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        self.remember_key(msg.from, &msg.sender_pubkey).await;
+        self.accept_message(msg, true).await;
+        Ok(true)
+    }
+
+    // ── измерительный поток (план звонков, шаг 0) ──────────────────────────
+
+    /// Поток из `count` пакетов по `size` байт с периодом `interval_ms` — как голос (50 пакетов/с по ~80 байт).
+    /// Пакеты уходят по расписанию, не дожидаясь подтверждения предыдущего: так ведёт себя источник звука.
+    /// Сначала один «прогревочный» пакет (lookup, туннель, ключ получателя) — его время не входит в поток.
+    pub async fn probe_stream(self: &Arc<Self>, target: NodeId, stream: &str, count: u32, interval_ms: u64, size: usize)
+        -> Result<serde_json::Value>
+    {
+        let size = size.min(1200);
+        let body = |seq: u32| ProbeBody { stream: stream.to_owned(), seq, sent_us: now_us(), pad: vec![0u8; size] };
+        let warm = self.build_kind(target, MessageKind::Probe, &body(u32::MAX))?;
+        let t_warm = now_ms();
+        self.deliver(target, None, &warm).await?;
+        let warm_ms = now_ms().saturating_sub(t_warm);
+
+        let start = tokio::time::Instant::now();
+        let mut tasks = Vec::with_capacity(count as usize);
+        for seq in 0..count {
+            tokio::time::sleep_until(start + std::time::Duration::from_millis(interval_ms * seq as u64)).await;
+            let me = self.clone();
+            let m = self.build_kind(target, MessageKind::Probe, &body(seq))?;
+            tasks.push(tokio::spawn(async move {
+                let t = now_us();
+                let r = me.deliver(target, None, &m).await;
+                (r.is_ok(), now_us().saturating_sub(t), r.err().map(|e| e.to_string()))
+            }));
+        }
+        let mut acked = vec![];
+        let mut errors: Vec<String> = vec![];
+        for t in tasks {
+            if let Ok((ok, us, e)) = t.await {
+                if ok { acked.push(us as f64 / 1000.0); } else if errors.len() < 5 { errors.extend(e); }
+            }
+        }
+        let sent_span_ms = start.elapsed().as_secs_f64() * 1000.0;
+        Ok(serde_json::json!({
+            "stream": stream, "count": count, "interval_ms": interval_ms, "size": size,
+            "warmup_ms": warm_ms, "acked": acked.len(), "failed": count as usize - acked.len(),
+            "ack_ms": acked, "span_ms": sent_span_ms, "errors": errors,
+        }))
+    }
+
+    /// Принятые пакеты потока `stream`.
+    pub async fn probe_results(&self, stream: &str) -> Vec<ProbeRx> {
+        self.probes.lock().await.iter().filter(|p| p.stream == stream && p.seq != u32::MAX).cloned().collect()
+    }
+
+    // ── «печатает», прочтение, группы ──────────────────────────────────────
+
+    /// «Печатает…»: только по уже установленному туннелю (ради индикатора туннель не строится).
+    /// Ok(false) — туннеля нет, ничего не отправлено.
+    pub async fn send_typing(&self, target: NodeId) -> Result<bool> {
+        if !(self.tunnels.is_usable(&target).await && self.known_key(&target).await.is_some()) { return Ok(false); }
+        let m = self.build_kind(target, MessageKind::Typing, &())?;
+        self.deliver(target, None, &m).await?;
+        Ok(true)
+    }
+
+    /// Отчёт о прочтении сообщений `ids` (hex) собеседника `target`.
+    pub async fn send_read(&self, target: NodeId, ids: &[String]) -> Result<()> {
+        let ids: Vec<Vec<u8>> = ids.iter().filter_map(|i| hex::decode(i).ok()).filter(|b| b.len() == 16).take(200).collect();
+        if ids.is_empty() { return Ok(()); }
+        let m = self.build_kind(target, MessageKind::Read, &ReadBody { ids })?;
+        self.deliver(target, None, &m).await?;
+        Ok(())
+    }
+
+    /// Кто сейчас печатает: NodeID → до какого момента (unix ms).
+    pub async fn typing_now(&self) -> HashMap<String, u64> {
+        let now = now_ms();
+        let mut t = self.typing.lock().await;
+        t.retain(|_, until| *until > now);
+        t.iter().map(|(k, v)| (k.to_hex(), *v)).collect()
+    }
+
+    /// Групповое сообщение: копия каждому участнику (своё шифрование), ожидание APP_ACK от всех.
+    /// В истории — одна запись с собеседником `g:<group_id>`.
+    pub async fn send_group(self: &Arc<Self>, group_id: &str, name: &str, members: &[NodeId], text: &str,
+                            wait: std::time::Duration) -> Result<Vec<GroupResult>> {
+        if group_id.is_empty() || group_id.len() > 64 || !group_id.bytes().all(|b| b.is_ascii_hexdigit()) {
+            bail!("group_id: до 64 hex-символов");
+        }
+        if text.len() > crate::tunnel::forwarder::MAX_SEGMENT_SIZE - 4096 { bail!("сообщение слишком длинное"); }
+        let me = self.identity.node_id;
+        let mut all: Vec<String> = members.iter().map(|m| m.to_hex()).collect();
+        if !all.contains(&me.to_hex()) { all.push(me.to_hex()); }
+        let body = GroupBody { group_id: group_id.into(), name: name.into(), members: all, text: text.into() };
+        let t0 = now_ms();
+        let tasks = members.iter().copied().filter(|m| *m != me).map(|m| {
+            let (me2, body) = (self.clone(), body.clone());
+            async move {
+                let msg = match me2.build_kind(m, MessageKind::GroupText, &body) {
+                    Ok(x) => x, Err(e) => return GroupResult { member: m.to_hex(), status: "failed".into(), error: Some(e.to_string()) },
+                };
+                let rx = me2.register_ack_wait(msg.message_id.clone(), m).await;
+                let res = match me2.deliver(m, None, &msg).await {
+                    Ok(_) => tokio::time::timeout(wait, rx).await.map_err(|_| "нет подтверждения доставки".to_string())
+                        .and_then(|r| r.map_err(|_| "ожидание прервано".to_string())),
+                    Err(e) => Err(e.to_string()),
+                };
+                match res {
+                    Ok(()) => GroupResult { member: m.to_hex(), status: "delivered".into(), error: None },
+                    Err(e) => {
+                        me2.waiting.lock().await.remove(&msg.message_id);
+                        if me2.cfg.mailbox.enabled && me2.queue_offline(m, &msg).await.is_ok() {
+                            GroupResult { member: m.to_hex(), status: "queued".into(), error: Some(e) }
+                        } else {
+                            GroupResult { member: m.to_hex(), status: "failed".into(), error: Some(e) }
+                        }
+                    }
+                }
+            }
+        });
+        let results: Vec<GroupResult> = futures::future::join_all(tasks).await;
+        let ok = results.iter().filter(|r| r.status == "delivered").count();
+        let status = if results.is_empty() { "failed" } else if ok == results.len() { "delivered" }
+                     else if results.iter().all(|r| r.status != "failed") { "queued" } else { "partial" };
+        if let Some(h) = &self.history {
+            let errs: Vec<String> = results.iter().filter(|r| r.status != "delivered")
+                .map(|r| format!("{}: {}", &r.member[..8], r.error.clone().unwrap_or_default())).collect();
+            h.append(&HistoryEntry {
+                ts_ms: now_ms(), dir: "out".into(), peer: format!("g:{group_id}"),
+                message_id: hex::encode(uuid::Uuid::new_v4().as_bytes()), status: status.into(), text: Some(text.into()),
+                rtt_ms: Some(now_ms().saturating_sub(t0)), error: (!errs.is_empty()).then(|| errs.join("; ")),
+                lookup_ms: None, tunnel_build_ms: None, tunnel_send_ms: None,
+                group: Some(group_id.into()), group_name: Some(name.into()), members: Some(body.members.clone()), read_ms: None,
+            }).await;
+        }
+        self.events.emit("status", serde_json::json!({ "peer": format!("g:{group_id}") })).await;
+        Ok(results)
+    }
+
+    /// Удалить переписку с собеседником (или группу `g:<id>`).
+    pub async fn delete_history(&self, peer: &str) -> Result<usize> {
+        let Some(h) = &self.history else { return Ok(0) };
+        let n = h.delete_peer(peer).await?;
+        self.events.emit("history", serde_json::json!({ "peer": peer })).await;
+        Ok(n)
+    }
+
+    /// Принятое сообщение (Text / GroupText): история, inbox, событие, APP_ACK.
+    async fn accept_message(self: &Arc<Self>, msg: AppMessage, via_mailbox: bool) {
+        let (from, pk, id) = (msg.from, msg.sender_pubkey.clone(), msg.message_id.clone());
+        let group = msg.group();
+        if let Some(g) = &group {
+            if let Some(h) = &self.history {
+                h.append(&HistoryEntry {
+                    ts_ms: now_ms(), dir: "in".into(), peer: from.to_hex(), message_id: hex::encode(&id),
+                    status: "received".into(), text: Some(g.text.clone()), rtt_ms: None, error: None,
+                    lookup_ms: None, tunnel_build_ms: None, tunnel_send_ms: None,
+                    group: Some(g.group_id.clone()), group_name: Some(g.name.clone()), members: Some(g.members.clone()), read_ms: None,
+                }).await;
+            }
+        } else {
+            self.log("in", &from, &msg, "received", None, None).await;
+        }
+        self.typing.lock().await.remove(&from);
+        self.events.emit("message", serde_json::json!({
+            "peer": from.to_hex(), "message_id": hex::encode(&id), "via_mailbox": via_mailbox,
+            "text": group.as_ref().map(|g| g.text.clone()).or_else(|| msg.text().map(str::to_owned)),
+            "group": group.as_ref().map(|g| g.group_id.clone()), "group_name": group.as_ref().map(|g| g.name.clone()),
+            "members": group.as_ref().map(|g| g.members.clone()),
+        })).await;
+        {
+            let mut inbox = self.inbox.lock().await;
+            if inbox.len() >= 100 { inbox.pop_front(); }
+            inbox.push_back(msg);
+        }
+        let me = self.clone();
+        tokio::spawn(async move { me.send_ack(from, pk, id).await });
     }
 
     /// Отправить APP_ACK на принятое сообщение (в фоне; сбой не влияет на приём).
@@ -338,7 +680,23 @@ impl Messenger {
                         if let Some((_, tx)) = w.remove(&msg.payload) { let _ = tx.send(()); }
                     }
                     Some(_) => warn!("APP_ACK от неожиданного узла {} отброшен", msg.from.short()),
-                    None => tracing::debug!("APP_ACK на неизвестное сообщение"),
+                    None => {
+                        drop(w);
+                        // подтверждение письма из почтового ящика DHT: убрать из очереди, обновить ящик
+                        let id = hex::encode(&msg.payload);
+                        if self.outbox.lock().await.remove(&msg.from, &id) {
+                            info!("письмо {} из почтового ящика получено {}", &id[..8], msg.from.short());
+                            if let Some(h) = &self.history {
+                                h.append(&HistoryEntry::status_update(&msg.from.to_hex(), &id, Some("delivered"), None)).await;
+                            }
+                            self.events.emit("status", serde_json::json!({ "peer": msg.from.to_hex(), "message_id": id, "status": "delivered" })).await;
+                            let me = self.clone();
+                            let to = msg.from;
+                            tokio::spawn(async move { me.publish_mailbox(to).await });
+                        } else {
+                            tracing::debug!("APP_ACK на неизвестное сообщение");
+                        }
+                    }
                 }
                 return Ok(());
             }
@@ -361,16 +719,33 @@ impl Messenger {
                 }
                 return Ok(());
             }
-            MessageKind::Text => {
-                let (from, pk, id) = (msg.from, msg.sender_pubkey.clone(), msg.message_id.clone());
-                self.log("in", &from, &msg, "received", None, None).await;
-                {
-                    let mut inbox = self.inbox.lock().await;
-                    if inbox.len() >= 100 { inbox.pop_front(); }
-                    inbox.push_back(msg);
+            MessageKind::Text => self.accept_message(msg, false).await,
+            MessageKind::GroupText => {
+                // отправитель должен быть в составе группы, который сам прислал
+                let Some(g) = msg.group() else { bail!("некорректное групповое сообщение") };
+                if !g.members.contains(&msg.from.to_hex()) { bail!("отправитель не входит в группу"); }
+                self.accept_message(msg, false).await;
+            }
+            MessageKind::Probe => {
+                let recv_us = now_us();
+                let Ok(b) = decode::<ProbeBody>(&msg.payload) else { bail!("некорректный измерительный пакет") };
+                let mut p = self.probes.lock().await;
+                if p.len() >= 50_000 { p.pop_front(); }
+                p.push_back(ProbeRx { stream: b.stream, seq: b.seq, sent_us: b.sent_us, recv_us, from: msg.from.to_hex() });
+            }
+            MessageKind::Typing => {
+                let until = now_ms() + 6000;
+                self.typing.lock().await.insert(msg.from, until);
+                self.events.emit("typing", serde_json::json!({ "peer": msg.from.to_hex(), "until_ms": until })).await;
+            }
+            MessageKind::Read => {
+                let Ok(body) = decode::<ReadBody>(&msg.payload) else { bail!("некорректный отчёт о прочтении") };
+                let ids: Vec<String> = body.ids.iter().take(200).map(hex::encode).collect();
+                if let Some(h) = &self.history {
+                    // строка-обновление применяется только к нашим сообщениям этому же собеседнику
+                    for id in &ids { h.append(&HistoryEntry::status_update(&msg.from.to_hex(), id, None, Some(msg.timestamp_ms))).await; }
                 }
-                let me = self.clone();
-                tokio::spawn(async move { me.send_ack(from, pk, id).await });
+                self.events.emit("read", serde_json::json!({ "peer": msg.from.to_hex(), "ids": ids })).await;
             }
             _ => {
                 let mut inbox = self.inbox.lock().await;
@@ -390,6 +765,7 @@ impl Messenger {
     }
 
     async fn upsert_transfer(&self, t: TransferInfo) {
+        self.events.emit("file", serde_json::json!({ "transfer_id": t.transfer_id, "status": t.status, "peer": t.peer })).await;
         let mut v = self.transfers.lock().await;
         match v.iter_mut().find(|x| x.transfer_id == t.transfer_id) {
             Some(x) => *x = t,
@@ -398,7 +774,16 @@ impl Messenger {
     }
 
     async fn update_transfer(&self, id: &str, f: impl FnOnce(&mut TransferInfo)) {
-        if let Some(x) = self.transfers.lock().await.iter_mut().find(|x| x.transfer_id == id) { f(x); }
+        let st = {
+            let mut v = self.transfers.lock().await;
+            v.iter_mut().find(|x| x.transfer_id == id).map(|x| { f(x); (x.status.clone(), x.peer.clone(), x.done_blocks) })
+        };
+        // о прогрессе блоков не сообщаем каждый раз — только смена статуса и каждые 8 блоков
+        if let Some((status, peer, done)) = st {
+            if status != "sending" && status != "receiving" || done % 8 == 0 {
+                self.events.emit("file", serde_json::json!({ "transfer_id": id, "status": status, "peer": peer })).await;
+            }
+        }
     }
 
     /// Сводка передач (последние 50) и каталог загрузок.
@@ -470,7 +855,7 @@ impl Messenger {
                         let name = self.transfers.lock().await.iter().find(|t| t.transfer_id == hid).map(|t| t.name.clone()).unwrap_or_default();
                         h.append(&HistoryEntry { ts_ms: now_ms(), dir: "in".into(), peer: from.to_hex(), message_id: hid.clone(),
                             status: if ok { "received".into() } else { "failed".into() }, text: Some(format!("📎 {name}")),
-                            rtt_ms: None, error: err.clone(), lookup_ms: None, tunnel_build_ms: None, tunnel_send_ms: None }).await;
+                            rtt_ms: None, error: err.clone(), lookup_ms: None, tunnel_build_ms: None, tunnel_send_ms: None, group: None, group_name: None, members: None, read_ms: None }).await;
                     }
                     // FileAck последнего окна, затем FileDone — по порядку, в одной задаче
                     let ack = FileAck { transfer_id: b.transfer_id.clone(), received: blocks, missing: vec![] };
@@ -601,7 +986,7 @@ impl Messenger {
         if let Some(h) = &self.history {
             h.append(&HistoryEntry { ts_ms: now_ms(), dir: "out".into(), peer: target.to_hex(), message_id: hid.clone(),
                 status: status.into(), text: Some(format!("📎 {name}")), rtt_ms: Some(rep.duration_ms), error: err,
-                lookup_ms: None, tunnel_build_ms: None, tunnel_send_ms: None }).await;
+                lookup_ms: None, tunnel_build_ms: None, tunnel_send_ms: None, group: None, group_name: None, members: None, read_ms: None }).await;
         }
         res.map(|_| rep)
     }

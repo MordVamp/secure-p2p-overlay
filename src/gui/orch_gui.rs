@@ -65,6 +65,8 @@ impl Orchestrator {
                .arg("--gui-port").arg((port + GUI_OFFSET).to_string())
                .arg("--state-dir").arg(w.join(format!("state/orch-{port}")))
                .arg("--metrics-dir").arg(w.join(format!("metrics/orch-{port}")))
+               // стенд измерений: без офлайн-доставки (её периодические lookup исказили бы метрики)
+               .arg("--mailbox-poll").arg("0")
                .env("RUST_LOG", "p2p_overlay=info")
                .kill_on_drop(true)
                .stdout(std::process::Stdio::from(log))

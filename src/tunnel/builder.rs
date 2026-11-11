@@ -13,7 +13,6 @@ use std::net::SocketAddr;
 
 use anyhow::{Result, bail};
 use tokio::sync::Mutex;
-use tokio::time::{timeout, Duration};
 use tracing::{debug, info, warn};
 use bytes::Bytes;
 use uuid::Uuid;
@@ -87,7 +86,8 @@ impl TunnelBuilder {
             let own_id = *rt.own_id();
             // все допустимые кандидаты по возрастанию XOR-расстояния до получателя
             let mut c = rt.find_closest(target, usize::MAX);
-            c.retain(|x| x.node_id != own_id && x.node_id != *target && !excluded.contains(&x.node_id));
+            // узлы «только клиент» (relay = false) в цепочку не берём
+            c.retain(|x| x.node_id != own_id && x.node_id != *target && !excluded.contains(&x.node_id) && x.relay);
             // §12: каждый узел в пути не более одного раза (без петель)
             let mut seen = std::collections::HashSet::new();
             c.retain(|x| seen.insert(x.node_id));
@@ -163,13 +163,6 @@ impl TunnelBuilder {
         next_hop:  Option<Contact>,
     ) -> Result<TunnelHop> {
         let addr: SocketAddr = relay.socket_addr()?;
-        // relay должен быть именно тем узлом, которого мы выбрали (NodeID из рукопожатия канала)
-        let mut stream = crate::rpc::dial_expect(
-            addr,
-            self.cfg.transport.connect_timeout_ms,
-            self.cfg.transport.read_timeout_ms,
-            Some(&relay.node_id),
-        ).await?;
 
         let request_id = crate::rpc::new_request_id();
         let payload = TunnelBuildPayload {
@@ -191,15 +184,11 @@ impl TunnelBuilder {
         };
 
         
-        stream.send(&frame).await.map_err(|e| anyhow::anyhow!("{e}"))?;
-
-        // Ждём TUNNEL_BUILD_OK за build_timeout_ms
-        let resp_frame = timeout(
-            Duration::from_millis(self.cfg.tunnel.build_timeout_ms),
-            stream.recv(),
-        ).await
-            .map_err(|_| anyhow::anyhow!("TUNNEL_BUILD timeout"))?
-            .map_err(|e| anyhow::anyhow!("recv: {e}"))?;
+        // relay должен быть именно тем узлом, которого мы выбрали (NodeID из рукопожатия канала);
+        // соединение новое или из пула (transport.reuse_connections). Ждём TUNNEL_BUILD_OK за build_timeout_ms
+        let (resp_frame, _) = crate::rpc::pool::request(crate::rpc::pool::Scope::Tunnel, addr, Some(&relay.node_id), frame,
+            self.cfg.transport.connect_timeout_ms, self.cfg.transport.read_timeout_ms, self.cfg.tunnel.build_timeout_ms).await?
+            .ok_or_else(|| anyhow::anyhow!("TUNNEL_BUILD timeout"))?;
 
         if resp_frame.msg_type == MsgType::TunnelBuildFail || resp_frame.msg_type == MsgType::Error {
             bail!("relay {} refused tunnel build", relay);

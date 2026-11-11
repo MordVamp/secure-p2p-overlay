@@ -43,8 +43,15 @@ impl ReplayGuard {
 
     /// Проверить и запомнить. Err — сообщение вне окна или повтор.
     pub fn check(&mut self, message_id: &[u8], timestamp_ms: u64) -> Result<(), String> {
+        let w = self.window;
+        self.check_window(message_id, timestamp_ms, w)
+    }
+
+    /// То же с другим окном — для сообщений из почтового ящика DHT (лежат там до `mailbox.max_age_s`;
+    /// повтор такого сообщения отсекается ещё и по истории приёма).
+    pub fn check_window(&mut self, message_id: &[u8], timestamp_ms: u64, window: u64) -> Result<(), String> {
         let now = now_ms();
-        if timestamp_ms + self.window < now { return Err("сообщение старше окна анти-replay".into()); }
+        if timestamp_ms + window < now { return Err("сообщение старше окна анти-replay".into()); }
         if timestamp_ms > now + FUTURE_SKEW_MS { return Err("метка времени сообщения из будущего".into()); }
         if self.seen.contains_key(message_id) { return Err("повтор: message_id уже принят".into()); }
         if self.seen.len() > 50_000 { let w = self.window; self.seen.retain(|_, ts| now.saturating_sub(*ts) <= w); }

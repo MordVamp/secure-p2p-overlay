@@ -1,0 +1,56 @@
+# Сборка и тесты: узел (Rust) + Android-приложение. Узел кросс-компилируется под Android
+# и кладётся в APK; инструментальные тесты — в эмуляторе (x86_64, KVM на раннере ubuntu).
+name: android
+
+on:
+  push:
+    paths: ["src/**", "android/**", "Cargo.toml", ".github/workflows/android.yml"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "21" }
+
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: "aarch64-linux-android,x86_64-linux-android" }
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Тесты узла
+        run: cargo test
+
+      - name: Android SDK и NDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: "platforms;android-37.0 build-tools;36.1.0 ndk;29.0.14206865"
+
+      - name: Узел под Android
+        run: ANDROID_NDK_HOME=$ANDROID_HOME/ndk/29.0.14206865 android/build_node.sh release
+
+      - name: APK и JVM-тесты
+        working-directory: android
+        run: ./gradlew --no-daemon assembleDebug testDebugUnitTest
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apk
+          path: android/app/build/outputs/apk/debug/*.apk
+
+      - name: KVM для эмулятора
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm.rules
+          sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
+
+      - name: Инструментальные тесты (эмулятор)
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          script: cd android && ./gradlew --no-daemon connectedDebugAndroidTest

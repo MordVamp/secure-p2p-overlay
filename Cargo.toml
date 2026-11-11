@@ -69,6 +69,10 @@ serde_json       = { version = "1", features = ["std"] }
 clap    = { version = "4", features = ["derive"] }
 x509-parser = "0.18.1"
 
+[target.'cfg(unix)'.dependencies]
+# getifaddrs: выбор LAN-адреса для --advertise auto (Linux/Android)
+libc = "0.2"
+
 [dev-dependencies]
 tokio-test = "0.4"
 

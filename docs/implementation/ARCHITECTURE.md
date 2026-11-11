@@ -57,15 +57,33 @@ TCP + кадр 24 Б (TLS 1.3)  →  Kademlia DHT (поиск, подписан�
 
 ### 3.1. Входящее соединение
 
-`TcpListener::accept` → TLS-рукопожатие (тайм-аут `connect_timeout_ms`; NodeID пира — из сертификата) → `FramedStream`
-→ цикл: кадр → проверка версии → `RpcHandler::handle` → ответный кадр. Ошибка формата или версии → ERROR и закрытие;
-процесс продолжает работать.
+`TcpListener::accept` → рукопожатие канала TLS или AKE (тайм-аут `connect_timeout_ms`; NodeID пира — из рукопожатия) →
+чтение и запись в разных задачах: кадр → проверка версии → `RpcHandler::handle` → ответный кадр через задачу записи.
+Без пула (`reuse_connections: false`) — как раньше: запросы соединения по одному, простой между кадрами не дольше
+`read_timeout_ms`. С пулом — до 64 запросов соединения одновременно (ретранслятор, ждущий ответа следующего узла, не
+задерживает остальные) и простой до `idle_timeout_ms` (60 с). Недочитанный кадр — всегда `read_timeout_ms` (ТЗ §6).
+Ошибка формата или версии → ERROR и закрытие; процесс продолжает работать.
 
 ### 3.2. Исходящий RPC
 
-`rpc::dial_expect(addr, ожидаемый NodeID)` → TCP (с адреса узла, если он задан) + рукопожатие канала (TLS или AKE) со
-сверкой NodeID → `PendingRpc::register(request_id)` → отправка → задача-читатель доставляет ответ в
-`oneshot` по `request_id` → тайм-аут `rpc_timeout_ms` (ADR-01). Соединение на каждый запрос, без пула.
+Все исходящие запросы — PING, FIND_NODE, STORE, FIND_VALUE, TUNNEL_BUILD, отправка и пересылка TUNNEL_DATA — идут через
+`rpc::pool::request(addr, ожидаемый NodeID, кадр, тайм-аут ответа)`. Способ соединения задаёт
+`transport.reuse_connections` (ТЗ §6 допускает оба; ADR-39):
+
+| | `false` (по умолчанию, `config/node_config.yaml`) | `true` (`--reuse-connections`, `config/node_config_pool.yaml`) |
+|---|---|---|
+| Соединение | новое на каждый запрос: TCP + рукопожатие TLS/AKE со сверкой NodeID → запрос → ответ → закрытие (как до 11.11.2026) | одно к соседу на много запросов, в том числе одновременных; ответы — по `request_id` |
+| Привязка | — | запись пула = пара «адрес + ожидаемый NodeID»: соединение с другим NodeID не используется |
+| Закрытие | после ответа | простой `idle_timeout_ms / 2` (30 с — раньше сервера), ошибка, переполнение пула (`pool_max`, по давности) |
+| Обрыв | — | соединение закрылось до ответа → один повтор по новому (повтор безопасен: анти-replay по `message_id`, STORE идемпотентен) |
+
+Что идёт через пул, задаёт `transport.pool_scope` (ADR-40): `tunnels` (по умолчанию) — только TUNNEL_BUILD и
+TUNNEL_DATA к соседям по цепочке, DHT (PING, FIND_NODE, STORE, FIND_VALUE) — по-прежнему соединение на каждый запрос;
+`all` — всё через пул.
+
+Демонстрация и основные прогоны — в одном режиме для всей сети (ТЗ §6); сравнение режимов — сценарии 02, 06, 07 и `media`
+с `--node-config config/node_config_pool.yaml` (туннели) и `config/node_config_pool_all.yaml` (всё).
+Статистика пула — `GET /api/status` → `conn_pool`.
 
 ### 3.3. Поиск и хранение
 
@@ -144,7 +162,7 @@ Bootstrap-граф не выдаётся за физическую тополо�
 `store_quorum`, `ttl_seconds`, `republish_interval_seconds`, `refresh_interval_seconds`, тайм-ауты транспорта и RPC,
 `tunnel.min_relays`, `max_hops`, `ttl_seconds`, `pool_size`, `relay_selection`, `build_timeout_ms`, `ack_timeout_ms`,
 `security.channel`, `files.*`, `MAX_FRAME_PAYLOAD`. Продвинутый уровень — `config/node_config_advanced.yaml` (k = 4,
-3 relay, пул из 3, выбор `rating`). Флаги CLI `-p`, `-b`, `--host`, `--state-dir`, `--metrics-dir`, `--gui-port`,
+3 relay, пул из 3, выбор `rating`). Флаги CLI `-p`, `-b`, `--host`, `--advertise`, `--state-dir`, `--metrics-dir`, `--gui-port`,
 `--channel`, `--relay-selection`, `--pool-size` переопределяют файл; `--fault-drop` / `--fault-delay-ms` — только эксперименты.
 
 ## 7. Данные узла

@@ -138,6 +138,9 @@ impl Net {
                 "-p".into(), port.to_string(), "--gui-port".into(), gui.to_string(),
                 "--state-dir".into(), net.dir.join(format!("state{i}")).display().to_string(),
                 "--metrics-dir".into(), net.dir.join(format!("metrics{i}")).display().to_string(),
+                // офлайн-доставка (почтовые ящики DHT) добавляет периодические lookup — в экспериментах выключена,
+                // чтобы метрики сценариев были сопоставимы с прогонами до её появления
+                "--mailbox-poll".into(), "0".into(),
             ];
             let h = host(i);
             if h != "127.0.0.1" { args.push("--host".into()); args.push(h.clone()); }
@@ -175,6 +178,8 @@ impl Net {
     pub fn n(&self) -> usize { self.nodes.len() }
 
     pub fn id(&self, i: usize) -> String { self.nodes[i].id.clone() }
+
+    pub fn gui(&self, i: usize) -> u16 { self.nodes[i].gui }
 
     pub fn addr(&self, i: usize) -> String { format!("{}:{}", self.nodes[i].host, self.nodes[i].port) }
 

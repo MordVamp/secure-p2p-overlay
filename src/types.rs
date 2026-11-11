@@ -73,7 +73,13 @@ pub struct Contact {
     pub last_seen_ms:       u64,
     /// Время последней успешной верификации PONG (unix ms) (§15)
     pub last_verified_ms:   u64,
+    /// Узел соглашается быть ретранслятором чужих туннелей. `false` — режим «только клиент»
+    /// (телефон в режиме экономии): такие узлы не выбираются в цепочку. Старые записи без поля — `true`.
+    #[serde(default = "yes")]
+    pub relay:              bool,
 }
+
+fn yes() -> bool { true }
 
 impl Contact {
     /// `host:port` — как адрес выглядит в текстах ошибок.
@@ -89,6 +95,7 @@ impl Contact {
             port: addr.port(),
             last_seen_ms:     now,
             last_verified_ms: 0,
+            relay:            true,
         }
     }
 
