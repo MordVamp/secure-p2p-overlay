@@ -21,6 +21,9 @@ transport:
   protocol_version:    1
   connect_timeout_ms:  3000
   read_timeout_ms:     5000
+  reuse_connections:   true           # пул соединений для туннелей (ТЗ §6 допускает оба подхода; ADR-39…41)
+  pool_scope:          tunnels        # через пул — туннели; DHT — новое соединение на каждый запрос
+  idle_timeout_ms:     60000          # простой соединения: входящее закрывается через 60 с, из пула — через 30 с
 
 node:
   state_dir:       ./state/node-01

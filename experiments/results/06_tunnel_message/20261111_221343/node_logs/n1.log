@@ -1,0 +1,77 @@
+2026-11-11T19:13:43.665350Z  INFO p2p_overlay::identity::node_identity: Generating new identity in "logs/scenarios/s06_1794424423_7400/state1"
+2026-11-11T19:13:43.666216Z  INFO p2p_overlay::identity::node_identity: NodeID = 449f7c543363174036c2a594e2427b8d5c252c196044197d715c86337241ccae
+2026-11-11T19:13:43.668532Z  INFO p2p_overlay::rpc::pool: Соединения между узлами переиспользуются: туннели; DHT — соединение на каждый запрос (пул до 128, простой 30000 мс)
+2026-11-11T19:13:43.669020Z  INFO p2p_overlay::node: Listening on 0.0.0.0:7401 NodeID=449f7c54
+2026-11-11T19:13:43.669135Z  INFO p2p_overlay::gui::http: GUI: http://127.0.0.1:7418/
+2026-11-11T19:13:43.669261Z  INFO p2p_overlay::dht::node: Bootstrap: connecting to 1 peers
+2026-11-11T19:13:43.676422Z  INFO p2p_overlay::rpc: PONG from 8e8ffb16@127.0.0.1:7400 rtt=7ms
+2026-11-11T19:13:43.676501Z  INFO p2p_overlay::dht::node: Bootstrap peer 127.0.0.1:7400 (8e8ffb16) reachable, NodeID=8e8ffb163646d8c7e0d75d9334bd20af327bfb322985f2e9d5fe82a09e6dc78b
+2026-11-11T19:13:43.676547Z  INFO p2p_overlay::dht::node: Starting self-lookup NodeID=449f7c54
+2026-11-11T19:13:43.676581Z  INFO p2p_overlay::dht::lookup: [lookup-57294c90] start target=449f7c54
+2026-11-11T19:13:43.682731Z  INFO p2p_overlay::dht::lookup: [lookup-57294c90] done target=449f7c54 closest=1 rpc=1 iter=2 dur=6ms
+2026-11-11T19:13:43.683009Z  INFO p2p_overlay::dht::node: Self-lookup done: 1 closest contacts, 1 RPC, 2 iter, 6ms
+2026-11-11T19:13:43.683131Z  INFO p2p_overlay::dht::node: Routing table: 1 contacts in 1 non-empty buckets
+2026-11-11T19:13:43.684671Z  INFO p2p_overlay::dht::lookup: [lookup-2c39b261] start target=4a3fa3df
+2026-11-11T19:13:43.690286Z  INFO p2p_overlay::dht::lookup: [lookup-2c39b261] done target=4a3fa3df closest=1 rpc=1 iter=2 dur=6ms
+2026-11-11T19:13:43.728974Z  INFO p2p_overlay::node: NodeRecord опубликован на 2 репликах
+2026-11-11T19:13:48.986125Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=bd847140 hop=0/2 from=259cf028@127.0.0.1:7405
+2026-11-11T19:13:49.241709Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=3af49688 hop=0/2 from=d820e5b7@127.0.0.1:7409
+2026-11-11T19:13:49.451822Z  INFO p2p_overlay::dht::lookup: [lookup-2715d251] start target=d14477a1
+2026-11-11T19:13:49.476953Z  INFO p2p_overlay::dht::lookup: [lookup-2715d251] done target=d14477a1 closest=3 rpc=6 iter=3 dur=25ms
+2026-11-11T19:13:49.477195Z  INFO p2p_overlay::tunnel::manager: Building tunnel to d14477a1
+2026-11-11T19:13:49.485871Z  INFO p2p_overlay::tunnel::builder: [tunnel-202c49c3] hop 0 confirmed: cdfb98cc@127.0.0.1:7402
+2026-11-11T19:13:49.493606Z  INFO p2p_overlay::tunnel::builder: [tunnel-202c49c3] hop 1 confirmed: 857a089f@127.0.0.1:7403
+2026-11-11T19:13:49.493703Z  INFO p2p_overlay::tunnel::session: [tunnel-202c49c3] Building → Active
+2026-11-11T19:13:49.493744Z  INFO p2p_overlay::tunnel::builder: [tunnel-202c49c3] ACTIVE — 2 hops [cdfb98cc → 857a089f → d14477a1], build took 16ms
+2026-11-11T19:13:49.510235Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=15ms
+2026-11-11T19:13:49.510360Z  INFO p2p_overlay::app::messenger: → msg b452d660 to d14477a1 (7 bytes), ждём APP_ACK
+2026-11-11T19:13:49.600374Z  INFO p2p_overlay::app::messenger: ← msg 9c398e82 from d14477a1 kind=Ack
+2026-11-11T19:13:49.606613Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=3ms
+2026-11-11T19:13:49.606763Z  INFO p2p_overlay::app::messenger: → msg 654bd680 to d14477a1 (7 bytes), ждём APP_ACK
+2026-11-11T19:13:49.640697Z  INFO p2p_overlay::app::messenger: ← msg 746e9364 from d14477a1 kind=Ack
+2026-11-11T19:13:49.647036Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=3ms
+2026-11-11T19:13:49.647179Z  INFO p2p_overlay::app::messenger: → msg 00509dcf to d14477a1 (7 bytes), ждём APP_ACK
+2026-11-11T19:13:49.685884Z  INFO p2p_overlay::app::messenger: ← msg e68cd43f from d14477a1 kind=Ack
+2026-11-11T19:13:50.042685Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=9788fc3d hop=0/2 from=fb081613@127.0.0.1:7408
+2026-11-11T19:13:50.212870Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=b679dab7 hop=0/2 from=d820e5b7@127.0.0.1:7409
+2026-11-11T19:13:50.449055Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=f6919b09 hop=0/2 from=8e8ffb16@127.0.0.1:7400
+2026-11-11T19:13:51.306885Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=eaa6cf61 hop=0/2 from=d14477a1@127.0.0.1:7410
+2026-11-11T19:13:51.594658Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=8c27a70b hop=0/2 from=cdfb98cc@127.0.0.1:7402
+2026-11-11T19:13:51.808980Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=74efb6ba hop=1/2 from=d14477a1@127.0.0.1:7410
+2026-11-11T19:13:51.900221Z  INFO p2p_overlay::dht::lookup: [lookup-2585c11d] start target=40b9c06a
+2026-11-11T19:13:51.913074Z  INFO p2p_overlay::dht::lookup: [lookup-2585c11d] done target=40b9c06a closest=3 rpc=3 iter=2 dur=13ms
+2026-11-11T19:13:51.913389Z  INFO p2p_overlay::tunnel::manager: Building tunnel to 40b9c06a
+2026-11-11T19:13:51.915058Z  INFO p2p_overlay::tunnel::builder: [tunnel-9d39f554] hop 0 confirmed: 4c41e9c9@127.0.0.1:7414
+2026-11-11T19:13:51.916554Z  INFO p2p_overlay::tunnel::builder: [tunnel-9d39f554] hop 1 confirmed: 79da7760@127.0.0.1:7406
+2026-11-11T19:13:51.916639Z  INFO p2p_overlay::tunnel::session: [tunnel-9d39f554] Building → Active
+2026-11-11T19:13:51.916709Z  INFO p2p_overlay::tunnel::builder: [tunnel-9d39f554] ACTIVE — 2 hops [4c41e9c9 → 79da7760 → 40b9c06a], build took 3ms
+2026-11-11T19:13:51.928726Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=9ms
+2026-11-11T19:13:51.928879Z  INFO p2p_overlay::app::messenger: → msg 128822e3 to 40b9c06a (8 bytes), ждём APP_ACK
+2026-11-11T19:13:52.000979Z  INFO p2p_overlay::app::messenger: ← msg 60b017c8 from 40b9c06a kind=Ack
+2026-11-11T19:13:52.009706Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=3ms
+2026-11-11T19:13:52.009893Z  INFO p2p_overlay::app::messenger: → msg 0b200c3a to 40b9c06a (8 bytes), ждём APP_ACK
+2026-11-11T19:13:52.042607Z  INFO p2p_overlay::app::messenger: ← msg 42949492 from 40b9c06a kind=Ack
+2026-11-11T19:13:52.050250Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=3ms
+2026-11-11T19:13:52.050408Z  INFO p2p_overlay::app::messenger: → msg f3e60f85 to 40b9c06a (8 bytes), ждём APP_ACK
+2026-11-11T19:13:52.084081Z  INFO p2p_overlay::app::messenger: ← msg ef89f098 from 40b9c06a kind=Ack
+2026-11-11T19:13:52.577499Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=b790f230 hop=1/2 from=9253b96f@127.0.0.1:7411
+2026-11-11T19:13:53.601051Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=f7964ad1 hop=1/2 from=d820e5b7@127.0.0.1:7409
+2026-11-11T19:13:54.143117Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=527663d0 hop=1/2 from=cdfb98cc@127.0.0.1:7402
+2026-11-11T19:13:54.508894Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=5ed2ff1d hop=0/2 from=fb081613@127.0.0.1:7408
+2026-11-11T19:13:54.810583Z  INFO p2p_overlay::dht::lookup: [lookup-f05851e3] start target=9253b96f
+2026-11-11T19:13:54.832131Z  INFO p2p_overlay::dht::lookup: [lookup-f05851e3] done target=9253b96f closest=3 rpc=5 iter=3 dur=22ms
+2026-11-11T19:13:54.832332Z  INFO p2p_overlay::tunnel::manager: Building tunnel to 9253b96f
+2026-11-11T19:13:54.833510Z  INFO p2p_overlay::tunnel::builder: [tunnel-bfc502b3] hop 0 confirmed: 857a089f@127.0.0.1:7403
+2026-11-11T19:13:54.842113Z  INFO p2p_overlay::tunnel::builder: [tunnel-bfc502b3] hop 1 confirmed: 8e8ffb16@127.0.0.1:7400
+2026-11-11T19:13:54.842206Z  INFO p2p_overlay::tunnel::session: [tunnel-bfc502b3] Building → Active
+2026-11-11T19:13:54.842250Z  INFO p2p_overlay::tunnel::builder: [tunnel-bfc502b3] ACTIVE — 2 hops [857a089f → 8e8ffb16 → 9253b96f], build took 10ms
+2026-11-11T19:13:54.846407Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=2ms
+2026-11-11T19:13:54.846530Z  INFO p2p_overlay::app::messenger: → msg e3d06d2e to 9253b96f (8 bytes), ждём APP_ACK
+2026-11-11T19:13:54.913959Z  INFO p2p_overlay::app::messenger: ← msg 13b8067f from 9253b96f kind=Ack
+2026-11-11T19:13:54.921329Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=3ms
+2026-11-11T19:13:54.921513Z  INFO p2p_overlay::app::messenger: → msg d33d4896 to 9253b96f (8 bytes), ждём APP_ACK
+2026-11-11T19:13:54.951700Z  INFO p2p_overlay::app::messenger: ← msg c76ddd4e from 9253b96f kind=Ack
+2026-11-11T19:13:54.958228Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=3ms
+2026-11-11T19:13:54.958348Z  INFO p2p_overlay::app::messenger: → msg 384bc7f2 to 9253b96f (8 bytes), ждём APP_ACK
+2026-11-11T19:13:54.998637Z  INFO p2p_overlay::app::messenger: ← msg 226ada29 from 9253b96f kind=Ack
+2026-11-11T19:13:55.045438Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=31ecfffa hop=1/2 from=857a089f@127.0.0.1:7403

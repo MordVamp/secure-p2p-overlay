@@ -110,6 +110,10 @@ impl Run {
             "tunnel": cfg["tunnel"],
             "bootstrap_graph": topology,
             "channel": cfg["security"]["channel"].as_str().unwrap_or("tls"),
+            // соединения между узлами (ADR-39/40/41): пул (что через него идёт) или новое на каждый запрос
+            "connections": if cfg["transport"]["reuse_connections"].as_bool().unwrap_or(true) {
+                format!("pool:{}", cfg["transport"]["pool_scope"].as_str().unwrap_or("tunnels"))
+            } else { "per_request".into() },
             "config_file": var.config,
             "config": cfg,
             "params": params,

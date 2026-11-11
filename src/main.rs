@@ -68,6 +68,10 @@ struct Cli {
     #[arg(long)]
     reuse_connections: bool,
 
+    /// Не переиспользовать соединения: новое на каждый запрос (как до 11.11.2026; для сравнения режимов)
+    #[arg(long)]
+    no_reuse_connections: bool,
+
     /// Что идёт через пул: tunnels (по умолчанию; DHT — соединение на каждый запрос) | all
     #[arg(long)]
     pool_scope: Option<String>,
@@ -120,6 +124,7 @@ async fn main() -> Result<()> {
     if let Some(d) = cli.fault_delay_ms { cfg.fault.delay_ms = d; }
     if cli.no_relay { cfg.tunnel.relay = false; }
     if cli.reuse_connections { cfg.transport.reuse_connections = true; }
+    if cli.no_reuse_connections { cfg.transport.reuse_connections = false; }
     if let Some(s) = cli.pool_scope { cfg.transport.pool_scope = s; }
     if !["tunnels", "all"].contains(&cfg.transport.pool_scope.as_str()) {
         anyhow::bail!("transport.pool_scope = {}: допустимо tunnels, all", cfg.transport.pool_scope);

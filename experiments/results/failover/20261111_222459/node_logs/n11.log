@@ -1,0 +1,115 @@
+2026-11-11T19:25:01.960925Z  INFO p2p_overlay::identity::node_identity: Generating new identity in "logs/scenarios/failover_1794425099_7400/state11"
+2026-11-11T19:25:01.961931Z  INFO p2p_overlay::identity::node_identity: NodeID = b5de9738c5635563bfe1b8f21b7a930c6546c14f8554d7b1d0af214e7ffc9923
+2026-11-11T19:25:01.964780Z  INFO p2p_overlay::rpc::pool: Соединения между узлами переиспользуются: туннели; DHT — соединение на каждый запрос (пул до 128, простой 30000 мс)
+2026-11-11T19:25:01.965412Z  INFO p2p_overlay::node: Listening on 0.0.0.0:7411 NodeID=b5de9738
+2026-11-11T19:25:01.965463Z  INFO p2p_overlay::gui::http: GUI: http://127.0.0.1:7428/
+2026-11-11T19:25:01.965607Z  INFO p2p_overlay::dht::node: Bootstrap: connecting to 1 peers
+2026-11-11T19:25:01.972318Z  INFO p2p_overlay::rpc: PONG from fee6703b@127.0.0.1:7400 rtt=7ms
+2026-11-11T19:25:01.972394Z  INFO p2p_overlay::dht::node: Bootstrap peer 127.0.0.1:7400 (fee6703b) reachable, NodeID=fee6703b7bd6b2f1cac917acef8c90c5d49627d748721ed89388e3add05ddcaf
+2026-11-11T19:25:01.972440Z  INFO p2p_overlay::dht::node: Starting self-lookup NodeID=b5de9738
+2026-11-11T19:25:01.972479Z  INFO p2p_overlay::dht::lookup: [lookup-fcc1cc55] start target=b5de9738
+2026-11-11T19:25:02.001558Z  INFO p2p_overlay::dht::lookup: [lookup-fcc1cc55] done target=b5de9738 closest=3 rpc=5 iter=4 dur=29ms
+2026-11-11T19:25:02.001806Z  INFO p2p_overlay::dht::node: Self-lookup done: 3 closest contacts, 5 RPC, 4 iter, 29ms
+2026-11-11T19:25:02.001891Z  INFO p2p_overlay::dht::node: Routing table: 5 contacts in 4 non-empty buckets
+2026-11-11T19:25:02.003339Z  INFO p2p_overlay::dht::lookup: [lookup-37ed5d66] start target=17663675
+2026-11-11T19:25:02.034690Z  INFO p2p_overlay::dht::lookup: [lookup-37ed5d66] done target=17663675 closest=3 rpc=6 iter=3 dur=31ms
+2026-11-11T19:25:02.126335Z  INFO p2p_overlay::node: NodeRecord опубликован на 4 репликах
+2026-11-11T19:25:05.736341Z  INFO p2p_overlay::dht::lookup: [lookup-387e392d] start target=3bc89c5b
+2026-11-11T19:25:05.760796Z  INFO p2p_overlay::dht::lookup: [lookup-387e392d] done target=3bc89c5b closest=3 rpc=4 iter=2 dur=24ms
+2026-11-11T19:25:05.761217Z  INFO p2p_overlay::tunnel::manager: Building tunnel to 3bc89c5b
+2026-11-11T19:25:05.770309Z  INFO p2p_overlay::tunnel::builder: [tunnel-0751c1b5] hop 0 confirmed: 2fbfeb7e@127.0.0.1:7404
+2026-11-11T19:25:05.780695Z  INFO p2p_overlay::tunnel::builder: [tunnel-0751c1b5] hop 1 confirmed: 14b37c4b@127.0.0.1:7412
+2026-11-11T19:25:05.780811Z  INFO p2p_overlay::tunnel::session: [tunnel-0751c1b5] Building → Active
+2026-11-11T19:25:05.780895Z  INFO p2p_overlay::tunnel::builder: [tunnel-0751c1b5] ACTIVE — 2 hops [2fbfeb7e → 14b37c4b → 3bc89c5b], build took 19ms
+2026-11-11T19:25:05.800201Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=17ms
+2026-11-11T19:25:05.800372Z  INFO p2p_overlay::app::messenger: → msg 60d14f4f to 3bc89c5b (9 bytes), ждём APP_ACK
+2026-11-11T19:25:05.872867Z  INFO p2p_overlay::app::messenger: ← msg a083aa6e from 3bc89c5b kind=Ack
+2026-11-11T19:25:07.385369Z  WARN p2p_overlay::tunnel::manager: [tunnel-0751c1b5] send failed: TCP connect to 127.0.0.1:7404: Connection refused (os error 111)
+2026-11-11T19:25:07.385483Z  WARN p2p_overlay::tunnel::session: [tunnel-0751c1b5] Active → Dead (нет TUNNEL_ACK)
+2026-11-11T19:25:07.385648Z  WARN p2p_overlay::app::messenger: tunnel to 3bc89c5b failed: TCP connect to 127.0.0.1:7404: Connection refused (os error 111); перестраиваем маршрут
+2026-11-11T19:25:07.385731Z  INFO p2p_overlay::dht::lookup: [lookup-db4a966e] start target=3bc89c5b
+2026-11-11T19:25:07.406231Z  INFO p2p_overlay::dht::lookup: [lookup-db4a966e] done target=3bc89c5b closest=3 rpc=3 iter=2 dur=21ms
+2026-11-11T19:25:07.406536Z  INFO p2p_overlay::tunnel::manager: Building tunnel to 3bc89c5b
+2026-11-11T19:25:07.407299Z  WARN p2p_overlay::tunnel::builder: [tunnel-16543b13] hop 0 failed (2fbfeb7e@127.0.0.1:7404): TCP connect to 127.0.0.1:7404: Connection refused (os error 111)
+2026-11-11T19:25:07.407376Z  WARN p2p_overlay::tunnel::builder: [builder] attempt 1 failed: Hop 0 failed: TCP connect to 127.0.0.1:7404: Connection refused (os error 111)
+2026-11-11T19:25:07.409292Z  INFO p2p_overlay::tunnel::builder: [tunnel-a9daa605] hop 0 confirmed: 14b37c4b@127.0.0.1:7412
+2026-11-11T19:25:07.419390Z  INFO p2p_overlay::tunnel::builder: [tunnel-a9daa605] hop 1 confirmed: bb8d2f82@127.0.0.1:7406
+2026-11-11T19:25:07.419449Z  INFO p2p_overlay::tunnel::session: [tunnel-a9daa605] Building → Active
+2026-11-11T19:25:07.419480Z  INFO p2p_overlay::tunnel::builder: [tunnel-a9daa605] ACTIVE — 2 hops [14b37c4b → bb8d2f82 → 3bc89c5b], build took 12ms
+2026-11-11T19:25:07.435407Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=16ms
+2026-11-11T19:25:07.435523Z  INFO p2p_overlay::app::messenger: → msg 98e324a9 to 3bc89c5b (12 bytes), ждём APP_ACK
+2026-11-11T19:25:07.469211Z  INFO p2p_overlay::app::messenger: ← msg 44a42a8d from 3bc89c5b kind=Ack
+2026-11-11T19:25:09.786379Z  INFO p2p_overlay::dht::lookup: [lookup-0f23e007] start target=81e3f5c3
+2026-11-11T19:25:09.811033Z  INFO p2p_overlay::dht::lookup: [lookup-0f23e007] done target=81e3f5c3 closest=3 rpc=4 iter=2 dur=24ms
+2026-11-11T19:25:09.811429Z  INFO p2p_overlay::tunnel::manager: Building tunnel to 81e3f5c3
+2026-11-11T19:25:09.822501Z  INFO p2p_overlay::tunnel::builder: [tunnel-a8aad53e] hop 0 confirmed: 97ad6902@127.0.0.1:7402
+2026-11-11T19:25:09.830561Z  INFO p2p_overlay::tunnel::builder: [tunnel-a8aad53e] hop 1 confirmed: 9ba75faf@127.0.0.1:7401
+2026-11-11T19:25:09.830683Z  INFO p2p_overlay::tunnel::session: [tunnel-a8aad53e] Building → Active
+2026-11-11T19:25:09.830762Z  INFO p2p_overlay::tunnel::builder: [tunnel-a8aad53e] ACTIVE — 2 hops [97ad6902 → 9ba75faf → 81e3f5c3], build took 19ms
+2026-11-11T19:25:09.849817Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=16ms
+2026-11-11T19:25:09.849994Z  INFO p2p_overlay::app::messenger: → msg 21876964 to 81e3f5c3 (9 bytes), ждём APP_ACK
+2026-11-11T19:25:09.947226Z  INFO p2p_overlay::app::messenger: ← msg 4663f230 from 81e3f5c3 kind=Ack
+2026-11-11T19:25:11.459223Z  WARN p2p_overlay::tunnel::manager: [tunnel-a8aad53e] send failed: first hop 127.0.0.1:7402 replied Error (seq=0): next hop 127.0.0.1:7401: TCP connect to 127.0.0.1:7401: Connection refused (os error 111)
+2026-11-11T19:25:11.459386Z  WARN p2p_overlay::tunnel::session: [tunnel-a8aad53e] Active → Dead (нет TUNNEL_ACK)
+2026-11-11T19:25:11.459561Z  WARN p2p_overlay::app::messenger: tunnel to 81e3f5c3 failed: first hop 127.0.0.1:7402 replied Error (seq=0): next hop 127.0.0.1:7401: TCP connect to 127.0.0.1:7401: Connection refused (os error 111); перестраиваем маршрут
+2026-11-11T19:25:11.459651Z  INFO p2p_overlay::dht::lookup: [lookup-89b2d17a] start target=81e3f5c3
+2026-11-11T19:25:11.485167Z  INFO p2p_overlay::dht::lookup: [lookup-89b2d17a] done target=81e3f5c3 closest=3 rpc=3 iter=2 dur=26ms
+2026-11-11T19:25:11.485554Z  INFO p2p_overlay::tunnel::manager: Building tunnel to 81e3f5c3
+2026-11-11T19:25:11.487528Z  INFO p2p_overlay::tunnel::builder: [tunnel-c697f510] hop 0 confirmed: 97ad6902@127.0.0.1:7402
+2026-11-11T19:25:11.488039Z  WARN p2p_overlay::tunnel::builder: [tunnel-c697f510] hop 1 failed (9ba75faf@127.0.0.1:7401): TCP connect to 127.0.0.1:7401: Connection refused (os error 111)
+2026-11-11T19:25:11.488130Z  WARN p2p_overlay::tunnel::builder: [builder] attempt 1 failed: Hop 1 failed: TCP connect to 127.0.0.1:7401: Connection refused (os error 111)
+2026-11-11T19:25:11.490130Z  INFO p2p_overlay::tunnel::builder: [tunnel-2d57839e] hop 0 confirmed: 97ad6902@127.0.0.1:7402
+2026-11-11T19:25:11.498677Z  INFO p2p_overlay::tunnel::builder: [tunnel-2d57839e] hop 1 confirmed: ab431891@127.0.0.1:7405
+2026-11-11T19:25:11.498766Z  INFO p2p_overlay::tunnel::session: [tunnel-2d57839e] Building → Active
+2026-11-11T19:25:11.498814Z  INFO p2p_overlay::tunnel::builder: [tunnel-2d57839e] ACTIVE — 2 hops [97ad6902 → ab431891 → 81e3f5c3], build took 10ms
+2026-11-11T19:25:11.515907Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=17ms
+2026-11-11T19:25:11.516077Z  INFO p2p_overlay::app::messenger: → msg d41ae276 to 81e3f5c3 (12 bytes), ждём APP_ACK
+2026-11-11T19:25:11.556410Z  INFO p2p_overlay::app::messenger: ← msg 84537781 from 81e3f5c3 kind=Ack
+2026-11-11T19:25:11.967064Z  INFO p2p_overlay::tunnel::manager: Tunnel to 81e3f5c3 removed (DEAD)
+2026-11-11T19:25:11.967173Z  INFO p2p_overlay::tunnel::manager: Tunnel to 3bc89c5b removed (DEAD)
+2026-11-11T19:25:13.901401Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=53d165b4 hop=0/2 from=97ad6902@127.0.0.1:7402
+2026-11-11T19:25:15.609433Z  INFO p2p_overlay::identity::node_identity: Loading existing identity from "logs/scenarios/failover_1794425099_7400/state11/identity.key"
+2026-11-11T19:25:15.610056Z  INFO p2p_overlay::identity::node_identity: NodeID = b5de9738c5635563bfe1b8f21b7a930c6546c14f8554d7b1d0af214e7ffc9923
+2026-11-11T19:25:15.611663Z  INFO p2p_overlay::rpc::pool: Соединения между узлами переиспользуются: туннели; DHT — соединение на каждый запрос (пул до 128, простой 30000 мс)
+2026-11-11T19:25:15.612148Z  INFO p2p_overlay::node: Listening on 0.0.0.0:7411 NodeID=b5de9738
+2026-11-11T19:25:15.612209Z  INFO p2p_overlay::gui::http: GUI: http://127.0.0.1:7428/
+2026-11-11T19:25:15.612391Z  INFO p2p_overlay::dht::node: Bootstrap: connecting to 1 peers
+2026-11-11T19:25:15.618675Z  INFO p2p_overlay::rpc: PONG from fee6703b@127.0.0.1:7400 rtt=6ms
+2026-11-11T19:25:15.618757Z  INFO p2p_overlay::dht::node: Bootstrap peer 127.0.0.1:7400 (fee6703b) reachable, NodeID=fee6703b7bd6b2f1cac917acef8c90c5d49627d748721ed89388e3add05ddcaf
+2026-11-11T19:25:15.618807Z  INFO p2p_overlay::dht::node: Starting self-lookup NodeID=b5de9738
+2026-11-11T19:25:15.618842Z  INFO p2p_overlay::dht::lookup: [lookup-65d3528b] start target=b5de9738
+2026-11-11T19:25:15.639852Z  INFO p2p_overlay::dht::lookup: [lookup-65d3528b] done target=b5de9738 closest=3 rpc=6 iter=4 dur=21ms
+2026-11-11T19:25:15.639980Z  INFO p2p_overlay::dht::node: Self-lookup done: 3 closest contacts, 6 RPC, 4 iter, 21ms
+2026-11-11T19:25:15.640050Z  INFO p2p_overlay::dht::node: Routing table: 6 contacts in 5 non-empty buckets
+2026-11-11T19:25:15.641193Z  INFO p2p_overlay::dht::lookup: [lookup-85fe5129] start target=17663675
+2026-11-11T19:25:15.666040Z  INFO p2p_overlay::dht::lookup: [lookup-85fe5129] done target=17663675 closest=3 rpc=8 iter=3 dur=25ms
+2026-11-11T19:25:15.737131Z  INFO p2p_overlay::node: NodeRecord опубликован на 4 репликах
+2026-11-11T19:25:26.183229Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=974be9b8 hop=1/2 from=3bc89c5b@127.0.0.1:7414
+2026-11-11T19:25:30.102033Z  INFO p2p_overlay::dht::lookup: [lookup-729439d7] start target=ab431891
+2026-11-11T19:25:30.115596Z  INFO p2p_overlay::dht::lookup: [lookup-729439d7] done target=ab431891 closest=3 rpc=3 iter=2 dur=13ms
+2026-11-11T19:25:30.115827Z  INFO p2p_overlay::tunnel::manager: Building tunnel to ab431891
+2026-11-11T19:25:30.123765Z  INFO p2p_overlay::tunnel::builder: [tunnel-75ac9bea] hop 0 confirmed: bb8d2f82@127.0.0.1:7406
+2026-11-11T19:25:30.131352Z  INFO p2p_overlay::tunnel::builder: [tunnel-75ac9bea] hop 1 confirmed: b18cf94e@127.0.0.1:7413
+2026-11-11T19:25:30.131453Z  INFO p2p_overlay::tunnel::session: [tunnel-75ac9bea] Building → Active
+2026-11-11T19:25:30.131504Z  INFO p2p_overlay::tunnel::builder: [tunnel-75ac9bea] ACTIVE — 2 hops [bb8d2f82 → b18cf94e → ab431891], build took 16ms
+2026-11-11T19:25:30.151166Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=18ms
+2026-11-11T19:25:30.151342Z  INFO p2p_overlay::app::messenger: → msg 8b9ed7fd to ab431891 (9 bytes), ждём APP_ACK
+2026-11-11T19:25:30.233453Z  INFO p2p_overlay::app::messenger: ← msg e869b9a3 from ab431891 kind=Ack
+2026-11-11T19:25:31.746333Z  WARN p2p_overlay::tunnel::manager: [tunnel-75ac9bea] send failed: TCP connect to 127.0.0.1:7406: Connection refused (os error 111)
+2026-11-11T19:25:31.746436Z  WARN p2p_overlay::tunnel::session: [tunnel-75ac9bea] Active → Dead (нет TUNNEL_ACK)
+2026-11-11T19:25:31.746591Z  WARN p2p_overlay::app::messenger: tunnel to ab431891 failed: TCP connect to 127.0.0.1:7406: Connection refused (os error 111); перестраиваем маршрут
+2026-11-11T19:25:31.746682Z  INFO p2p_overlay::dht::lookup: [lookup-a1523ccb] start target=ab431891
+2026-11-11T19:25:31.759423Z  INFO p2p_overlay::dht::lookup: [lookup-a1523ccb] done target=ab431891 closest=3 rpc=2 iter=2 dur=13ms
+2026-11-11T19:25:31.759789Z  INFO p2p_overlay::tunnel::manager: Building tunnel to ab431891
+2026-11-11T19:25:31.760731Z  WARN p2p_overlay::tunnel::builder: [tunnel-61c29040] hop 0 failed (bb8d2f82@127.0.0.1:7406): TCP connect to 127.0.0.1:7406: Connection refused (os error 111)
+2026-11-11T19:25:31.760838Z  WARN p2p_overlay::tunnel::builder: [builder] attempt 1 failed: Hop 0 failed: TCP connect to 127.0.0.1:7406: Connection refused (os error 111)
+2026-11-11T19:25:31.763008Z  INFO p2p_overlay::tunnel::builder: [tunnel-0e135b79] hop 0 confirmed: b18cf94e@127.0.0.1:7413
+2026-11-11T19:25:31.772054Z  INFO p2p_overlay::tunnel::builder: [tunnel-0e135b79] hop 1 confirmed: 81e3f5c3@127.0.0.1:7410
+2026-11-11T19:25:31.772113Z  INFO p2p_overlay::tunnel::session: [tunnel-0e135b79] Building → Active
+2026-11-11T19:25:31.772147Z  INFO p2p_overlay::tunnel::builder: [tunnel-0e135b79] ACTIVE — 2 hops [b18cf94e → 81e3f5c3 → ab431891], build took 12ms
+2026-11-11T19:25:31.789404Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=17ms
+2026-11-11T19:25:31.789564Z  INFO p2p_overlay::app::messenger: → msg 6c9589bf to ab431891 (12 bytes), ждём APP_ACK
+2026-11-11T19:25:31.869908Z  INFO p2p_overlay::app::messenger: ← msg 299a1981 from ab431891 kind=Ack
+2026-11-11T19:25:35.612878Z  INFO p2p_overlay::tunnel::manager: Tunnel to ab431891 removed (DEAD)
+2026-11-11T19:25:38.258897Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=00188630 hop=1/2 from=97ad6902@127.0.0.1:7402
+2026-11-11T19:25:39.897924Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=0deb80aa hop=0/2 from=97ad6902@127.0.0.1:7402

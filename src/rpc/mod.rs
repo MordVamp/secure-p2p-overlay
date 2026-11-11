@@ -93,6 +93,9 @@ pub async fn dial_expect(addr: SocketAddr, connect_timeout_ms: u64, read_timeout
     ).await
         .map_err(|_| anyhow::anyhow!("connect timeout to {addr}"))?
         .map_err(|e| anyhow::anyhow!("TCP connect to {addr}: {e}"))?;
+    // Протокол «запрос — ответ» поверх долгих соединений (пул): без TCP_NODELAY небольшой кадр ждёт подтверждения
+    // предыдущего (алгоритм Нейгла + отложенный ACK получателя, до 40 мс). Ошибка не мешает соединению.
+    let _ = stream.set_nodelay(true);
     if let Some(a) = AKE.get() {
         let (s, peer) = timeout(Duration::from_millis(connect_timeout_ms), a.connect(stream, expected)).await
             .map_err(|_| anyhow::anyhow!("AKE handshake timeout to {addr}"))??;

@@ -68,9 +68,9 @@ TCP + кадр 24 Б (TLS 1.3)  →  Kademlia DHT (поиск, подписан�
 
 Все исходящие запросы — PING, FIND_NODE, STORE, FIND_VALUE, TUNNEL_BUILD, отправка и пересылка TUNNEL_DATA — идут через
 `rpc::pool::request(addr, ожидаемый NodeID, кадр, тайм-аут ответа)`. Способ соединения задаёт
-`transport.reuse_connections` (ТЗ §6 допускает оба; ADR-39):
+`transport.reuse_connections` (ТЗ §6 допускает оба; ADR-39, по умолчанию с 11.11.2026 — пул, ADR-41):
 
-| | `false` (по умолчанию, `config/node_config.yaml`) | `true` (`--reuse-connections`, `config/node_config_pool.yaml`) |
+| | `false` (`--no-reuse-connections`, `config/node_config_per_request.yaml`) | `true` (по умолчанию, `config/node_config.yaml`) |
 |---|---|---|
 | Соединение | новое на каждый запрос: TCP + рукопожатие TLS/AKE со сверкой NodeID → запрос → ответ → закрытие (как до 11.11.2026) | одно к соседу на много запросов, в том числе одновременных; ответы — по `request_id` |
 | Привязка | — | запись пула = пара «адрес + ожидаемый NodeID»: соединение с другим NodeID не используется |
@@ -82,7 +82,7 @@ TUNNEL_DATA к соседям по цепочке, DHT (PING, FIND_NODE, STORE, 
 `all` — всё через пул.
 
 Демонстрация и основные прогоны — в одном режиме для всей сети (ТЗ §6); сравнение режимов — сценарии 02, 06, 07 и `media`
-с `--node-config config/node_config_pool.yaml` (туннели) и `config/node_config_pool_all.yaml` (всё).
+с `--node-config config/node_config_per_request.yaml` (без пула) и `config/node_config_pool_all.yaml` (всё через пул).
 Статистика пула — `GET /api/status` → `conn_pool`.
 
 ### 3.3. Поиск и хранение

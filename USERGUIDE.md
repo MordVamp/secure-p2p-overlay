@@ -15,7 +15,7 @@
 ```bash
 cargo build --bins             # узел p2p-node и оркестратор p2p-orchestrator
 cargo build -p p2p-desktop     # настольное приложение (отдельно: тянет egui)
-cargo test                     # все тесты узла (114)
+cargo test                     # все тесты узла (157)
 bash scripts/run_tests.sh      # то же, с записью в logs/tests/
 ```
 
@@ -296,7 +296,7 @@ sudo -v && bash experiments/run_advanced.sh --with-root   # + сценарий 1
 | `dht.replication_factor` / `store_quorum` | 3 / 2 | STORE успешен при ≥2 из 3 реплик |
 | `dht.ttl_seconds` / `republish_interval_seconds` | 180 / 80 | срок жизни записи (и псевдонима) и период переопубликования |
 | `transport.connect_timeout_ms` / `read_timeout_ms` | 3000 / 5000 | тайм-ауты: установление соединения; ответ и дочитывание кадра |
-| `transport.reuse_connections` | `false` | пул соединений между узлами (`--reuse-connections`); `config/node_config_pool.yaml` — то же с пулом. Вся сеть — в одном режиме |
+| `transport.reuse_connections` | `true` | пул соединений между узлами (с 11.11.2026 по умолчанию); `--no-reuse-connections` или `config/node_config_per_request.yaml` — новое соединение на каждый запрос. Вся сеть — в одном режиме |
 | `transport.idle_timeout_ms` / `pool_max` | 60000 / 128 | простой соединения (из пула закрывается через половину); размер пула |
 | `transport.pool_scope` | `tunnels` | что идёт через пул (`--pool-scope`): `tunnels` — только туннели, DHT — соединение на каждый запрос; `all` — всё (`config/node_config_pool_all.yaml`) |
 | `tunnel.min_relays` / `max_hops` | 2 / 5 | длина цепочки relay |

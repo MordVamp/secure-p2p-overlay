@@ -1,0 +1,52 @@
+2026-11-11T19:16:17.765346Z  INFO p2p_overlay::identity::node_identity: Generating new identity in "logs/scenarios/ch_ake_1794424574_7446/state20"
+2026-11-11T19:16:17.765921Z  INFO p2p_overlay::identity::node_identity: NodeID = 49e0b6437e29fe236339d0d7085a453dda6d08a1d88663407723566ccbc9a9ea
+2026-11-11T19:16:17.766094Z  INFO p2p_overlay::rpc::pool: Соединения между узлами переиспользуются: туннели; DHT — соединение на каждый запрос (пул до 128, простой 30000 мс)
+2026-11-11T19:16:17.766436Z  INFO p2p_overlay::node: Listening on 0.0.0.0:7466 NodeID=49e0b643
+2026-11-11T19:16:17.766451Z  INFO p2p_overlay::gui::http: GUI: http://127.0.0.1:7489/
+2026-11-11T19:16:17.766611Z  INFO p2p_overlay::dht::node: Bootstrap: connecting to 1 peers
+2026-11-11T19:16:17.792370Z  INFO p2p_overlay::rpc: PONG from 75207539@127.0.0.1:7446 rtt=26ms
+2026-11-11T19:16:17.792459Z  INFO p2p_overlay::dht::node: Bootstrap peer 127.0.0.1:7446 (75207539) reachable, NodeID=75207539589be878c51e45e2fb5b0f9e29eb13f93edaf1a2554c63c517a2266b
+2026-11-11T19:16:17.792523Z  INFO p2p_overlay::dht::node: Starting self-lookup NodeID=49e0b643
+2026-11-11T19:16:17.792577Z  INFO p2p_overlay::dht::lookup: [lookup-20aef1db] start target=49e0b643
+2026-11-11T19:16:17.862756Z  INFO p2p_overlay::dht::lookup: [lookup-20aef1db] done target=49e0b643 closest=4 rpc=4 iter=3 dur=70ms
+2026-11-11T19:16:17.862994Z  INFO p2p_overlay::dht::node: Self-lookup done: 4 closest contacts, 4 RPC, 3 iter, 70ms
+2026-11-11T19:16:17.863082Z  INFO p2p_overlay::dht::node: Routing table: 4 contacts in 3 non-empty buckets
+2026-11-11T19:16:17.864411Z  INFO p2p_overlay::dht::lookup: [lookup-f339dd16] start target=feeba54d
+2026-11-11T19:16:17.998707Z  INFO p2p_overlay::dht::lookup: [lookup-f339dd16] done target=feeba54d closest=4 rpc=9 iter=3 dur=134ms
+2026-11-11T19:16:18.144077Z  INFO p2p_overlay::node: NodeRecord опубликован на 4 репликах
+2026-11-11T19:16:21.343935Z  INFO p2p_overlay::rpc: PONG from f5a52b88@127.0.0.1:7457 rtt=30ms
+2026-11-11T19:16:23.221420Z  INFO p2p_overlay::dht::lookup: [lookup-9e530f9e] start target=238708db
+2026-11-11T19:16:23.417065Z  INFO p2p_overlay::dht::lookup: [lookup-9e530f9e] done target=238708db closest=4 rpc=9 iter=3 dur=196ms
+2026-11-11T19:16:24.300281Z  INFO p2p_overlay::dht::lookup: [lookup-d283bcde] start target=4ea44d5f
+2026-11-11T19:16:24.362653Z  INFO p2p_overlay::dht::lookup: [lookup-d283bcde] done target=4ea44d5f closest=4 rpc=4 iter=2 dur=62ms
+2026-11-11T19:16:26.723853Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=27241efb hop=1/3 from=3a2de5b1@127.0.0.1:7459
+2026-11-11T19:16:28.973074Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=b277ec8e hop=1/3 from=3a2de5b1@127.0.0.1:7459
+2026-11-11T19:16:29.376931Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=ee133930 hop=0/3 from=3c1a1bd1@127.0.0.1:7453
+2026-11-11T19:16:29.736973Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=e474c81d hop=1/3 from=2cad9b82@127.0.0.1:7463
+2026-11-11T19:16:30.027206Z  INFO p2p_overlay::app::messenger: ← msg fff6586c from 81b3430a kind=Text
+2026-11-11T19:16:30.028816Z  INFO p2p_overlay::dht::lookup: [lookup-9f8beb5e] start target=81b3430a
+2026-11-11T19:16:30.187539Z  INFO p2p_overlay::dht::lookup: [lookup-9f8beb5e] done target=81b3430a closest=4 rpc=9 iter=3 dur=159ms
+2026-11-11T19:16:30.187806Z  INFO p2p_overlay::tunnel::manager: Building tunnel to 81b3430a
+2026-11-11T19:16:30.211758Z  INFO p2p_overlay::tunnel::builder: [tunnel-8263e8c7] hop 0 confirmed: d4ac37f0@127.0.0.1:7461
+2026-11-11T19:16:30.233842Z  INFO p2p_overlay::tunnel::builder: [tunnel-8263e8c7] hop 1 confirmed: e996fe4a@127.0.0.1:7452
+2026-11-11T19:16:30.265870Z  INFO p2p_overlay::tunnel::builder: [tunnel-8263e8c7] hop 2 confirmed: f5a52b88@127.0.0.1:7457
+2026-11-11T19:16:30.265988Z  INFO p2p_overlay::tunnel::session: [tunnel-8263e8c7] Building → Active
+2026-11-11T19:16:30.266051Z  INFO p2p_overlay::tunnel::builder: [tunnel-8263e8c7] ACTIVE — 3 hops [d4ac37f0 → e996fe4a → f5a52b88 → 81b3430a], build took 79ms
+2026-11-11T19:16:30.314974Z  INFO p2p_overlay::tunnel::builder: [tunnel-6faa4ecc] hop 0 confirmed: f509615a@127.0.0.1:7448
+2026-11-11T19:16:30.353042Z  INFO p2p_overlay::tunnel::builder: [tunnel-6faa4ecc] hop 1 confirmed: 20c54052@127.0.0.1:7449
+2026-11-11T19:16:30.354711Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=85ms
+2026-11-11T19:16:30.388385Z  INFO p2p_overlay::tunnel::builder: [tunnel-6faa4ecc] hop 2 confirmed: 238708db@127.0.0.1:7458
+2026-11-11T19:16:30.388442Z  INFO p2p_overlay::tunnel::session: [tunnel-6faa4ecc] Building → Active
+2026-11-11T19:16:30.388472Z  INFO p2p_overlay::tunnel::builder: [tunnel-6faa4ecc] ACTIVE — 3 hops [f509615a → 20c54052 → 238708db → 81b3430a], build took 119ms
+2026-11-11T19:16:30.401968Z  INFO p2p_overlay::app::messenger: ← msg 022933f6 from 81b3430a kind=Text
+2026-11-11T19:16:30.408156Z  INFO p2p_overlay::tunnel::builder: [tunnel-95ba6214] hop 0 confirmed: 2cad9b82@127.0.0.1:7463
+2026-11-11T19:16:30.420719Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=14ms
+2026-11-11T19:16:30.433536Z  INFO p2p_overlay::tunnel::builder: [tunnel-95ba6214] hop 1 confirmed: 3a2de5b1@127.0.0.1:7459
+2026-11-11T19:16:30.444211Z  INFO p2p_overlay::app::messenger: ← msg 59450712 from 81b3430a kind=Text
+2026-11-11T19:16:30.454199Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=8ms
+2026-11-11T19:16:30.456131Z  INFO p2p_overlay::tunnel::builder: [tunnel-95ba6214] hop 2 confirmed: 49d80dd9@127.0.0.1:7456
+2026-11-11T19:16:30.456212Z  INFO p2p_overlay::tunnel::session: [tunnel-95ba6214] Building → Active
+2026-11-11T19:16:30.456254Z  INFO p2p_overlay::tunnel::builder: [tunnel-95ba6214] ACTIVE — 3 hops [2cad9b82 → 3a2de5b1 → 49d80dd9 → 81b3430a], build took 68ms
+2026-11-11T19:16:31.536996Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=c0414d06 hop=2/3 from=6742b568@127.0.0.1:7460
+2026-11-11T19:16:32.109643Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=45b228fc hop=2/3 from=3c1a1bd1@127.0.0.1:7453
+2026-11-11T19:16:34.546956Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=420ac292 hop=1/3 from=2cad9b82@127.0.0.1:7463

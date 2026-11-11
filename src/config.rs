@@ -141,8 +141,9 @@ pub struct TransportConfig {
     /// READ_TIMEOUT_MS (§5): ожидание ответа на запрос и дочитывание начатого кадра.
     pub read_timeout_ms:        u64,
     /// Переиспользовать соединения между узлами (ТЗ §6 допускает оба подхода): одно TLS/AKE-соединение к соседу
-    /// на много запросов. `false` — новое соединение на каждый запрос (как до 11.11.2026).
-    #[serde(default)]
+    /// на много запросов (что именно — `pool_scope`). По умолчанию с 11.11.2026 — `true` (ADR-41);
+    /// `false` — новое соединение на каждый запрос, как раньше.
+    #[serde(default = "default_true")]
     pub reuse_connections:      bool,
     /// Простой соединения без начатого кадра: входящее закрывается через `idle_timeout_ms`,
     /// исходящее из пула — через половину этого времени (раньше сервера, чтобы не писать в закрытое).
@@ -170,7 +171,7 @@ impl Default for TransportConfig {
             protocol_version:   1,
             connect_timeout_ms: 3000,
             read_timeout_ms:    5000,
-            reuse_connections:  false,
+            reuse_connections:  true,
             idle_timeout_ms:    default_idle_ms(),
             pool_max:           default_pool_max(),
             pool_scope:         default_pool_scope(),

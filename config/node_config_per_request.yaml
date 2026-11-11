@@ -1,0 +1,58 @@
+# Как node_config.yaml, но без пула: новое соединение на каждый запрос (для сравнения режимов, ADR-41)
+# Все параметры меняются без правки исходного кода (§5 ТЗ)
+
+level: simplified   # simplified | advanced
+
+dht:
+  node_id_bits:               256
+  k_bucket_size:              3       # simplified=3 / advanced=4
+  alpha:                      3
+  replication_factor:         3
+  store_quorum:               2       # STORE успешен при ≥2 из R=3 реплик (§10.1)
+  ttl_seconds:                180
+  republish_interval_seconds: 80
+  refresh_interval_seconds:   60
+  ping_timeout_ms:            5000    # PING_TIMEOUT_MS (§5)
+  rpc_timeout_ms:             5000    # READ_TIMEOUT_MS для RPC
+
+transport:
+  max_frame_payload:   65536          # MAX_FRAME_PAYLOAD (§5)
+  protocol_version:    1              # PROTOCOL_VERSION
+  connect_timeout_ms:  3000           # CONNECT_TIMEOUT_MS (§5)
+  read_timeout_ms:     5000           # READ_TIMEOUT_MS (§5)
+  reuse_connections:   false          # новое соединение на каждый запрос — как до 11.11.2026 (для сравнения, ADR-41)
+
+node:
+  state_dir:       ./state/node-01    # NODE_STATE_DIR (§5)
+  listen_host:     0.0.0.0            # LISTEN_HOST (§5)
+  listen_port:     7001               # LISTEN_PORT (§5)
+  advertise_host:  ""                 # адрес для пиров при 0.0.0.0: IP в LAN или auto (подключение телефона)
+  bootstrap_peers: []                 # BOOTSTRAP_PEERS (§5) — пусто у seed
+  log_level:       INFO               # LOG_LEVEL (§5)
+  metrics_dir:     ./metrics/node-01
+
+tunnel:
+  min_relays:       2
+  max_hops:         5
+  ttl_seconds:      600
+  pool_size:        1
+  build_timeout_ms: 15000
+  ack_timeout_ms:   5000
+  relay_selection:  closest           # closest | random | rating (продвинутый уровень — rating)
+  relay:            true              # false — «только клиент»: не ретранслировать чужие туннели
+
+security:
+  session_id_ttl_seconds: 3600
+  channel: tls                        # tls | ake (собственное рукопожатие, §11.3) — вся сеть одинаково
+
+files:                                # передача файлов (§13.2)
+  max_bytes:            67108864      # 64 МиБ
+  block_size:           40960         # 40 КиБ
+  window:               8
+  incomplete_timeout_s: 60
+
+mailbox:                              # офлайн-доставка: почтовые ящики в DHT (PROTOCOL §7.7)
+  enabled:          true
+  poll_interval_s:  60                # как часто проверять ящики собеседников
+  max_age_s:        604800            # 7 суток — дольше письмо не хранится и не принимается
+  max_messages:     20                # на один ящик (старые вытесняются)

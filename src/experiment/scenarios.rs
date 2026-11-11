@@ -654,8 +654,8 @@ async fn schannel(a: &Args) -> Result<bool> {
 // Режимы — способы соединений между узлами (`MEDIA_MODES`); сравнение — главный результат шага.
 
 /// (название режима, дополнительные флаги узла)
-const MEDIA_MODES: &[(&str, &[&str])] = &[("per_request", &[]), ("pool", &["--reuse-connections"]),
-    ("pool_all", &["--reuse-connections", "--pool-scope", "all"])];
+const MEDIA_MODES: &[(&str, &[&str])] = &[("per_request", &["--no-reuse-connections"]), ("pool", &[]),
+    ("pool_all", &["--pool-scope", "all"])];
 
 const MEDIA_PACKETS: u32 = 250;     // 5 с потока
 const MEDIA_INTERVAL_MS: u64 = 20;

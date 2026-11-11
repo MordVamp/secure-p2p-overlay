@@ -317,6 +317,7 @@ impl Node {
                     match res {
                         Ok((stream, peer_addr)) => {
                             debug!("Connection from {}", peer_addr);
+                            let _ = stream.set_nodelay(true);   // см. rpc::dial_expect: без Нейгла и отложенных ответов
                             let handler  = self.make_handler();
                             let timeout  = self.cfg.transport.read_timeout_ms;
                             let handshake_ms = self.cfg.transport.connect_timeout_ms;
