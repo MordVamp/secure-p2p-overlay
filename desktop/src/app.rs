@@ -151,6 +151,20 @@ fn tz_offset_s() -> i64 {
     sign * (h * 3600 + m * 60)
 }
 
+/// Размер для людей, с запятой: 950 КиБ, 12,5 МиБ, 3,2 ГиБ.
+fn human_bytes(n: u64) -> String {
+    let f = n as f64;
+    if f >= 1073741824.0 { format!("{:.1} ГиБ", f / 1073741824.0).replace('.', ",") }
+    else if f >= 1048576.0 { format!("{:.1} МиБ", f / 1048576.0).replace('.', ",") }
+    else { format!("{:.0} КиБ", f / 1024.0) }
+}
+
+/// Открыть папку в файловом менеджере системы.
+fn open_in_file_manager(dir: &std::path::Path) -> std::io::Result<()> {
+    let cmd = if cfg!(target_os = "windows") { "explorer" } else if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+    std::process::Command::new(cmd).arg(dir).spawn().map(|_| ())
+}
+
 fn hex_bytes(h: &str) -> Vec<u8> {
     (0..h.len() / 2).filter_map(|i| u8::from_str_radix(&h[2 * i..2 * i + 2], 16).ok()).collect()
 }
@@ -528,7 +542,10 @@ fn spawn_poller(port: Arc<AtomicU16>, tx: Sender<Msg>, ctx: egui::Context) {
                 if let Ok(h) = api::get(p, "/api/history", &[("limit", "1000")]) {
                     let _ = tx.send(Msg::History(h["entries"].as_array().cloned().unwrap_or_default()));
                 }
-                if let Ok(f) = api::get(p, "/api/files", &[]) { let _ = tx.send(Msg::Files(f)); }
+                if let Ok(mut f) = api::get(p, "/api/files", &[]) {
+                    if let Ok(d) = api::get(p, "/api/downloads", &[]) { f["folders"] = d["folders"].clone(); }
+                    let _ = tx.send(Msg::Files(f));
+                }
                 if let Ok(r) = api::get(p, "/api/relays", &[]) { let _ = tx.send(Msg::Relays(r)); }
             }
             ctx.request_repaint();
@@ -872,6 +889,8 @@ impl App {
             "sent" => ("✔", TEXT()),
             "pending" => ("⏳", YELLOW()),
             "received" => ("", TEXT()),
+            // запись о звонке — не сообщение, статуса доставки у неё нет
+            s if s.starts_with("call_") => ("", TEXT()),
             _ => ("✖", RED()),
         };
         let footer = format!("{}  {icon}  {}", self.time(m.ts), m.rtt.map(|r| format!("{r} мс")).unwrap_or_default());
@@ -1098,10 +1117,34 @@ impl App {
         ui.add_space(12.0);
         card(ui, |ui| {
             section_title(ui, "Передачи");
-            if let Some(d) = self.files["downloads_dir"].as_str() {
-                ui.label(RichText::new(format!("Полученные файлы сохраняются в {d}")).size(12.5).color(MUTED()));
-            }
             let list = self.files["transfers"].as_array().cloned().unwrap_or_default();
+            if let Some(d) = self.files["downloads_dir"].as_str().map(str::to_owned) {
+                let d = d.as_str();
+                ui.label(RichText::new(format!("Полученные файлы — в {d}/<папка собеседника>/ (первые 16 символов его NodeID); \
+                                                больше 2 ГиБ — в подпапке «Большие файлы»")).size(12.5).color(MUTED()));
+                // папки собеседников на диске (переживают перезапуск узла)
+                let folders = self.files["folders"].as_array().cloned().unwrap_or_default();
+                if !folders.is_empty() {
+                    ui.add_space(4.0);
+                    ui.horizontal_wrapped(|ui| {
+                        for f in folders {
+                            let prefix = api::s(&f, "peer_prefix");
+                            let n = f["files"].as_array().map_or(0, |a| a.len());
+                            let large = f["files"].as_array().map_or(0, |a| a.iter().filter(|x| x["large"] == true).count());
+                            let owner = if prefix.is_empty() { "общая папка".to_owned() } else {
+                                self.s.contacts.iter().find(|c| c.node_id.starts_with(&prefix)).map(|c| c.name.clone())
+                                    .or_else(|| self.chats.iter().find(|c| c.peer.starts_with(&prefix)).map(|c| self.display_name(&c.peer)))
+                                    .unwrap_or_else(|| format!("{prefix}…"))
+                            };
+                            let dir = std::path::Path::new(d).join(&prefix);
+                            let label = if large > 0 { format!("🗀 {owner} · {n} (больших: {large})") } else { format!("🗀 {owner} · {n}") };
+                            if ui.button(label).on_hover_text(dir.display().to_string()).clicked() {
+                                if let Err(e) = open_in_file_manager(&dir) { self.toast(format!("Не открыть папку: {e}"), RED()); }
+                            }
+                        }
+                    });
+                }
+            }
             if list.is_empty() { ui.label(RichText::new("передач пока не было").color(MUTED())); return; }
             egui::Grid::new("files_grid").num_columns(6).striped(true).spacing([18.0, 8.0]).show(ui, |ui| {
                 for h in ["", "Файл", "Собеседник", "Размер", "Прогресс", "Статус"] { ui.label(RichText::new(h).strong()); }
@@ -1113,7 +1156,7 @@ impl App {
                     ui.label(&name).on_hover_text(if path.is_empty() { name.clone() } else { path });
                     ui.label(self.display_name(&api::s(t, "peer")));
                     let size = api::u(t, "size").unwrap_or(0) as f64;
-                    ui.label(if size >= 1048576.0 { format!("{:.1} МиБ", size / 1048576.0) } else { format!("{:.0} КиБ", size / 1024.0) });
+                    ui.label(human_bytes(size as u64));
                     let (done, all) = (api::u(t, "done_blocks").unwrap_or(0) as f32, api::u(t, "blocks").unwrap_or(1).max(1) as f32);
                     ui.add(egui::ProgressBar::new(done / all).desired_width(160.0).text(format!("{}/{}", done as u64, all as u64)));
                     let st = api::s(t, "status");
@@ -1123,9 +1166,15 @@ impl App {
                                                      "waiting" => "ждёт согласия получателя", _ => "ошибка" };
                     if st == "offered" {
                         let id = api::s(t, "transfer_id");
-                        ui.horizontal(|ui| {
-                            if ui.add(primary("Принять")).clicked() { self.file_decision("/api/file/accept", id.clone()); }
-                            if ui.add(danger("Отклонить")).clicked() { self.file_decision("/api/file/reject", id.clone()); }
+                        let warn = t["warning"].as_str().unwrap_or("").to_owned();
+                        ui.vertical(|ui| {
+                            ui.horizontal(|ui| {
+                                if ui.add(primary("Принять")).clicked() { self.file_decision("/api/file/accept", id.clone()); }
+                                if ui.add(danger("Отклонить")).clicked() { self.file_decision("/api/file/reject", id.clone()); }
+                            });
+                            if !warn.is_empty() {
+                                ui.label(RichText::new(&warn).size(12.0).color(if warn.starts_with('⚠') { YELLOW() } else { MUTED() }));
+                            }
                         });
                     } else {
                         let resp = theme::pill_resp(ui, label, c);

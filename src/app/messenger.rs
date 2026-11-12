@@ -792,7 +792,7 @@ impl Messenger {
 
     async fn upsert_transfer(&self, t: TransferInfo) {
         self.events.emit("file", serde_json::json!({ "transfer_id": t.transfer_id, "status": t.status, "peer": t.peer,
-                                                     "name": t.name, "size": t.size })).await;
+                                                     "name": t.name, "size": t.size, "warning": t.warning })).await;
         let mut v = self.transfers.lock().await;
         match v.iter_mut().find(|x| x.transfer_id == t.transfer_id) {
             Some(x) => *x = t,
@@ -840,9 +840,9 @@ impl Messenger {
     }
 
     /// Согласие на приём: создать неполный файл и сообщить отправителю (FileAck received = 0).
-    async fn start_receiving(self: &Arc<Self>, from: NodeId, o: FileOffer) -> Result<()> {
+    async fn start_receiving(self: &Arc<Self>, from: NodeId, o: FileOffer, by_user: bool) -> Result<()> {
         let tid = o.transfer_id.clone();
-        self.files.lock().await.on_offer(from, o)?;
+        self.files.lock().await.on_offer(from, o, by_user)?;
         self.update_transfer(&hex::encode(&tid), |t| { t.status = "receiving".into(); t.error = None; }).await;
         if let Ok(m) = self.build_kind(from, MessageKind::FileAck, &FileAck { transfer_id: tid, received: 0, missing: vec![] }) {
             let me = self.clone();
@@ -864,7 +864,7 @@ impl Messenger {
     pub async fn accept_file(self: &Arc<Self>, id_hex: &str) -> Result<()> {
         let id = hex::decode(id_hex).map_err(|_| anyhow::anyhow!("transfer_id: hex"))?;
         let (from, o) = self.files.lock().await.take_pending(&id).ok_or_else(|| anyhow::anyhow!("нет такого предложения"))?;
-        if let Err(e) = self.start_receiving(from, o).await {
+        if let Err(e) = self.start_receiving(from, o, true).await {
             self.reject_offer_inner(from, id, &e.to_string()).await;
             return Err(e);
         }
@@ -898,20 +898,34 @@ impl Messenger {
                 let info = TransferInfo {
                     transfer_id: hex::encode(&tid), dir: "in".into(), peer: from.to_hex(), name: o.name.clone(), size: o.size,
                     blocks: o.blocks, done_blocks: 0, status: "receiving".into(), error: None, path: None,
-                    started_ms: now_ms(), finished_ms: None,
+                    started_ms: now_ms(), finished_ms: None, warning: None,
                 };
-                // квоты и формат — сразу; затем согласие: само (по политике) или решение пользователя
-                let checked = self.files.lock().await.check_offer(from, &o);
-                let auto = match self.cfg.files.accept.as_str() {
+                // согласие: само (по политике) или решение пользователя — и почему его спрашивают
+                let known = self.is_known(&from).await;
+                let policy = self.cfg.files.accept.as_str();
+                let auto = match policy {
                     "auto" => true,
                     "ask" => false,
-                    _ => o.size <= self.cfg.files.auto_accept_bytes && self.is_known(&from).await,
+                    _ => o.size <= self.cfg.files.auto_accept_bytes && known,
                 };
+                let mut why = vec![];
+                if o.size > crate::app::files::LARGE_FILE_BYTES {
+                    why.push(format!("⚠ очень большой файл — {} (больше 2 ГиБ): займёт место и время, будет сохранён в «{}»",
+                                     crate::app::files::human_bytes(o.size), crate::app::files::LARGE_DIR));
+                } else if o.size > self.cfg.files.auto_accept_bytes && policy != "auto" {
+                    why.push(format!("большой файл — {} (сам принимается до {})", crate::app::files::human_bytes(o.size),
+                                     crate::app::files::human_bytes(self.cfg.files.auto_accept_bytes)));
+                }
+                if !known && policy != "auto" { why.push("узел не из ваших контактов, и вы ему не писали".into()); }
+                if policy == "ask" { why.push("включено подтверждение каждого файла".into()); }
+                let info = TransferInfo { warning: (!why.is_empty()).then(|| why.join("; ")), ..info };
+                // квоты и формат — сразу (общая квота принятых — только для принимаемых без вопроса)
+                let checked = self.files.lock().await.check_offer(from, &o, !auto);
                 let res = match checked {
                     Err(e) => Err(e),
                     Ok(()) if auto => {
                         self.upsert_transfer(info.clone()).await;
-                        self.start_receiving(from, o).await
+                        self.start_receiving(from, o, false).await
                     }
                     Ok(()) => self.files.lock().await.hold(from, o).map(|_| {
                         info!("← предложен файл {} от {}: {} байт — ждёт решения пользователя", info.name, from.short(), info.size);
@@ -991,7 +1005,8 @@ impl Messenger {
         let t0 = now_ms();
         self.upsert_transfer(TransferInfo { transfer_id: hid.clone(), dir: "out".into(), peer: target.to_hex(), name: name.clone(),
             size, blocks, done_blocks: 0, status: "sending".into(), error: None, path: Some(path.display().to_string()),
-            started_ms: t0, finished_ms: None }).await;
+            started_ms: t0, finished_ms: None,
+            warning: (size > crate::app::files::LARGE_FILE_BYTES).then(|| "очень большой файл — получателю нужно подтвердить приём".into()) }).await;
         let mut rep = FileReport { transfer_id: hid.clone(), name: name.clone(), size, blocks, ..Default::default() };
 
         let res: Result<()> = async {

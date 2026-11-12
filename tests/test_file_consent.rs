@@ -23,8 +23,8 @@ fn store(tag: &str, quota: Quota) -> (FileStore, std::path::PathBuf) {
 fn quota_on_total_size_rejects_offer() {
     let (mut s, d) = store("quota", Quota { max_total_bytes: 3 << 20, min_free_bytes: 0 });
     let a = NodeId([1; 32]);
-    s.on_offer(a, offer(1, 2 << 20)).unwrap();
-    let e = s.check_offer(NodeId([2; 32]), &offer(2, 2 << 20)).unwrap_err().to_string();
+    s.on_offer(a, offer(1, 2 << 20), false).unwrap();
+    let e = s.check_offer(NodeId([2; 32]), &offer(2, 2 << 20), false).unwrap_err().to_string();
     assert!(e.contains("квота"), "{e}");
     let _ = std::fs::remove_dir_all(d);
 }
@@ -33,9 +33,9 @@ fn quota_on_total_size_rejects_offer() {
 fn concurrent_incoming_limited_per_peer() {
     let (mut s, d) = store("conc", Quota::default());
     let a = NodeId([1; 32]);
-    for i in 0..MAX_INCOMING_PER_PEER as u8 { s.on_offer(a, offer(i + 1, 1000)).unwrap(); }
-    assert!(s.check_offer(a, &offer(50, 1000)).is_err(), "третий приём от того же узла");
-    assert!(s.check_offer(NodeId([2; 32]), &offer(51, 1000)).is_ok(), "другой узел не задет");
+    for i in 0..MAX_INCOMING_PER_PEER as u8 { s.on_offer(a, offer(i + 1, 1000), false).unwrap(); }
+    assert!(s.check_offer(a, &offer(50, 1000), false).is_err(), "третий приём от того же узла");
+    assert!(s.check_offer(NodeId([2; 32]), &offer(51, 1000), false).is_ok(), "другой узел не задет");
     let _ = std::fs::remove_dir_all(d);
 }
 
@@ -104,7 +104,8 @@ async fn stranger_file_waits_for_consent_known_peer_is_automatic() {
     let send = tokio::spawn(async move { api(8120, "POST", "/api/send_file", &[("target", &t4), ("path", &pa)], 120).await.unwrap() });
     let t = transfer(8124, "a.bin").await;
     assert_eq!(t["status"], "offered", "{t}");
-    assert!(!n[4].1.join("downloads/a.bin").exists(), "до согласия на диск ничего не пишется");
+    assert!(!n[4].1.join("downloads").join(&ids[0][..16]).join("a.bin").exists(), "до согласия на диск ничего не пишется");
+    assert!(t["warning"].as_str().unwrap_or("").contains("не из ваших контактов"), "причина в предложении: {t}");
     let tid = t["transfer_id"].as_str().unwrap().to_owned();
     assert_eq!(api(8124, "POST", "/api/file/reject", &[("transfer_id", &tid)], 10).await.unwrap()["ok"], true);
     let r = send.await.unwrap();
@@ -119,7 +120,7 @@ async fn stranger_file_waits_for_consent_known_peer_is_automatic() {
     api(8124, "POST", "/api/file/accept", &[("transfer_id", t["transfer_id"].as_str().unwrap())], 10).await.unwrap();
     let r = send.await.unwrap();
     assert_eq!(r["ok"], true, "{r}");
-    assert_eq!(std::fs::read(n[4].1.join("downloads/b.bin")).unwrap().len(), 200_000);
+    assert_eq!(std::fs::read(n[4].1.join("downloads").join(&ids[0][..16]).join("b.bin")).unwrap().len(), 200_000, "в папке отправителя");
 
     // знакомый (получатель сам писал отправителю) — маленький файл принимается сам
     let w = api(8124, "POST", "/api/send", &[("target", &ids[0]), ("text", "привет")], 30).await.unwrap();
@@ -164,4 +165,30 @@ async fn relay_routes_quota_per_initiator() {
     }
     assert_eq!(ok, MAX_ROUTES_PER_INITIATOR);
     assert!(r.insert_for(NodeId([2; 32]), [0xff; 16], addr, None, 60).await, "другой инициатор не задет");
+}
+
+#[test]
+fn quota_applies_only_to_automatic_acceptance() {
+    let (mut s, d) = store("byuser", Quota { max_total_bytes: 3 << 20, min_free_bytes: 0 });
+    s.on_offer(NodeId([1; 32]), offer(1, 2 << 20), false).unwrap();
+    assert!(s.check_offer(NodeId([2; 32]), &offer(2, 2 << 20), false).is_err(), "сам — не больше квоты");
+    assert!(s.check_offer(NodeId([2; 32]), &offer(2, 2 << 20), true).is_ok(), "принятый пользователем — только свободное место");
+    let _ = std::fs::remove_dir_all(d);
+}
+
+#[test]
+fn human_sizes_and_peer_folder() {
+    use p2p_overlay::app::files::{human_bytes, peer_dir};
+    assert_eq!(human_bytes(3 * 1024 * 1024 * 1024 + 200 * 1024 * 1024), "3,2 ГиБ");
+    assert_eq!(human_bytes(20 * 1024 * 1024), "20,0 МиБ");
+    assert_eq!(peer_dir(&NodeId([0xab; 32])), "abababababababab");
+}
+
+#[test]
+fn very_large_files_go_to_separate_subfolder() {
+    use p2p_overlay::app::files::{LARGE_DIR, LARGE_FILE_BYTES};
+    let (s, d) = store("large", Quota::default());
+    let a = NodeId([0xcd; 32]);
+    assert_eq!(s.target_dir(&a, LARGE_FILE_BYTES), d.join("downloads/cdcdcdcdcdcdcdcd"), "ровно 2 ГиБ — обычная папка");
+    assert_eq!(s.target_dir(&a, LARGE_FILE_BYTES + 1), d.join("downloads/cdcdcdcdcdcdcdcd").join(LARGE_DIR));
 }

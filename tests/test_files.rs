@@ -45,13 +45,13 @@ fn complete_transfer_out_of_order_with_duplicate() {
     let d = tmp("ok");
     let data = sample(3500);   // 4 блока, последний неполный
     let mut st = FileStore::new(&d, 1 << 20, 60_000);
-    st.on_offer(A, offer("a.bin", &data)).unwrap();
+    st.on_offer(A, offer("a.bin", &data), false).unwrap();
     for i in [2, 0, 3] { assert_eq!(st.on_block(A, &block(&data, i)).unwrap(), BlockOutcome::Stored); }
     assert_eq!(st.on_block(A, &block(&data, 0)).unwrap(), BlockOutcome::Duplicate, "дубликат игнорируется");
     assert_eq!(st.ack(&[7; 16], 4).unwrap().missing, vec![1]);
     assert_eq!(st.on_block(A, &block(&data, 1)).unwrap(), BlockOutcome::Complete);
     let path = st.finish(&[7; 16]).unwrap();
-    assert_eq!(path, d.join("downloads/a.bin"));
+    assert_eq!(path, d.join("downloads").join(p2p_overlay::app::files::peer_dir(&A)).join("a.bin"), "в папке отправителя");
     assert_eq!(std::fs::read(&path).unwrap(), data);
     assert_eq!(std::fs::read_dir(d.join("downloads/.partial")).unwrap().count(), 0, "неполный файл перенесён");
 }
@@ -61,14 +61,14 @@ fn tampered_block_fails_hash_and_file_is_removed() {
     let d = tmp("tamper");
     let data = sample(2500);
     let mut st = FileStore::new(&d, 1 << 20, 60_000);
-    st.on_offer(A, offer("t.bin", &data)).unwrap();
+    st.on_offer(A, offer("t.bin", &data), false).unwrap();
     let mut bad = block(&data, 1);
     bad.data[10] ^= 0xFF;            // длина та же, содержимое подменено
     st.on_block(A, &block(&data, 0)).unwrap();
     st.on_block(A, &bad).unwrap();
     assert_eq!(st.on_block(A, &block(&data, 2)).unwrap(), BlockOutcome::Complete);
     assert!(st.finish(&[7; 16]).is_err(), "SHA-256 не совпадает");
-    assert!(!d.join("downloads/t.bin").exists());
+    assert!(!d.join("downloads").join(p2p_overlay::app::files::peer_dir(&A)).join("t.bin").exists());
     assert_eq!(std::fs::read_dir(d.join("downloads/.partial")).unwrap().count(), 0, "неполный файл удалён");
 }
 
@@ -77,16 +77,16 @@ fn oversize_and_bad_name_and_inconsistent_offers_rejected() {
     let d = tmp("offer");
     let data = sample(5000);
     let mut st = FileStore::new(&d, 4000, 60_000);
-    assert!(st.on_offer(A, offer("big.bin", &data)).is_err(), "больше лимита");
+    assert!(st.on_offer(A, offer("big.bin", &data), false).is_err(), "больше лимита");
     let mut st = FileStore::new(&d, 1 << 20, 60_000);
-    assert!(st.on_offer(A, offer("../evil", &data)).is_err(), "путь в имени");
+    assert!(st.on_offer(A, offer("../evil", &data), false).is_err(), "путь в имени");
     let mut o = offer("x.bin", &data);
     o.blocks = 99;
-    assert!(st.on_offer(A, o).is_err(), "число блоков не соответствует размеру");
+    assert!(st.on_offer(A, o, false).is_err(), "число блоков не соответствует размеру");
     let mut o = offer("x.bin", &data);
     o.block_size = (MAX_BLOCK + 1) as u32;
     o.blocks = 1;
-    assert!(st.on_offer(A, o).is_err(), "блок больше допустимого");
+    assert!(st.on_offer(A, o, false).is_err(), "блок больше допустимого");
 }
 
 #[test]
@@ -94,7 +94,7 @@ fn foreign_sender_wrong_index_and_length_rejected() {
     let d = tmp("foreign");
     let data = sample(2500);
     let mut st = FileStore::new(&d, 1 << 20, 60_000);
-    st.on_offer(A, offer("f.bin", &data)).unwrap();
+    st.on_offer(A, offer("f.bin", &data), false).unwrap();
     assert!(st.on_block(EVE, &block(&data, 0)).is_err(), "блок от другого узла");
     let mut b = block(&data, 0);
     b.index = 9;
@@ -110,7 +110,7 @@ fn incomplete_file_removed_after_timeout() {
     let d = tmp("timeout");
     let data = sample(2500);
     let mut st = FileStore::new(&d, 1 << 20, 0);
-    st.on_offer(A, offer("slow.bin", &data)).unwrap();
+    st.on_offer(A, offer("slow.bin", &data), false).unwrap();
     st.on_block(A, &block(&data, 0)).unwrap();
     std::thread::sleep(std::time::Duration::from_millis(5));
     assert_eq!(st.evict_stale().len(), 1);
@@ -126,13 +126,14 @@ fn name_collision_gets_suffix() {
     for k in 0..2u8 {
         let mut o = offer("same.txt", &data);
         o.transfer_id = vec![k; 16];
-        st.on_offer(A, o).unwrap();
+        st.on_offer(A, o, false).unwrap();
         let mut b = block(&data, 0);
         b.transfer_id = vec![k; 16];
         st.on_block(A, &b).unwrap();
         st.finish(&[k; 16]).unwrap();
     }
-    assert!(d.join("downloads/same.txt").exists() && d.join("downloads/same (1).txt").exists());
+    let dir = d.join("downloads").join(p2p_overlay::app::files::peer_dir(&A));
+    assert!(dir.join("same.txt").exists() && dir.join("same (1).txt").exists());
 }
 
 #[test]
@@ -150,4 +151,26 @@ fn largest_block_fits_tunnel_segment_and_frame() {
     // байтовые поля — bin: накладные расходы порядка сотен байт (NodeId — массив фиксированной длины, его размер
     // зависит от значений байтов), а не ≈ +50%, как при кодировании Vec<u8> массивом чисел
     assert!(env.len() < MAX_BLOCK + 1024, "байтовые поля — bin, без раздувания: {} байт", env.len());
+}
+
+#[test]
+fn downloads_listed_by_sender_folder() {
+    let d = tmp("folders");
+    let data = sample(700);
+    let mut st = FileStore::new(&d, 1 << 20, 60_000);
+    let b = p2p_overlay::types::NodeId([0x42; 32]);
+    for (k, from, name) in [(1u8, A, "a.txt"), (2, b, "b.txt"), (3, b, "c.txt")] {
+        let mut o = offer(name, &data);
+        o.transfer_id = vec![k; 16];
+        st.on_offer(from, o, false).unwrap();
+        let mut bl = block(&data, 0);
+        bl.transfer_id = vec![k; 16];
+        st.on_block(from, &bl).unwrap();
+        st.finish(&[k; 16]).unwrap();
+    }
+    let v = p2p_overlay::app::files::list_downloads(&d.join("downloads"));
+    let folders = v.as_array().unwrap();
+    assert_eq!(folders.len(), 2, "по папке на отправителя: {v}");
+    let fb = folders.iter().find(|f| f["folder"] == "4242424242424242").unwrap();
+    assert_eq!(fb["files"].as_array().unwrap().len(), 2);
 }

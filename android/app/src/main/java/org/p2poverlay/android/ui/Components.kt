@@ -106,10 +106,12 @@ fun whenShort(ts: Long): String {
     return if (now - ts < 20 * 3600_000L) hhmm(ts) else SimpleDateFormat("d MMM", Locale.forLanguageTag("ru")).format(Date(ts))
 }
 
+/** Размер для людей, с запятой: 950 КиБ, 12,5 МиБ, 3,2 ГиБ. */
 fun humanBytes(n: Long): String = when {
     n < 1024 -> "$n Б"
-    n < 1024 * 1024 -> "%.1f КиБ".format(n / 1024.0)
-    else -> "%.1f МиБ".format(n / 1048576.0)
+    n < 1024 * 1024 -> "%.0f КиБ".format(Locale.ROOT, n / 1024.0)
+    n < 1024L * 1024 * 1024 -> "%.1f МиБ".format(Locale.ROOT, n / 1048576.0).replace('.', ',')
+    else -> "%.1f ГиБ".format(Locale.ROOT, n / 1073741824.0).replace('.', ',')
 }
 
 private val imageExt = setOf("jpg", "jpeg", "png", "webp", "gif", "bmp", "heic")

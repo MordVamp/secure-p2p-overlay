@@ -111,7 +111,7 @@ fn default_offer_timeout_s() -> u64 { 120 }
 
 impl Default for FilesConfig {
     fn default() -> Self {
-        Self { max_bytes: 64 * 1024 * 1024, block_size: 40 * 1024, window: 8, incomplete_timeout_s: 60,
+        Self { max_bytes: 8 * 1024 * 1024 * 1024, block_size: 40 * 1024, window: 8, incomplete_timeout_s: 60,
                accept: default_file_accept(), auto_accept_bytes: default_auto_accept_bytes(),
                max_total_bytes: default_max_total_bytes(), min_free_bytes: default_min_free_bytes(),
                offer_timeout_s: default_offer_timeout_s() }

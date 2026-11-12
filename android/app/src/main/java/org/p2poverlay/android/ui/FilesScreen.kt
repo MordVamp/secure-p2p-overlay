@@ -94,13 +94,36 @@ fun FilesScreen(vm: AppViewModel, sharedUri: android.net.Uri?, onSharedConsumed:
                     color = P.Yellow, fontSize = 13.sp)
             }
         }
+        if (vm.downloads.isNotEmpty()) {
+            item {
+                Text("ПОЛУЧЕННЫЕ ФАЙЛЫ — ПО СОБЕСЕДНИКАМ", style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                    color = P.Muted, modifier = Modifier.padding(top = 4.dp))
+            }
+            vm.downloads.forEach { f ->
+                val prefix = f.optString("peer_prefix")
+                val files = f.optJSONArray("files")?.let { a -> (0 until a.length()).map { a.getJSONObject(it) } } ?: emptyList()
+                item(key = "dl-$prefix") { DownloadFolder(vm, ctx, prefix, files) }
+            }
+        }
         item {
             Text("ПЕРЕДАЧИ", style = androidx.compose.material3.MaterialTheme.typography.labelSmall, color = P.Muted,
                 modifier = Modifier.padding(top = 4.dp))
         }
         if (vm.transfers.isEmpty()) item { Text("Пока пусто", color = P.Muted) }
-        items(vm.transfers, key = { it.optString("transfer_id") }) { t -> TransferRow(vm, ctx, t) }
-        item { if (vm.downloadsDir.isNotEmpty()) Text("Принятые файлы: ${vm.downloadsDir}", color = P.Muted, fontSize = 11.sp,
+        // по собеседникам: у каждого своя папка в downloads/ (первые 16 символов NodeID)
+        vm.transfers.groupBy { it.optString("peer") }.forEach { (peer, list) ->
+            item(key = "h-$peer") {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.padding(top = 8.dp)) {
+                    Avatar(peer, vm.nameOf(peer), 26.dp)
+                    Text(vm.nameOf(peer), color = P.Text, fontSize = 14.sp)
+                    Text("· папка ${peer.take(16)}/ · ${list.size}", color = P.Muted, fontSize = 12.sp)
+                }
+            }
+            items(list, key = { it.optString("transfer_id") }) { t -> TransferRow(vm, ctx, t) }
+        }
+        item { if (vm.downloadsDir.isNotEmpty()) Text("Принятые файлы: ${vm.downloadsDir}/<папка собеседника>/ " +
+            "(больше 2 ГиБ — в подпапке «Большие файлы»)", color = P.Muted, fontSize = 11.sp,
             modifier = Modifier.padding(bottom = 16.dp)) }
     }
 }
@@ -134,9 +157,10 @@ private fun TransferRow(vm: AppViewModel, ctx: Context, t: JSONObject) {
             }
             Pill(label, color)
         }
+        val warn = t.optString("warning").takeIf { it.isNotEmpty() && it != "null" }
         if (status == "offered") {
-            Text("Узел предлагает файл. Незнакомым и большим файлам нужно ваше согласие — без него ничего не пишется на диск.",
-                color = P.Muted, fontSize = 12.sp)
+            Text("Нужно ваше согласие — без него ничего не пишется на диск." + (warn?.let { " Почему: $it." } ?: ""),
+                color = if (warn?.startsWith("⚠") == true) P.Yellow else P.Muted, fontSize = 12.sp)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = { vm.fileDecision(t.optString("transfer_id"), true) }) { Text("Принять") }
                 androidx.compose.material3.OutlinedButton(onClick = { vm.fileDecision(t.optString("transfer_id"), false) }) {
@@ -158,6 +182,40 @@ private fun TransferRow(vm: AppViewModel, ctx: Context, t: JSONObject) {
         }
     }
 }
+
+/** Папка собеседника: его файлы, открыть или переслать; очень большие помечены. */
+@Composable
+private fun DownloadFolder(vm: AppViewModel, ctx: Context, prefix: String, files: List<JSONObject>) {
+    var all by rememberSaveable(prefix) { mutableStateOf(false) }
+    val owner = vm.folderOwner(prefix)
+    SectionCard {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            if (prefix.isNotEmpty()) Avatar(vm.folderOwnerId(prefix) ?: prefix, owner ?: prefix, 32.dp)
+            Column(Modifier.weight(1f)) {
+                Text(owner ?: if (prefix.isEmpty()) "Принятые раньше (общая папка)" else "Неизвестный узел", fontSize = 15.sp)
+                Text(if (prefix.isEmpty()) "downloads/" else "downloads/$prefix/ · ${files.size} ${plural(files.size)}",
+                    color = P.Muted, fontSize = 12.sp)
+            }
+        }
+        (if (all) files else files.take(4)).forEach { f ->
+            val file = File(f.optString("path"))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(f.optString("name"), maxLines = 1, fontSize = 14.sp)
+                    Text(humanBytes(f.optLong("size")) + if (f.optBoolean("large")) " · «Большие файлы»" else "",
+                        color = if (f.optBoolean("large")) P.Yellow else P.Muted, fontSize = 12.sp)
+                }
+                IconButton(onClick = { openFile(ctx, file, Intent.ACTION_VIEW) }) { Icon(Icons.AutoMirrored.Filled.OpenInNew, "Открыть") }
+                IconButton(onClick = { openFile(ctx, file, Intent.ACTION_SEND) }) { Icon(Icons.Filled.Share, "Поделиться") }
+            }
+        }
+        if (files.size > 4) androidx.compose.material3.TextButton(onClick = { all = !all }) {
+            Text(if (all) "Свернуть" else "Ещё ${files.size - 4}")
+        }
+    }
+}
+
+private fun plural(n: Int) = when { n % 10 == 1 && n % 100 != 11 -> "файл"; n % 10 in 2..4 && n % 100 !in 12..14 -> "файла"; else -> "файлов" }
 
 private fun openFile(ctx: Context, f: File, action: String) {
     runCatching {

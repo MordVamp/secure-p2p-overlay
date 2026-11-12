@@ -1,0 +1,389 @@
+
+running 8 tests
+test app::ratelimit::tests::burst_then_rate ... ok
+test app::voice::tests::client_frame_requires_token ... ok
+test app::voice::tests::jitter_buffer_reorders_and_counts_late ... ok
+test app::voice::tests::emodel_matches_reference_points ... ok
+test app::events::tests::sequence_grows_without_waiting_clients ... ok
+test app::voice::tests::opus_roundtrip_keeps_tone ... ok
+test app::voice::tests::single_loss_recovered_by_fec_and_burst_concealed ... ok
+test app::voice::tests::late_frames_deepen_buffer_by_stretching ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 3 tests
+test concrete_listen_host_wins ... ok
+test unspecified_listen_uses_advertise_or_loopback ... ok
+test auto_never_returns_unusable_address ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 10 tests
+test node_id_not_matching_identity_key_rejected ... ok
+test modified_ephemeral_key_rejected ... ok
+test modified_ciphertext_rejected ... ok
+test unexpected_node_id_rejected ... ok
+test substituted_identity_key_without_private_key_rejected ... ok
+test modified_handshake_field_rejected ... ok
+test record_from_finished_session_rejected ... ok
+test replayed_record_in_current_session_rejected ... ok
+test new_session_id_and_keys_on_every_connection ... ok
+test handshake_authenticates_both_sides_and_carries_data ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+
+running 6 tests
+test t7_1_text_message_creation ... ok
+test t7_2_signing_bytes_deterministic ... ok
+test t7_6_max_segment_size ... ok
+test t7_3_different_messages_different_signing_bytes ... ok
+test t7_5_text_only_for_text_kind ... ok
+test t7_4_message_serialize_roundtrip ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 10 tests
+test replay_rejected_after_restart_and_outside_window ... ok
+test route_diag_without_tunnel ... ok
+test builder_uses_lookup_hint_when_table_lacks_target ... ok
+test send_acked_fails_fast_without_route ... ok
+test text_goes_to_inbox ... ok
+test ack_from_wrong_node_is_ignored ... ok
+test forged_ack_signature_rejected ... ok
+test unsolicited_ack_does_not_crash_or_land_in_inbox ... ok
+test replayed_ack_rejected ... ok
+test valid_ack_from_target_wakes_sender ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 6 tests
+test a5_routes_insert_lookup ... ok
+test b6_outbox_kept_and_session_id_preserved ... ok
+test a6_message_carries_pubkey ... ok
+test a7_unsigned_or_foreign_key_rejected ... ok
+test a7_tampered_value_rejected ... ok
+test a7_signed_record_verifies ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 1 test
+test node_started_before_seed_joins_when_seed_appears ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.28s
+
+
+running 7 tests
+test replay_window_accepts_late_once_and_rejects_old ... ok
+test rx_stats_count_loss_and_reorder ... ok
+test both_sides_derive_matching_directional_keys ... ok
+test weak_ephemeral_key_rejected ... ok
+test tampered_or_foreign_media_rejected ... ok
+test call_signaling_keys_and_media_over_tunnels ... ok
+test voice_one_to_one_group_mesh_and_local_audio_link ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 14.88s
+
+
+running 2 tests
+test pooled_connection_bound_to_node_id_and_survives_peer_restart ... ok
+test messages_flow_over_pooled_connections ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.58s
+
+
+running 5 tests
+test same_sequence_different_value_rejected_but_refresh_ok ... ok
+test expired_records_are_evicted ... ok
+test newer_sequence_replaces ... ok
+test sequence_rollback_rejected ... ok
+test tampered_sequence_breaks_signature ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 9 tests
+test plaintext_or_garbage_is_not_accepted ... ok
+test ciphertext_does_not_contain_plaintext ... ok
+test seal_rejects_key_not_matching_node_id ... ok
+test relay_or_third_party_cannot_open ... ok
+test each_seal_is_unique ... ok
+test roundtrip ... ok
+test eve_cannot_open_even_after_retargeting_envelope ... ok
+test tampered_ciphertext_rejected ... ok
+test tampered_ephemeral_key_or_nonce_rejected ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 9 tests
+test human_sizes_and_peer_folder ... ok
+test very_large_files_go_to_separate_subfolder ... ok
+test quota_applies_only_to_automatic_acceptance ... ok
+test quota_on_total_size_rejects_offer ... ok
+test concurrent_incoming_limited_per_peer ... ok
+test relay_routes_quota_per_initiator ... ok
+test dht_store_quota_per_publisher ... ok
+test pending_offers_limited_and_expire ... ok
+test stranger_file_waits_for_consent_known_peer_is_automatic ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.46s
+
+
+running 9 tests
+test foreign_sender_wrong_index_and_length_rejected ... ok
+test tampered_block_fails_hash_and_file_is_removed ... ok
+test complete_transfer_out_of_order_with_duplicate ... ok
+test name_collision_gets_suffix ... ok
+test unsafe_names_rejected ... ok
+test oversize_and_bad_name_and_inconsistent_offers_rejected ... ok
+test downloads_listed_by_sender_folder ... ok
+test incomplete_file_removed_after_timeout ... ok
+test largest_block_fits_tunnel_segment_and_frame ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 10 tests
+test t1_1_short_header ... ok
+test t1_10_find_node_roundtrip ... ok
+test t1_2_exact_frame ... ok
+test t1_4_fragmented_frame ... ok
+test t1_5_payload_too_large ... ok
+test t1_3_two_frames_one_read ... ok
+test t1_6_bad_version ... ok
+test t1_7_unknown_type ... ok
+test t1_8_response_same_request_id ... ok
+test t1_9_ping_roundtrip ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 7 tests
+test alias_charset_and_length ... ok
+test history_skips_corrupted_lines ... ok
+test history_survives_reopen_and_tail_limits ... ok
+test alias_record_for_other_name_or_key_rejected ... ok
+test received_message_is_logged ... ok
+test alias_record_owner_is_signing_node ... ok
+test alias_record_with_forged_owner_rejected ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+
+running 9 tests
+test e22_verify_node_id_valid_pubkey ... ok
+test t2_5_xor_metric_reference_vectors ... ok
+test t2_3_node_id_from_pubkey_deterministic ... ok
+test e21_different_dirs_different_ids ... ok
+test e21_node_id_stable_across_restarts ... ok
+test t2_2_different_nodes_different_ids ... ok
+test e22_verify_node_id_wrong_pubkey_rejected ... ok
+test t2_1_identity_stable_across_restarts ... ok
+test t2_4_mismatched_pubkey_rejected ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 1 test
+test kek_from_environment_is_used_and_removed ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 1 test
+test lookup_excludes_initiator_even_if_peer_returns_it ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 12 tests
+test relay_drops_data_when_hops_exhausted ... ok
+test data_without_hops_field_is_not_forwarded ... ok
+test next_hop_equal_to_self_rejected ... ok
+test relay_decrements_hops_left_when_forwarding ... ok
+test next_hop_equal_to_initiator_rejected ... ok
+test duplicate_tunnel_id_rejected ... ok
+test unknown_tunnel_with_own_envelope_is_delivered ... ok
+test total_hops_above_max_rejected ... ok
+test valid_build_accepted ... ok
+test routing_cycle_terminates ... ok
+test zero_total_hops_and_bad_index_rejected ... ok
+test unknown_tunnel_with_foreign_envelope_is_not_acked ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 13 tests
+test contact_relay_flag_defaults_to_true_for_old_records ... ok
+test identity_key_encrypted_with_kek ... ok
+test client_only_node_refuses_to_relay_but_accepts_own_tunnels ... ok
+test safety_number_is_symmetric_and_pair_specific ... ok
+test outbox_limits_and_expiry ... ok
+test group_message_from_non_member_rejected ... ok
+test mailbox_disabled_means_plain_failure ... ok
+test group_message_from_member_is_logged_with_group ... ok
+test typing_is_published_as_event_and_expires ... ok
+test undeliverable_message_is_queued_and_removed_by_ack ... ok
+test read_receipt_marks_only_own_messages_to_that_peer ... ok
+test delete_history_removes_only_that_conversation ... ok
+test events_wait_times_out_empty_and_wakes_on_emit ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.20s
+
+
+running 11 tests
+test non_node_record_value_is_not_parsed ... ok
+test foreign_key_substitution_rejected ... ok
+test sequence_rollback_rejected ... ok
+test store_fails_without_quorum ... ok
+test store_succeeds_when_quorum_reached ... ok
+test expired_record_rejected ... ok
+test future_issued_at_rejected ... ok
+test record_under_wrong_dht_key_rejected ... ok
+test resolve_own_node_record_locally ... ok
+test tampered_address_rejected ... ok
+test valid_record_roundtrips_through_dht_value ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+
+running 5 tests
+test blame_points_to_deepest_unreachable_node ... ok
+test slow_relay_ranks_below_fast_one ... ok
+test rating_prefers_distinct_subnets ... ok
+test closest_keeps_xor_order_and_prefers_nodes_outside_pool ... ok
+test rating_avoids_failing_relays_and_tries_unknown_ones ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 4 tests
+test removed_contact_is_replaced_from_cache ... ok
+test full_bucket_keeps_newcomer_in_replacement_cache ... ok
+test seen_contacts_go_to_cache_only_and_candidates_are_unique_and_sorted ... ok
+test replacement_cache_is_bounded ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 11 tests
+test t2_10_ping_pong_request_id_preserved ... ok
+test t2_11_find_closest_sorted_by_xor ... ok
+test t2_12_after_bootstrap_has_contacts ... ok
+test t2_13_multihop_lookup_unit ... ok
+test t2_7_known_contact_moves_to_tail ... ok
+test t2_6_insert_to_non_full_bucket ... ok
+test t2_14_bootstrap_independence ... ok
+test t2_8_full_bucket_live_lru_preserved ... ok
+test t2_9_full_bucket_dead_lru_evicted ... ok
+test t_a1_bucket_refresh_empty_table ... ok
+test t_a1_bucket_refresh_targets_in_correct_bucket ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 7 tests
+test node_id_from_cert_rejects_garbage ... ok
+test tls_plaintext_client_rejected ... ok
+test tls_garbage_bytes_rejected ... ok
+test tls12_only_client_rejected ... ok
+test tls_client_without_certificate_rejected ... ok
+test tls_wrong_expected_node_id_rejected ... ok
+test tls_mutual_auth_yields_real_node_ids ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 10 tests
+test t6_1_valid_transitions ... ok
+test t6_3_usable_states ... ok
+test t6_2_invalid_transitions ... ok
+test t6_4_session_state_machine ... ok
+test t6_10_ack_restores_active ... ok
+test t6_5_send_to_building_fails ... ok
+test t6_6_illegal_transition_no_panic ... ok
+test t6_7_idle_tunnel_stays_usable ... ok
+test t6_9_expired_tunnel_goes_dead ... ok
+test t6_8_send_failure_marks_dead ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 1 test
+test nodeid_and_xor_match_reference_vectors ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Compiling p2p-overlay v0.1.0 (.)
+warning: unused variable: `when`
+   --> src/app/voice.rs:373:19
+    |
+373 |             for &(when, seq) in held.iter().filter(|h| h.0 == t) { l.push(seq, pk[seq as usize].clone()); }
+    |                   ^^^^ help: if this is intentional, prefix it with an underscore: `_when`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `HEADER_LEN`
+ --> tests/test_framing.rs:5:69
+  |
+5 |     Frame, FrameFlags, FrameReader, MsgType, ReadItem, HEADER_SIZE, HEADER_LEN, PROTOCOL_VERSION,
+  |                                                                     ^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `make_request_id` is never used
+  --> tests/test_framing.rs:16:4
+   |
+16 | fn make_request_id() -> [u8; 16] {
+   |    ^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `p2p-overlay` (test "test_framing") generated 2 warnings (run `cargo fix --test "test_framing" -p p2p-overlay` to apply 1 suggestion)
+warning: `p2p-overlay` (lib test) generated 1 warning (run `cargo fix --lib -p p2p-overlay --tests` to apply 1 suggestion)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 26.84s
+     Running unittests src/lib.rs (target/debug/deps/p2p_overlay-a57cc4d6d9efb035)
+     Running unittests src/main.rs (target/debug/deps/p2p_node-0e359fc6c9d56f9d)
+     Running unittests src/orchestrator.rs (target/debug/deps/p2p_orchestrator-73ba180b166ea8b8)
+     Running tests/test_advertise.rs (target/debug/deps/test_advertise-7927f20801df04de)
+     Running tests/test_ake.rs (target/debug/deps/test_ake-8a6a060561ac5cf2)
+     Running tests/test_app.rs (target/debug/deps/test_app-4ef969471a02c153)
+     Running tests/test_app_ack.rs (target/debug/deps/test_app_ack-7a10d2610c9ca9d7)
+     Running tests/test_audit2.rs (target/debug/deps/test_audit2-8b5231542f222f5b)
+     Running tests/test_bootstrap_retry.rs (target/debug/deps/test_bootstrap_retry-21f60924d3b311b8)
+     Running tests/test_calls.rs (target/debug/deps/test_calls-96d67dbcaab1a6cf)
+     Running tests/test_conn_pool.rs (target/debug/deps/test_conn_pool-24803e4384d9962a)
+     Running tests/test_dht_records.rs (target/debug/deps/test_dht_records-c83a785b472a8b1e)
+     Running tests/test_e2e.rs (target/debug/deps/test_e2e-4c58d217e9fbd431)
+     Running tests/test_file_consent.rs (target/debug/deps/test_file_consent-78bfe2786001f57f)
+     Running tests/test_files.rs (target/debug/deps/test_files-f8c99b57ab628ae3)
+     Running tests/test_framing.rs (target/debug/deps/test_framing-fba5742f80c08664)
+     Running tests/test_history_alias.rs (target/debug/deps/test_history_alias-991c527952e7c08b)
+     Running tests/test_identity.rs (target/debug/deps/test_identity-84ced203c09c4f4e)
+     Running tests/test_identity_kek_env.rs (target/debug/deps/test_identity_kek_env-50f4c155549e4ef9)
+     Running tests/test_lookup_self.rs (target/debug/deps/test_lookup_self-ccb5fdcbdaeea91f)
+     Running tests/test_loops.rs (target/debug/deps/test_loops-62ab3f6a8226d23d)
+     Running tests/test_mobile_features.rs (target/debug/deps/test_mobile_features-627e3e890bf6bb23)
+     Running tests/test_node_record.rs (target/debug/deps/test_node_record-10163058ee4b921c)
+     Running tests/test_relay_profiles.rs (target/debug/deps/test_relay_profiles-9bd1790d56aa8b25)
+     Running tests/test_replacement_cache.rs (target/debug/deps/test_replacement_cache-f8a8614465f25cc4)
+     Running tests/test_routing.rs (target/debug/deps/test_routing-198ef23c2c6d06c0)
+     Running tests/test_tls.rs (target/debug/deps/test_tls-a7ff1ebb5885d743)
+     Running tests/test_tunnel.rs (target/debug/deps/test_tunnel-ae8f5d96a2969b7f)
+     Running tests/test_vectors.rs (target/debug/deps/test_vectors-880e20de2e11f22d)

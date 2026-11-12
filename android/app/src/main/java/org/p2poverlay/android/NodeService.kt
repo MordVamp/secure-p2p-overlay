@@ -279,10 +279,18 @@ class NodeService : Service() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT) }
         val open = PendingIntent.getActivity(this, id.hashCode(), Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        val warn = e.optString("warning").takeIf { it.isNotEmpty() && it != "null" }
+        val huge = warn?.startsWith("⚠") == true
+        val size = e.optLong("size")
+        val human = when { size >= 1L shl 30 -> "%.1f ГиБ".format(java.util.Locale.ROOT, size / 1073741824.0).replace('.', ',')
+                           size >= 1L shl 20 -> "%.1f МиБ".format(java.util.Locale.ROOT, size / 1048576.0).replace('.', ',')
+                           else -> "${size / 1024} КиБ" }
         nm.notify(fileNotifId(id), NotificationCompat.Builder(this, P2pApp.CH_MSG)
             .setSmallIcon(R.drawable.ic_stat_node)
-            .setContentTitle("$who предлагает файл")
-            .setContentText("${e.optString("name")} · ${e.optLong("size") / 1024} КиБ — принять?")
+            .setContentTitle(if (huge) "⚠ $who предлагает очень большой файл" else "$who предлагает файл")
+            .setContentText("${e.optString("name")} · $human — принять?")
+            .setStyle(NotificationCompat.BigTextStyle().bigText("${e.optString("name")} · $human — принять?" +
+                (warn?.let { "\n$it" } ?: "")))
             .setContentIntent(open)
             .addAction(0, "Принять", act(true, id.hashCode() + 1))
             .addAction(0, "Отклонить", act(false, id.hashCode() + 2))

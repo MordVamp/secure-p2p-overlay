@@ -57,6 +57,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var messages by mutableStateOf<List<ChatMsg>>(emptyList()); private set
     var transfers by mutableStateOf<List<JSONObject>>(emptyList()); private set
     var downloadsDir by mutableStateOf(""); private set
+    /** Принятые файлы на диске по папкам собеседников (`/api/downloads`). */
+    var downloads by mutableStateOf<List<JSONObject>>(emptyList()); private set
     var relays by mutableStateOf(JSONArray()); private set
     var contacts by mutableStateOf(prefs.contacts); private set
     var myAlias by mutableStateOf(prefs.myAlias); private set
@@ -184,6 +186,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             downloadsDir = f.optString("downloads_dir")
             val t = f.optJSONArray("transfers") ?: JSONArray()
             transfers = (0 until t.length()).map { t.getJSONObject(it) }.sortedByDescending { it.optLong("started_ms") }
+            val d = api.get("/api/downloads").optJSONArray("folders") ?: JSONArray()
+            downloads = (0 until d.length()).map { d.getJSONObject(it) }
         }
     }
 
@@ -266,6 +270,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         prefs.localGroups = a.toString()
         return "g:$id"
     }
+
+    /** Полный NodeID владельца папки `downloads/<16 hex>` (контакт или собеседник из истории). */
+    fun folderOwnerId(prefix: String): String? =
+        if (prefix.isEmpty()) null else contacts.firstOrNull { it.nodeId.startsWith(prefix) }?.nodeId
+            ?: messages.firstOrNull { it.peer.startsWith(prefix) }?.peer
+
+    /** Имя владельца папки: контакт с таким началом NodeID. */
+    fun folderOwner(prefix: String): String? = folderOwnerId(prefix)?.let { nameOf(it) }
 
     fun nameOf(chat: String): String {
         if (isGroup(chat)) return groups()[chat.removePrefix("g:")]?.name ?: "Группа"
@@ -488,8 +500,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Файл для показа в чате: принятый — в downloads узла, отправленный — копия в files/sent. */
     fun localFile(m: ChatMsg): File? {
         val name = m.fileName ?: return null
-        val f = if (m.out) File(sentDir, name) else File(downloadsDir, name)
-        return f.takeIf { downloadsDir.isNotEmpty() || m.out }?.takeIf { it.exists() }
+        if (m.out) return File(sentDir, name).takeIf { it.exists() }
+        if (downloadsDir.isEmpty()) return null
+        // путь из списка передач (точный, с суффиксом « (1)»), иначе — папка собеседника, «Большие файлы», старый общий каталог
+        transfers.firstOrNull { it.optString("transfer_id") == m.messageId }?.optString("path")
+            ?.takeIf { it.isNotEmpty() && it != "null" }?.let { File(it) }?.takeIf { it.exists() }?.let { return it }
+        val peerDir = File(downloadsDir, m.peer.take(16))
+        return listOf(File(peerDir, name), File(File(peerDir, "Большие файлы"), name), File(downloadsDir, name)).firstOrNull { it.exists() }
     }
 
     /** Скопировать выбранный файл (узлу нужен путь) и отправить. Копия остаётся в files/sent для превью. */

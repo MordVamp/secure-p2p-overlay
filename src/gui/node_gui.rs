@@ -326,6 +326,11 @@ async fn route(node: Arc<Node>, req: Request) -> Response {
             let (t, dir) = node.messenger.transfers().await;
             Response::json(json!({ "downloads_dir": dir.display().to_string(), "transfers": t }))
         }
+        // принятые файлы на диске — по папкам собеседников
+        ("/api/downloads", false) => {
+            let (_, dir) = node.messenger.transfers().await;
+            Response::json(json!({ "downloads_dir": dir.display().to_string(), "folders": crate::app::files::list_downloads(&dir) }))
+        }
         ("/api/history", false) => {
             let limit = req.query.get("limit").and_then(|l| l.parse().ok()).unwrap_or(100usize).min(10_000);
             Response::json(json!({ "entries": node.messenger.history(limit).await }))

@@ -10,7 +10,8 @@
 //!        … A повторяет пропущенные блоки, затем следующее окно …
 //! B → A  FileDone  {transfer_id, ok, error}          после проверки SHA-256 всего файла
 //! ```
-//! Приём: только в `<state_dir>/downloads/` (неполный файл — `downloads/.partial/<id>.part`), безопасное имя,
+//! Приём: только в `<state_dir>/downloads/<NodeID отправителя, 16 hex>/` (файл больше 2 ГиБ — в подпапку
+//! «Большие файлы»; неполный файл — `downloads/.partial/<id>.part`), безопасное имя,
 //! ограничение размера, дубликаты блоков игнорируются, блоки от чужого узла отвергаются, итоговая проверка
 //! SHA-256 (несовпадение → файл удаляется), неполный файл удаляется по тайм-ауту. Возобновление прерванной
 //! передачи не реализовано: после тайм-аута передача начинается заново.
@@ -102,6 +103,54 @@ pub struct TransferInfo {
     pub path:        Option<String>,
     pub started_ms:  u64,
     pub finished_ms: Option<u64>,
+    /// Почему нужно согласие / предупреждение (незнакомый узел, большой или очень большой файл).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warning:     Option<String>,
+}
+
+/// Файл больше этого — «очень большой»: отдельное предупреждение и подпапка `LARGE_DIR`.
+pub const LARGE_FILE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+pub const LARGE_DIR: &str = "Большие файлы";
+
+/// Папка собеседника в `downloads/`: первые 16 hex его NodeID (по ней клиенты показывают имя из контактов).
+pub fn peer_dir(peer: &NodeId) -> String { peer.to_hex()[..16].to_owned() }
+
+/// Размер для людей: 950 КиБ, 12,5 МиБ, 3,1 ГиБ.
+pub fn human_bytes(n: u64) -> String {
+    let f = n as f64;
+    if f >= 1024.0 * 1024.0 * 1024.0 { format!("{:.1} ГиБ", f / (1024.0 * 1024.0 * 1024.0)).replace('.', ",") }
+    else if f >= 1024.0 * 1024.0 { format!("{:.1} МиБ", f / (1024.0 * 1024.0)).replace('.', ",") }
+    else { format!("{:.0} КиБ", (f / 1024.0).max(1.0)) }
+}
+
+/// Принятые файлы на диске по папкам собеседников (переживает перезапуск — в отличие от списка передач):
+/// `[{folder, peer_prefix, files: [{name, size, mtime_ms, large, path}]}]`, файлы новее — выше.
+pub fn list_downloads(dir: &Path) -> serde_json::Value {
+    fn files_in(d: &Path, large: bool) -> Vec<serde_json::Value> {
+        let Ok(rd) = std::fs::read_dir(d) else { return vec![] };
+        rd.filter_map(|e| e.ok()).filter_map(|e| {
+            let m = e.metadata().ok()?;
+            if !m.is_file() { return None; }
+            let mt = m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_millis() as u64).unwrap_or(0);
+            Some(serde_json::json!({ "name": e.file_name().to_string_lossy(), "size": m.len(), "mtime_ms": mt,
+                                     "large": large, "path": e.path().display().to_string() }))
+        }).collect()
+    }
+    let mut out = vec![];
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for e in rd.filter_map(|e| e.ok()) {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if !e.path().is_dir() || name.starts_with('.') { continue; }
+            let mut files = files_in(&e.path(), false);
+            files.extend(files_in(&e.path().join(LARGE_DIR), true));
+            files.sort_by_key(|f| std::cmp::Reverse(f["mtime_ms"].as_u64().unwrap_or(0)));
+            if !files.is_empty() { out.push(serde_json::json!({ "folder": name, "peer_prefix": name, "files": files })); }
+        }
+    }
+    // файлы, принятые до разделения по папкам, — отдельной группой
+    let old = files_in(dir, false);
+    if !old.is_empty() { out.push(serde_json::json!({ "folder": "", "peer_prefix": "", "files": old })); }
+    serde_json::Value::Array(out)
 }
 
 /// Пределы приёма.
@@ -156,14 +205,29 @@ impl FileStore {
 
     fn part_dir(&self) -> PathBuf { self.dir.join(".partial") }
 
-    /// Сколько занимают уже принятые файлы (`downloads/`, без вложенных каталогов).
+    /// Куда ляжет принятый файл: папка собеседника, для очень больших — подпапка «Большие файлы».
+    pub fn target_dir(&self, from: &NodeId, size: u64) -> PathBuf {
+        let d = self.dir.join(peer_dir(from));
+        if size > LARGE_FILE_BYTES { d.join(LARGE_DIR) } else { d }
+    }
+
+    /// Сколько занимают уже принятые файлы (`downloads/` с папками собеседников, без `.partial`).
     fn used_bytes(&self) -> u64 {
-        std::fs::read_dir(&self.dir).map(|rd| rd.filter_map(|e| e.ok()).filter_map(|e| e.metadata().ok())
-            .filter(|m| m.is_file()).map(|m| m.len()).sum()).unwrap_or(0)
+        fn walk(d: &Path, depth: u32) -> u64 {
+            let Ok(rd) = std::fs::read_dir(d) else { return 0 };
+            rd.filter_map(|e| e.ok()).map(|e| {
+                let Ok(m) = e.metadata() else { return 0 };
+                if m.is_file() { m.len() }
+                else if m.is_dir() && depth < 3 && e.file_name() != ".partial" { walk(&e.path(), depth + 1) }
+                else { 0 }
+            }).sum()
+        }
+        walk(&self.dir, 0)
     }
 
     /// Проверить предложение: формат, имя, размер, пределы одновременных приёмов и квоты места.
-    pub fn check_offer(&self, from: NodeId, o: &FileOffer) -> Result<()> {
+    /// `by_user` — пользователь сам принял файл: общая квота принятых файлов не действует (только свободное место).
+    pub fn check_offer(&self, from: NodeId, o: &FileOffer, by_user: bool) -> Result<()> {
         if o.transfer_id.len() != 16 { bail!("transfer_id должен быть 16 байт"); }
         if self.incoming.contains_key(&o.transfer_id) || self.pending.contains_key(&o.transfer_id) {
             bail!("передача с таким transfer_id уже идёт");
@@ -179,7 +243,7 @@ impl FileStore {
         }
         if self.incoming.len() >= MAX_INCOMING_TOTAL { bail!("получатель уже принимает {MAX_INCOMING_TOTAL} файлов — подождите"); }
         let reserved: u64 = self.incoming.values().map(|i| i.offer.size).sum();
-        if self.used_bytes() + reserved + o.size > self.quota.max_total_bytes {
+        if !by_user && self.used_bytes() + reserved + o.size > self.quota.max_total_bytes {
             bail!("у получателя исчерпана квота на принятые файлы ({} МиБ)", self.quota.max_total_bytes >> 20);
         }
         if let Some(free) = free_bytes(&self.dir) {
@@ -214,8 +278,8 @@ impl FileStore {
     }
 
     /// Принять предложение: проверить имя, размер, квоты; создать неполный файл.
-    pub fn on_offer(&mut self, from: NodeId, o: FileOffer) -> Result<()> {
-        self.check_offer(from, &o)?;
+    pub fn on_offer(&mut self, from: NodeId, o: FileOffer, by_user: bool) -> Result<()> {
+        self.check_offer(from, &o, by_user)?;
         std::fs::create_dir_all(self.part_dir())?;
         let part = self.part_dir().join(format!("{}.part", hex::encode(&o.transfer_id)));
         let f = std::fs::File::create(&part).with_context(|| format!("{}", part.display()))?;
@@ -261,10 +325,12 @@ impl FileStore {
             bail!("SHA-256 не совпадает — файл отброшен");
         }
         let name = safe_name(&inc.offer.name)?;
-        let mut dst = self.dir.join(&name);
+        let dir = self.target_dir(&inc.from, inc.offer.size);
+        std::fs::create_dir_all(&dir)?;
+        let mut dst = dir.join(&name);
         let (stem, ext) = match name.rsplit_once('.') { Some((s, e)) if !s.is_empty() => (s.to_owned(), format!(".{e}")), _ => (name.clone(), String::new()) };
         let mut k = 1;
-        while dst.exists() { dst = self.dir.join(format!("{stem} ({k}){ext}")); k += 1; }
+        while dst.exists() { dst = dir.join(format!("{stem} ({k}){ext}")); k += 1; }
         std::fs::rename(&inc.part, &dst)?;
         Ok(dst)
     }
