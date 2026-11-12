@@ -24,6 +24,7 @@
 | [ARCHITECTURE.md](implementation/ARCHITECTURE.md) | Архитектура системы, модульная схема, инженерные решения |
 | [PROTOCOL.md](implementation/PROTOCOL.md) | Формат кадра, типы сообщений, DHT-ключи |
 | [DESIGN_DECISIONS.md](implementation/DESIGN_DECISIONS.md) | Выбор языка, уровня, сериализации, криптографии |
+| [dev/SECURITY_IMPROVEMENTS.md](dev/SECURITY_IMPROVEMENTS.md) | **Что улучшить в защите информации**: 11 пунктов, подробно — прямая секретность, данные на диске, имена файлов, работа на неизвестного, зависимости и журналы |
 | [design/DESIGN_REPORT_neutral.md](design/DESIGN_REPORT_neutral.md) | **Дизайн клиентов**: шесть тем, оформление, экраны, анимация, контраст — снимки с именами Алиса, Боб… |
 | [design/DESIGN_REPORT_current.md](design/DESIGN_REPORT_current.md) | То же со снимками стенда «как есть» (вампирские имена контактов) |
 

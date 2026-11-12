@@ -186,6 +186,30 @@ impl Messenger {
     /// Вести историю в `<state_dir>/history.jsonl`.
     pub fn with_history(mut self, h: History) -> Self { self.history = Some(h); self }
 
+    /// Срок хранения истории и шифрование (для клиентов).
+    pub async fn history_retention(&self) -> serde_json::Value {
+        match &self.history { Some(h) => h.retention(now_ms()).await, None => serde_json::json!({ "encrypted": false, "expired": 0, "due": false }) }
+    }
+
+    /// Записи старше срока: `delete` — удалить; `keep` — перешифровать новым ключом и оставить ещё на срок;
+    /// `export` — вынести в открытый текстовый файл (опасно). `reencrypt` — сменить ключ всей истории сейчас.
+    pub async fn history_action(&self, action: &str) -> Result<serde_json::Value> {
+        let h = self.history.as_ref().ok_or_else(|| anyhow::anyhow!("история не ведётся"))?;
+        let now = now_ms();
+        let v = match action {
+            "delete" => serde_json::json!({ "removed": h.delete_expired(now).await? }),
+            "keep" => h.reencrypt(now, true).await?,
+            "reencrypt" => h.reencrypt(now, false).await?,
+            "export" => {
+                let (path, n) = h.export_expired(now).await?;
+                serde_json::json!({ "path": path.display().to_string(), "exported": n, "plaintext": true })
+            }
+            other => bail!("действие {other}: допустимо delete, keep, export, reencrypt"),
+        };
+        self.events.emit("history", serde_json::json!({ "action": action })).await;
+        Ok(v)
+    }
+
     /// Последние `limit` записей истории.
     pub async fn history(&self, limit: usize) -> Vec<HistoryEntry> {
         match &self.history { Some(h) => h.tail(limit).await, None => vec![] }
@@ -898,17 +922,19 @@ impl Messenger {
                 let info = TransferInfo {
                     transfer_id: hex::encode(&tid), dir: "in".into(), peer: from.to_hex(), name: o.name.clone(), size: o.size,
                     blocks: o.blocks, done_blocks: 0, status: "receiving".into(), error: None, path: None,
-                    started_ms: now_ms(), finished_ms: None, warning: None,
+                    started_ms: now_ms(), finished_ms: None, warning: None, ext: crate::app::files::file_ext(&o.name),
                 };
                 // согласие: само (по политике) или решение пользователя — и почему его спрашивают
                 let known = self.is_known(&from).await;
                 let policy = self.cfg.files.accept.as_str();
+                // скрытые символы в имени исполняемого файла — всегда спросить, даже у знакомого
+                let name_warn = crate::app::files::name_warning(&o.name);
                 let auto = match policy {
-                    "auto" => true,
+                    "auto" => name_warn.is_none(),
                     "ask" => false,
-                    _ => o.size <= self.cfg.files.auto_accept_bytes && known,
+                    _ => o.size <= self.cfg.files.auto_accept_bytes && known && name_warn.is_none(),
                 };
-                let mut why = vec![];
+                let mut why: Vec<String> = name_warn.into_iter().collect();
                 if o.size > crate::app::files::LARGE_FILE_BYTES {
                     why.push(format!("⚠ очень большой файл — {} (больше 2 ГиБ): займёт место и время, будет сохранён в «{}»",
                                      crate::app::files::human_bytes(o.size), crate::app::files::LARGE_DIR));
@@ -1005,7 +1031,7 @@ impl Messenger {
         let t0 = now_ms();
         self.upsert_transfer(TransferInfo { transfer_id: hid.clone(), dir: "out".into(), peer: target.to_hex(), name: name.clone(),
             size, blocks, done_blocks: 0, status: "sending".into(), error: None, path: Some(path.display().to_string()),
-            started_ms: t0, finished_ms: None,
+            started_ms: t0, finished_ms: None, ext: crate::app::files::file_ext(&name),
             warning: (size > crate::app::files::LARGE_FILE_BYTES).then(|| "очень большой файл — получателю нужно подтвердить приём".into()) }).await;
         let mut rep = FileReport { transfer_id: hid.clone(), name: name.clone(), size, blocks, ..Default::default() };
 

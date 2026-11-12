@@ -169,7 +169,9 @@ impl TunnelManager {
         let mut p = self.profiles.lock().await;
         match blamed_addr(err) {
             Some(addr) => {
-                if let Some(c) = hops.iter().find(|c| c.host_port() == addr) { p.failure(c); }
+                let by_id = addr.strip_prefix("node:").filter(|h| h.len() >= 8);
+                let hit = hops.iter().find(|c| match by_id { Some(h) => c.node_id.to_hex().starts_with(h), None => c.host_port() == addr });
+                if let Some(c) = hit { p.failure(c); }
                 // иначе адрес — получатель или посторонний: ретрансляторы не виноваты
             }
             None => for c in hops { p.failure(c); },

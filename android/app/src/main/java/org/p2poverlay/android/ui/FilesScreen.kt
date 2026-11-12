@@ -5,6 +5,7 @@ import android.content.Intent
 import android.webkit.MimeTypeMap
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -148,7 +149,10 @@ private fun TransferRow(vm: AppViewModel, ctx: Context, t: JSONObject) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Icon(Icons.AutoMirrored.Filled.InsertDriveFile, null, tint = P.Accent)
             Column(Modifier.weight(1f)) {
-                Text(t.optString("name"), maxLines = 1)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(t.optString("name"), maxLines = 1, modifier = Modifier.weight(1f, fill = false))
+                    ExtBadge(t.optString("ext"))
+                }
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     Icon(if (out) Icons.Filled.ArrowUpward else Icons.Filled.ArrowDownward, null, tint = P.Muted,
                         modifier = Modifier.padding(0.dp))
@@ -201,7 +205,11 @@ private fun DownloadFolder(vm: AppViewModel, ctx: Context, prefix: String, files
             val file = File(f.optString("path"))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text(f.optString("name"), maxLines = 1, fontSize = 14.sp)
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(f.optString("name"), maxLines = 1, fontSize = 14.sp, modifier = Modifier.weight(1f, fill = false))
+                        ExtBadge(f.optString("ext"))
+                    }
+                    f.optString("name_warning").takeIf { it.isNotEmpty() && it != "null" }?.let { Text(it, color = P.Yellow, fontSize = 11.sp) }
                     Text(humanBytes(f.optLong("size")) + if (f.optBoolean("large")) " · «Большие файлы»" else "",
                         color = if (f.optBoolean("large")) P.Yellow else P.Muted, fontSize = 12.sp)
                 }
@@ -213,6 +221,15 @@ private fun DownloadFolder(vm: AppViewModel, ctx: Context, prefix: String, files
             Text(if (all) "Свернуть" else "Ещё ${files.size - 4}")
         }
     }
+}
+
+/** Настоящее расширение отдельной меткой: имя со скрытыми символами может «показывать» другое. */
+@Composable
+private fun ExtBadge(ext: String) {
+    if (ext.isEmpty() || ext == "null") return
+    Text(ext.uppercase(), fontSize = 11.sp, color = P.Muted,
+        modifier = Modifier.border(1.dp, P.Muted.copy(alpha = 0.5f), androidx.compose.foundation.shape.RoundedCornerShape(4.dp))
+            .padding(horizontal = 4.dp))
 }
 
 private fun plural(n: Int) = when { n % 10 == 1 && n % 100 != 11 -> "файл"; n % 10 in 2..4 && n % 100 !in 12..14 -> "файла"; else -> "файлов" }

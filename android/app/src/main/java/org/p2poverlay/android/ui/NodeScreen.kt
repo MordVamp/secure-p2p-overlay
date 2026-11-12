@@ -217,6 +217,8 @@ fun NodeScreen(vm: AppViewModel, onScan: () -> Unit, onInvite: (Invite) -> Unit)
         }
 
         // ── журнал ──
+        SectionCard("Хранение") { StorageSection(vm) }
+
         SectionCard("Журнал узла") {
             var lines by remember { mutableStateOf(vm.logTail(80)) }
             LaunchedEffect(Unit) { while (true) { lines = vm.logTail(80); delay(2000) } }
@@ -257,5 +259,51 @@ fun InviteDialog(inv: Invite, onDismiss: () -> Unit, onConfirm: (String) -> Unit
         },
         confirmButton = { TextButton(onClick = { onConfirm(name) }) { Text("Подключить") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Отмена") } },
+    )
+}
+
+
+/** Шифрование истории и срок хранения; действия со старыми записями (последнее — красное). */
+@Composable
+private fun StorageSection(vm: AppViewModel) {
+    val r = vm.retention
+    val enc = r?.optBoolean("encrypted") == true
+    Pill(if (enc) "история зашифрована · ключ в Android Keystore" else "история не зашифрована", if (enc) P.Green else P.Yellow)
+    if (r != null) Text("Записей: ${r.optInt("records")} · срок хранения: ${r.optInt("retention_days")} дн. · старше срока: ${r.optInt("expired")}",
+        color = P.Muted, fontSize = 13.sp)
+    Text("Ключ узла и история на телефоне хранятся зашифрованными; принятые файлы — в закрытой папке приложения.",
+        color = P.Muted, fontSize = 12.sp)
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        androidx.compose.material3.OutlinedButton(onClick = { vm.historyAction("reencrypt") }, enabled = enc) { Text("Перешифровать") }
+        if ((r?.optInt("expired") ?: 0) > 0) androidx.compose.material3.OutlinedButton(onClick = { vm.retentionDialog = true }) { Text("Старые записи…") }
+    }
+}
+
+/** Диалог: записи старше срока — удалить / перешифровать и оставить / вынести в открытый файл (красная). */
+@Composable
+fun RetentionDialog(vm: AppViewModel) {
+    if (!vm.retentionDialog) return
+    val r = vm.retention ?: return
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = { vm.dismissRetention() }, containerColor = P.Side,
+        title = { Text("Старые записи истории") },
+        text = {
+            androidx.compose.foundation.layout.Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                val n = r.optInt("expired")
+                val w = when { n % 10 == 1 && n % 100 != 11 -> "запись"; n % 10 in 2..4 && n % 100 !in 12..14 -> "записи"; else -> "записей" }
+                Text("$n $w старше ${r.optInt("retention_days")} дней. Что с ними сделать?")
+                androidx.compose.material3.Button(onClick = { vm.historyAction("delete") }, modifier = Modifier.fillMaxWidth()) { Text("Удалить") }
+                androidx.compose.material3.OutlinedButton(onClick = { vm.historyAction("keep") }, enabled = r.optBoolean("encrypted"),
+                    modifier = Modifier.fillMaxWidth()) { Text("Перешифровать и оставить ещё на год") }
+                androidx.compose.material3.Button(onClick = { vm.historyAction("export") }, modifier = Modifier.fillMaxWidth(),
+                    colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = P.Red, contentColor = androidx.compose.ui.graphics.Color.White)) {
+                    Text("⚠ Вынести в открытый файл")
+                }
+                Text("Открытый файл НЕ зашифрован: переписку прочитает любой, к кому он попадёт. Сразу после вывода " +
+                    "откроется «Поделиться» — перенесите файл в надёжное место; из истории записи удаляются.",
+                    color = P.Red, fontSize = 12.sp)
+            }
+        },
+        confirmButton = { androidx.compose.material3.TextButton(onClick = { vm.dismissRetention() }) { Text("Позже") } },
     )
 }

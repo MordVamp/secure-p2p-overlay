@@ -111,6 +111,29 @@ pub async fn dial_expect(addr: SocketAddr, connect_timeout_ms: u64, read_timeout
     }
 }
 
+/// Убрать из текста ошибки адреса вида `1.2.3.4:5` и `[::1]:5` (для режима `peer_errors = generic`).
+pub fn scrub_addresses(s: &str) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while i < chars.len() {
+        let is_part = |c: char| c.is_ascii_hexdigit() || matches!(c, '.' | ':' | '[' | ']');
+        // адрес начинается с цифры или '[' и не продолжает слово (node:abcd… — не адрес)
+        let starts = (chars[i].is_ascii_digit() || chars[i] == '[') && (i == 0 || !chars[i - 1].is_alphanumeric());
+        if starts {
+            let mut j = i;
+            while j < chars.len() && is_part(chars[j]) { j += 1; }
+            let run: String = chars[i..j].iter().collect();
+            let has_port = run.contains(':');
+            let looks_ip = run.matches('.').count() == 3 || run.starts_with('[');
+            if has_port && looks_ip { out.push_str("<адрес>"); i = j; continue; }
+        }
+        out.push(chars[i]);
+        i += 1;
+    }
+    out
+}
+
 fn make_error_frame(request_id: [u8; 16], code: u16, desc: String) -> Frame {
     let err = ErrorPayload { code, description: desc };
     let bytes = payload::encode(&err).unwrap_or_default();
@@ -211,7 +234,12 @@ impl RpcHandler {
             }
             MsgType::TunnelData => match self.handle_tunnel_data(&frame).await {
                 Ok(f)  => Some(f),
-                Err(e) => { warn!("tunnel_data err: {e}"); Some(make_error_frame(frame.request_id, error_codes::BAD_PAYLOAD, e.to_string())) }
+                Err(e) => {
+                    warn!("tunnel_data err: {e}");
+                    // в generic-режиме адреса не уходят к другим узлам (см. transport.peer_errors)
+                    let d = if self.cfg.transport.detailed_peer_errors() { e.to_string() } else { scrub_addresses(&e.to_string()) };
+                    Some(make_error_frame(frame.request_id, error_codes::BAD_PAYLOAD, d))
+                }
             },
             other => {
                 warn!("unknown msg_type {:?} — sending ERROR", other);
@@ -665,8 +693,15 @@ impl RpcHandler {
             if self.cfg.fault.delay_ms > 0 {
                 tokio::time::sleep(Duration::from_millis(self.cfg.fault.delay_ms)).await;
             }
+            let detailed = self.cfg.transport.detailed_peer_errors();
+            // как назвать следующий узел в ошибке: адрес (отладка) или NodeID (без сведений о сети ретранслятора)
+            let next_name = match (&next_id, detailed) {
+                (Some(id), false) => format!("node:{}", &id.to_hex()[..16]),
+                _ => next.to_string(),
+            };
             if self.cfg.fault.drop > 0.0 && rand::random::<f64>() < self.cfg.fault.drop {
-                bail!("ретранслятор {} отказал (внесённый отказ)", self.own_contact.host_port());
+                if detailed { bail!("ретранслятор {} отказал (внесённый отказ)", self.own_contact.host_port()); }
+                bail!("ретранслятор node:{} отказал (внесённый отказ)", &self.own_contact.node_id.to_hex()[..16]);
             }
             // по адресу следующего hop должен ответить именно тот узел, что был согласован при TUNNEL_BUILD
             let fwd = Frame {
@@ -681,12 +716,14 @@ impl RpcHandler {
             };
             let (ack, _) = pool::request(pool::Scope::Tunnel, next, next_id.as_ref(), fwd, self.cfg.transport.connect_timeout_ms,
                                          self.cfg.transport.read_timeout_ms, self.cfg.tunnel.ack_timeout_ms).await
-                .map_err(|e| anyhow::anyhow!("next hop {next}: {e}"))?
-                .ok_or_else(|| anyhow::anyhow!("next hop {next} ACK timeout"))?;
+                // generic: ни адреса, ни причины («refused» или тайм-аут выдали бы, что по адресу)
+                .map_err(|e| if detailed { anyhow::anyhow!("next hop {next}: {e}") } else { anyhow::anyhow!("next hop {next_name} недоступен") })?
+                .ok_or_else(|| if detailed { anyhow::anyhow!("next hop {next} ACK timeout") } else { anyhow::anyhow!("next hop {next_name} недоступен") })?;
             if ack.msg_type != MsgType::TunnelAck {
                 // причина с дальнего конца цепочки — для определения виновного узла
                 let why = payload::decode::<ErrorPayload>(&ack.payload).map(|e| e.description).unwrap_or_default();
-                bail!("next hop {next} replied {:?}: {why}", ack.msg_type);
+                let why = if detailed { why } else { scrub_addresses(&why) };
+                bail!("next hop {next_name} replied {:?}: {why}", ack.msg_type);
             }
             debug!("TUNNEL_DATA relayed tunnel={} → {next}", hex::encode(&tid[..4]));
         } else {

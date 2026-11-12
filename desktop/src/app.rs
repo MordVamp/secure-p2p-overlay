@@ -49,6 +49,10 @@ enum Msg {
     Deleted { peer: String, res: Result<Value, String> },
     /// `/api/calls`: сеансы звонков (опрос 0,4 с).
     Calls(Value),
+    /// `/api/history/retention`: шифрование и срок хранения истории.
+    Retention(Value),
+    /// Результат действия с историей (удалить / перешифровать / вынести в открытый файл).
+    HistoryDone { action: String, res: Result<Value, String> },
     CallDone { what: String, res: Result<Value, String> },
 }
 
@@ -136,6 +140,12 @@ pub struct App {
     call_sid: Option<String>,
     call_err: Option<String>,
     call_attention: Option<String>,
+    /// Где лежит ключ шифрования своего узла (secrets.rs); None — узел не запускался этим клиентом.
+    kek_source: Option<crate::secrets::Source>,
+    /// Срок хранения истории (`/api/history/retention`) и открытый диалог «что сделать со старыми записями».
+    retention: Value,
+    retention_dialog: bool,
+    retention_dismissed: bool,
 }
 
 fn now_ms() -> u64 { SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0) }
@@ -208,6 +218,7 @@ impl App {
             files: Value::Null, relays: Value::Null, f_target: String::new(), f_path: String::new(), f_sending: vec![],
             groups: HashMap::new(), reported: Default::default(), typing_sent: HashMap::new(), safety: None, confirm_delete: None,
             calls: Value::Null, call_audio: None, call_sid: None, call_err: None, call_attention: None,
+            kek_source: None, retention: Value::Null, retention_dialog: false, retention_dismissed: false,
         };
         if app.s.mode == Mode::Attach || app.s.autostart { app.connect(); }
         app
@@ -254,9 +265,14 @@ impl App {
                 self.toast(format!("На порту {} уже работает узел — подключаюсь к нему", self.s.gui_port), YELLOW());
                 self.port.store(self.s.gui_port, Ordering::Relaxed);
             }
-            Mode::Launch => match LocalNode::start(&self.s) {
+            Mode::Launch => match crate::secrets::kek(&self.s.kek_source).and_then(|(k, src)| {
+                self.s.kek_source = src.id().to_owned();
+                self.kek_source = Some(src);
+                LocalNode::start(&self.s, Some(&k))
+            }) {
                 Ok(n) => {
-                    self.toast(format!("Узел запущен (pid {})", n.pid()), GREEN());
+                    self.toast(format!("Узел запущен (pid {}); ключ шифрования — {}", n.pid(),
+                                       self.kek_source.map(|s| s.describe()).unwrap_or("")), GREEN());
                     self.local = Some(n);
                     self.helpers_pending = self.s.helpers > 0;
                     self.port.store(self.s.gui_port, Ordering::Relaxed);
@@ -344,6 +360,23 @@ impl App {
                     Err(e) => self.toast(e, RED()),
                 },
                 Msg::Calls(v) => { self.calls = v; self.sync_call_audio(); }
+                Msg::Retention(v) => {
+                    if v["due"] == true && !self.retention_dismissed { self.retention_dialog = true; }
+                    self.retention = v;
+                }
+                Msg::HistoryDone { action, res } => match api::ok(res) {
+                    Ok(v) => {
+                        self.retention_dialog = false;
+                        let t = match action.as_str() {
+                            "delete" => format!("Удалено записей: {}", api::s(&v, "removed")),
+                            "keep" => "История перешифрована новым ключом; старые записи остаются ещё на год".to_owned(),
+                            "reencrypt" => format!("История перешифрована: ключ {}", api::s(&v, "key_id")),
+                            _ => format!("Вынесено в ОТКРЫТЫЙ файл: {} записей — {}", api::s(&v, "exported"), api::s(&v, "path")),
+                        };
+                        self.toast(t, if action == "export" { RED() } else { GREEN() });
+                    }
+                    Err(e) => self.toast(format!("История: {e}"), RED()),
+                },
                 Msg::CallDone { what, res } => if let Err(e) = api::ok(res) { self.toast(format!("{what}: {e}"), RED()); },
                 Msg::Alias { name, res } => match api::ok(res) {
                     Ok(v) => {
@@ -547,6 +580,7 @@ fn spawn_poller(port: Arc<AtomicU16>, tx: Sender<Msg>, ctx: egui::Context) {
                     let _ = tx.send(Msg::Files(f));
                 }
                 if let Ok(r) = api::get(p, "/api/relays", &[]) { let _ = tx.send(Msg::Relays(r)); }
+                if let Ok(r) = api::get(p, "/api/history/retention", &[]) { let _ = tx.send(Msg::Retention(r)); }
             }
             ctx.request_repaint();
         }
@@ -601,6 +635,7 @@ impl eframe::App for App {
             }
         }
         theme::decor_top(ctx);
+        self.retention_window(ctx);
         self.toasts_ui(ctx);
         ctx.request_repaint_after(Duration::from_millis(if theme::animated() { 40 } else { 500 }));
     }
@@ -995,6 +1030,9 @@ impl App {
         });
         ui.add_space(12.0);
 
+        card(ui, |ui| self.storage_card(ui));
+        ui.add_space(12.0);
+
         card(ui, |ui| {
             section_title(ui, "Оформление");
             if let Some(id) = theme::picker(ui) {
@@ -1153,7 +1191,12 @@ impl App {
                     ui.label(if api::s(t, "dir") == "out" { "↗" } else { "↘" });
                     let name = api::s(t, "name");
                     let path = t["path"].as_str().unwrap_or_default().to_owned();
-                    ui.label(&name).on_hover_text(if path.is_empty() { name.clone() } else { path });
+                    ui.horizontal(|ui| {
+                        ui.label(&name).on_hover_text(if path.is_empty() { name.clone() } else { path });
+                        // настоящее расширение отдельно: имя со скрытыми символами может «показывать» другое
+                        let ext = api::s(t, "ext");
+                        if !ext.is_empty() { ui.label(RichText::new(ext.to_uppercase()).size(11.0).color(MUTED())); }
+                    });
                     ui.label(self.display_name(&api::s(t, "peer")));
                     let size = api::u(t, "size").unwrap_or(0) as f64;
                     ui.label(human_bytes(size as u64));
@@ -1279,6 +1322,84 @@ impl App {
                     });
                 });
             });
+    }
+
+    fn history_action(&self, action: &'static str) {
+        self.bg(move |p| {
+            let path = if action == "reencrypt" { "/api/history/reencrypt" } else { "/api/history/expired" };
+            let res = api::call(p, "POST", path, &[("action", action)], Duration::from_secs(60));
+            Msg::HistoryDone { action: action.to_owned(), res }
+        });
+    }
+
+    /// Кнопка «вынести в открытом виде» — красная, с пояснением, чем это опасно.
+    fn plaintext_export_button(&self, ui: &mut egui::Ui) {
+        let b = egui::Button::new(RichText::new("⚠ Вынести в открытый файл").color(Color32::WHITE)).fill(RED());
+        if ui.add(b).on_hover_text("Записи старше срока сохраняются текстом БЕЗ шифрования в <каталог узла>/export/ \
+                                    и удаляются из истории. Файл прочитает любой, кто получит доступ к диску.").clicked() {
+            self.history_action("export");
+        }
+    }
+
+    /// «Хранение»: шифрование истории, где ключ, срок хранения, смена ключа.
+    fn storage_card(&mut self, ui: &mut egui::Ui) {
+        section_title(ui, "Хранение");
+        let r = self.retention.clone();
+        let enc = r["encrypted"] == true;
+        ui.horizontal(|ui| {
+            theme::pill(ui, if enc { "история зашифрована" } else { "история НЕ зашифрована" }, if enc { GREEN() } else { YELLOW() });
+            if let Some(src) = self.kek_source {
+                ui.label(RichText::new(format!("ключ шифрования — {}", src.describe())).size(12.5)
+                    .color(if src == crate::secrets::Source::File { YELLOW() } else { MUTED() }));
+            }
+        });
+        if !enc {
+            ui.label(RichText::new("Узел запущен без ключа шифрования (подключение к чужому узлу или узел из терминала) — \
+                                    история хранится открытым текстом с правами 0600.").size(12.5).color(MUTED()));
+        }
+        ui.label(RichText::new(format!("Записей: {} · срок хранения: {} дн. · старше срока: {}",
+            api::s(&r, "records"), api::s(&r, "retention_days"), api::s(&r, "expired"))).size(12.5).color(MUTED()));
+        ui.horizontal(|ui| {
+            if ui.add_enabled(enc, egui::Button::new("Перешифровать новым ключом")).on_hover_text(
+                "Новый ключ данных, вся история переписывается им, старый ключ стирается — если есть подозрение, что ключ утёк").clicked() {
+                self.history_action("reencrypt");
+            }
+            if r["expired"].as_u64().unwrap_or(0) > 0 && ui.button("Что сделать со старыми записями…").clicked() {
+                self.retention_dismissed = false;
+                self.retention_dialog = true;
+            }
+        });
+    }
+
+    /// Окно: записи старше срока — удалить / перешифровать и оставить / вынести в открытый файл (красная).
+    fn retention_window(&mut self, ctx: &egui::Context) {
+        if !self.retention_dialog { return; }
+        let r = self.retention.clone();
+        let mut open = true;
+        egui::Window::new("Старые записи истории").collapsible(false).resizable(false).open(&mut open)
+            .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
+            .show(ctx, |ui| {
+                ui.set_max_width(520.0);
+                let n = r["expired"].as_u64().unwrap_or(0);
+                let w = if n % 10 == 1 && n % 100 != 11 { "запись" } else if (2..=4).contains(&(n % 10)) && !(12..=14).contains(&(n % 100)) { "записи" } else { "записей" };
+                ui.label(RichText::new(format!("В истории {n} {w} старше {} дней. Что с ними сделать?", api::s(&r, "retention_days"))).strong());
+                ui.add_space(8.0);
+                if ui.add(primary("Удалить")).clicked() { self.history_action("delete"); }
+                ui.label(RichText::new("Записи стираются из истории.").size(12.0).color(MUTED()));
+                ui.add_space(6.0);
+                if ui.add_enabled(r["encrypted"] == true, egui::Button::new("Перешифровать и оставить ещё на год")).clicked() {
+                    self.history_action("keep");
+                }
+                ui.label(RichText::new("Новый ключ для всей истории; через год вопрос повторится.").size(12.0).color(MUTED()));
+                ui.add_space(6.0);
+                self.plaintext_export_button(ui);
+                ui.label(RichText::new("Записи сохраняются ТЕКСТОМ БЕЗ ШИФРОВАНИЯ в каталог узла (export/) и удаляются из \
+                                        истории. Используйте, только если сразу перенесёте файл в надёжное место.")
+                    .size(12.0).color(RED()));
+                ui.add_space(6.0);
+                if ui.button("Позже").clicked() { self.retention_dismissed = true; self.retention_dialog = false; }
+            });
+        if !open { self.retention_dismissed = true; self.retention_dialog = false; }
     }
 
     fn file_decision(&self, path: &'static str, id: String) {

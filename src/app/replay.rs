@@ -38,6 +38,8 @@ impl ReplayGuard {
         let body: String = seen.iter().map(|(id, ts)| format!("{} {ts}\n", hex::encode(id))).collect();
         let _ = std::fs::create_dir_all(state_dir);
         let _ = std::fs::write(&log, body);
+        #[cfg(unix)]
+        { use std::os::unix::fs::PermissionsExt; let _ = std::fs::set_permissions(&log, std::fs::Permissions::from_mode(0o600)); }
         Self { seen, log: Some(log), window: WINDOW_MS }
     }
 

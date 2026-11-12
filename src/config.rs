@@ -42,6 +42,19 @@ pub struct NodeConfig {
     /// Офлайн-доставка через «почтовые ящики» в DHT.
     #[serde(default)]
     pub mailbox:   MailboxConfig,
+    /// История на диске: срок хранения.
+    #[serde(default)]
+    pub history:   HistoryConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HistoryConfig {
+    /// Записи старше — клиенты предлагают удалить, перешифровать и оставить или вынести в открытый файл.
+    pub retention_days: u64,
+}
+
+impl Default for HistoryConfig {
+    fn default() -> Self { Self { retention_days: 365 } }
 }
 
 /// Офлайн-доставка: сообщение, не доставленное через туннель, отправитель кладёт в подписанную
@@ -184,9 +197,22 @@ pub struct TransportConfig {
     /// `all` — всё через пул.
     #[serde(default = "default_pool_scope")]
     pub pool_scope:             String,
+    /// Что сообщать другим узлам в ошибках (кадр ERROR): `detailed` — адреса и причины (отладка, стенд);
+    /// `generic` — без адресов и причин, следующий узел назван NodeID (иначе через ретранслятор можно выяснять,
+    /// какие адреса и порты открыты в его сети); `auto` — detailed в debug-сборке, generic в release.
+    #[serde(default = "default_peer_errors")]
+    pub peer_errors:            String,
 }
 
 fn default_pool_scope() -> String { "tunnels".into() }
+fn default_peer_errors() -> String { "auto".into() }
+
+impl TransportConfig {
+    /// Подробные ошибки для других узлов?
+    pub fn detailed_peer_errors(&self) -> bool {
+        match self.peer_errors.as_str() { "detailed" => true, "generic" => false, _ => cfg!(debug_assertions) }
+    }
+}
 
 fn default_idle_ms() -> u64 { 60_000 }
 fn default_pool_max() -> usize { 128 }
@@ -202,6 +228,7 @@ impl Default for TransportConfig {
             idle_timeout_ms:    default_idle_ms(),
             pool_max:           default_pool_max(),
             pool_scope:         default_pool_scope(),
+            peer_errors:        default_peer_errors(),
         }
     }
 }

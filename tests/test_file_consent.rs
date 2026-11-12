@@ -127,6 +127,18 @@ async fn stranger_file_waits_for_consent_known_peer_is_automatic() {
     assert_eq!(w["delivered"], true, "{w}");
     let r = api(8120, "POST", "/api/send_file", &[("target", &ids[4]), ("path", &path("c.bin"))], 60).await.unwrap();
     assert_eq!(r["ok"], true, "знакомому — без вопроса: {r}");
+
+    // но исполняемый файл со скрытыми символами в имени — всегда с вопросом и предупреждением
+    let spoof = src.join("счёт_\u{202e}fdp.exe");
+    std::fs::write(&spoof, b"MZ fake").unwrap();
+    let (ps, t4) = (spoof.display().to_string(), ids[4].clone());
+    let send = tokio::spawn(async move { api(8120, "POST", "/api/send_file", &[("target", &t4), ("path", &ps)], 120).await.unwrap() });
+    let t = transfer(8124, "счёт_\u{202e}fdp.exe").await;
+    assert_eq!(t["status"], "offered", "даже от знакомого: {t}");
+    assert_eq!(t["ext"], "exe");
+    assert!(t["warning"].as_str().unwrap_or("").contains("U+202E"), "{t}");
+    api(8124, "POST", "/api/file/reject", &[("transfer_id", t["transfer_id"].as_str().unwrap())], 10).await.unwrap();
+    let _ = send.await;
     drop(n);
 }
 

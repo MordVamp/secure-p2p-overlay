@@ -103,14 +103,25 @@ pub struct TransferInfo {
     pub path:        Option<String>,
     pub started_ms:  u64,
     pub finished_ms: Option<u64>,
-    /// Почему нужно согласие / предупреждение (незнакомый узел, большой или очень большой файл).
+    /// Почему нужно согласие / предупреждение (незнакомый узел, большой или очень большой файл, обманчивое имя).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub warning:     Option<String>,
+    /// Настоящее расширение (по концу имени на диске) — клиенты показывают его отдельно от имени.
+    #[serde(default)]
+    pub ext:         String,
 }
 
 /// Файл больше этого — «очень большой»: отдельное предупреждение и подпапка `LARGE_DIR`.
 pub const LARGE_FILE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 pub const LARGE_DIR: &str = "Большие файлы";
+
+/// Каталог — только владельцу (0700): принятые файлы не читают другие пользователи компьютера.
+/// На Windows не действует: там доступ задают ACL, и каталог в профиле пользователя и так закрыт от других.
+fn private_dir(d: &Path) {
+    let _ = std::fs::create_dir_all(d);
+    #[cfg(unix)]
+    { use std::os::unix::fs::PermissionsExt; let _ = std::fs::set_permissions(d, std::fs::Permissions::from_mode(0o700)); }
+}
 
 /// Папка собеседника в `downloads/`: первые 16 hex его NodeID (по ней клиенты показывают имя из контактов).
 pub fn peer_dir(peer: &NodeId) -> String { peer.to_hex()[..16].to_owned() }
@@ -123,6 +134,44 @@ pub fn human_bytes(n: u64) -> String {
     else { format!("{:.0} КиБ", (f / 1024.0).max(1.0)) }
 }
 
+// ── имя файла: настоящее расширение и скрытые символы ────────────────────────
+
+/// Невидимые символы и символы управления направлением текста (Unicode Cf и разделители строк). Законны (арабский,
+/// иврит, эмодзи, мягкий перенос), поэтому не отвергаются; опасны в сочетании с исполняемым расширением:
+/// «счёт_⟨U+202E⟩fdp.exe» на экране выглядит как «счёт_exe.pdf».
+pub fn is_hidden_char(c: char) -> bool {
+    matches!(c as u32, 0x00AD | 0x061C | 0x180E | 0x200B..=0x200F | 0x2028..=0x202E | 0x2060..=0x2064 | 0x2066..=0x2069 | 0xFEFF)
+}
+
+/// Настоящее расширение — то, что стоит в конце имени на диске (а не то, что видно после переворота текста).
+pub fn file_ext(name: &str) -> String {
+    match name.rsplit_once('.') {
+        Some((stem, ext)) if !stem.is_empty() && !ext.is_empty() && ext.len() <= 12 =>
+            ext.chars().filter(|c| !is_hidden_char(*c)).collect::<String>().to_lowercase(),
+        _ => String::new(),
+    }
+}
+
+/// Расширения, которые запускаются при открытии (Windows, Linux, macOS, Android, Java, скрипты, ярлыки).
+pub const EXECUTABLE_EXT: &[&str] = &[
+    "exe", "com", "bat", "cmd", "scr", "pif", "msi", "msp", "lnk", "cpl", "hta", "reg", "vbs", "vbe", "js", "jse", "wsf",
+    "ps1", "psm1", "sh", "bash", "run", "bin", "desktop", "appimage", "deb", "rpm", "app", "command", "pkg", "dmg",
+    "apk", "xapk", "jar", "py", "pl",
+];
+
+/// Имя для показа: скрытые символы — видимыми обозначениями ⟨U+202E⟩.
+pub fn visible_name(name: &str) -> String {
+    name.chars().map(|c| if is_hidden_char(c) { format!("⟨U+{:04X}⟩", c as u32) } else { c.to_string() }).collect()
+}
+
+/// Предупреждение об имени: скрытые символы в имени исполняемого файла.
+pub fn name_warning(name: &str) -> Option<String> {
+    let ext = file_ext(name);
+    if !name.chars().any(is_hidden_char) || !EXECUTABLE_EXT.contains(&ext.as_str()) { return None; }
+    Some(format!("⚠ в имени исполняемого файла (.{ext}) есть невидимые символы или символы смены направления текста — \
+                  на экране имя может выглядеть иначе; на самом деле: «{}»", visible_name(name)))
+}
+
 /// Принятые файлы на диске по папкам собеседников (переживает перезапуск — в отличие от списка передач):
 /// `[{folder, peer_prefix, files: [{name, size, mtime_ms, large, path}]}]`, файлы новее — выше.
 pub fn list_downloads(dir: &Path) -> serde_json::Value {
@@ -132,8 +181,9 @@ pub fn list_downloads(dir: &Path) -> serde_json::Value {
             let m = e.metadata().ok()?;
             if !m.is_file() { return None; }
             let mt = m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_millis() as u64).unwrap_or(0);
-            Some(serde_json::json!({ "name": e.file_name().to_string_lossy(), "size": m.len(), "mtime_ms": mt,
-                                     "large": large, "path": e.path().display().to_string() }))
+            let name = e.file_name().to_string_lossy().into_owned();
+            Some(serde_json::json!({ "ext": file_ext(&name), "name_warning": name_warning(&name), "name": name,
+                                     "size": m.len(), "mtime_ms": mt, "large": large, "path": e.path().display().to_string() }))
         }).collect()
     }
     let mut out = vec![];
@@ -282,7 +332,13 @@ impl FileStore {
         self.check_offer(from, &o, by_user)?;
         std::fs::create_dir_all(self.part_dir())?;
         let part = self.part_dir().join(format!("{}.part", hex::encode(&o.transfer_id)));
-        let f = std::fs::File::create(&part).with_context(|| format!("{}", part.display()))?;
+        private_dir(&self.dir);
+        private_dir(&self.part_dir());
+        let mut oo = std::fs::OpenOptions::new();
+        oo.create(true).write(true).truncate(true);
+        #[cfg(unix)]
+        { use std::os::unix::fs::OpenOptionsExt; oo.mode(0o600); }   // принятый файл — только владельцу
+        let f = oo.open(&part).with_context(|| format!("{}", part.display()))?;
         f.set_len(o.size)?;
         self.incoming.insert(o.transfer_id.clone(), Incoming {
             from, have: vec![false; o.blocks as usize], received: 0, duplicates: 0, part, last_ms: now_ms(), offer: o,
@@ -327,6 +383,8 @@ impl FileStore {
         let name = safe_name(&inc.offer.name)?;
         let dir = self.target_dir(&inc.from, inc.offer.size);
         std::fs::create_dir_all(&dir)?;
+        private_dir(&self.dir.join(peer_dir(&inc.from)));
+        private_dir(&dir);
         let mut dst = dir.join(&name);
         let (stem, ext) = match name.rsplit_once('.') { Some((s, e)) if !s.is_empty() => (s.to_owned(), format!(".{e}")), _ => (name.clone(), String::new()) };
         let mut k = 1;

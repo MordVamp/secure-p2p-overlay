@@ -109,6 +109,7 @@ class MainActivity : FragmentActivity() {
                 if (locked.value) LockScreen(onUnlock = ::unlock) else {
                     val accept = org.p2poverlay.android.ui.rememberWithMic { vm.acceptCall(it) }
                     LaunchedEffect(acceptCall.value) { acceptCall.value?.let { accept(it); acceptCall.value = null } }
+                    org.p2poverlay.android.ui.RetentionDialog(vm)
                     if (vm.call != null && !vm.callMinimized) CallScreen(vm)
                     else androidx.compose.foundation.layout.Column {
                         if (vm.call != null) CallBar(vm)

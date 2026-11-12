@@ -303,6 +303,16 @@ async fn route(node: Arc<Node>, req: Request) -> Response {
                 Err(e) => Response::json(json!({ "ok": false, "error": e.to_string() })),
             }
         }
+        // история на диске: шифрование и срок хранения (по умолчанию год)
+        ("/api/history/retention", false) => Response::json(node.messenger.history_retention().await),
+        ("/api/history/expired", true) | ("/api/history/reencrypt", true) => {
+            let action = if req.path == "/api/history/reencrypt" { "reencrypt".to_owned() }
+                         else { req.query.get("action").cloned().unwrap_or_default() };
+            match node.messenger.history_action(&action).await {
+                Ok(v) => { let mut v = v; v["ok"] = json!(true); Response::json(v) }
+                Err(e) => Response::json(json!({ "ok": false, "error": e.to_string() })),
+            }
+        }
         ("/api/calls", false) => Response::json(json!({
             "sessions": node.messenger.call_sessions_json().await, "calls": node.messenger.calls_json().await,
             "mic_level": node.messenger.mic_level(),

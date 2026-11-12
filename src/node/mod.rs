@@ -147,7 +147,7 @@ impl Node {
         let messenger = Arc::new(crate::app::messenger::Messenger::new(
             identity.clone(), dht.clone(), tunnel_mgr.clone(),
             tunnel_mgr.forwarder.clone(), dht.metrics.clone(), cfg.clone(),
-        ).with_history(crate::app::history::History::open(&cfg.node.state_dir))
+        ).with_history(crate::app::history::History::open_with(&cfg.node.state_dir, identity.data_key(), cfg.history.retention_days))
          .with_replay_log(&cfg.node.state_dir)
          .with_outbox(&cfg.node.state_dir));
         Ok(Self {

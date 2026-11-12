@@ -49,6 +49,8 @@ pub struct Settings {
     pub contacts:    Vec<Contact>,
     /// Тема оформления: dark | light | blood | night | forest | bloom.
     pub theme:       String,
+    /// Где лежит ключ шифрования своего узла: "" — ещё не создан, "keyring" или "file" (secrets.rs).
+    pub kek_source:  String,
 }
 
 impl Default for Settings {
@@ -71,6 +73,7 @@ impl Default for Settings {
             my_alias: String::new(),
             contacts: vec![],
             theme: "dark".into(),
+            kek_source: String::new(),
         }
     }
 }
@@ -85,7 +88,7 @@ pub fn profile() -> &'static str { PROFILE.get().map(String::as_str).unwrap_or("
 
 fn home() -> PathBuf { std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(".")) }
 
-fn config_dir() -> PathBuf {
+pub fn config_dir() -> PathBuf {
     std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).unwrap_or_else(|| home().join(".config"))
         .join("p2p-overlay-desktop")
 }
@@ -111,9 +114,17 @@ impl Settings {
 
     pub fn save(&self) -> Result<(), String> {
         let p = Self::path();
-        if let Some(d) = p.parent() { std::fs::create_dir_all(d).map_err(|e| e.to_string())?; }
+        if let Some(d) = p.parent() {
+            std::fs::create_dir_all(d).map_err(|e| e.to_string())?;
+            #[cfg(unix)]
+            { use std::os::unix::fs::PermissionsExt; let _ = std::fs::set_permissions(d, std::fs::Permissions::from_mode(0o700)); }
+        }
         let s = serde_json::to_string_pretty(self).map_err(|e| e.to_string())?;
-        std::fs::write(&p, s).map_err(|e| format!("{}: {e}", p.display()))
+        std::fs::write(&p, s).map_err(|e| format!("{}: {e}", p.display()))?;
+        // контакты «имя ↔ NodeID» и список сверенных — только владельцу
+        #[cfg(unix)]
+        { use std::os::unix::fs::PermissionsExt; let _ = std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600)); }
+        Ok(())
     }
 
     pub fn contact_name(&self, node_id: &str) -> Option<&str> {

@@ -174,3 +174,18 @@ fn downloads_listed_by_sender_folder() {
     let fb = folders.iter().find(|f| f["folder"] == "4242424242424242").unwrap();
     assert_eq!(fb["files"].as_array().unwrap().len(), 2);
 }
+
+#[test]
+fn real_extension_and_spoofed_executable_names() {
+    use p2p_overlay::app::files::{file_ext, name_warning, visible_name};
+    let spoof = "счёт_\u{202e}fdp.exe"; // на экране — «счёт_exe.pdf»
+    assert_eq!(file_ext(spoof), "exe", "настоящее расширение — по концу имени");
+    let w = name_warning(spoof).expect("исполняемый + скрытый символ — предупреждение");
+    assert!(w.contains("U+202E") && w.contains(".exe"), "{w}");
+    assert_eq!(visible_name(spoof), "счёт_⟨U+202E⟩fdp.exe");
+    assert!(name_warning("setup.exe").is_none(), "просто исполняемый — без предупреждения (расширение показано отдельно)");
+    assert!(name_warning("שלום\u{200f}.pdf").is_none(), "знак направления в имени документа — законен");
+    assert!(name_warning("emoji\u{200d}.png").is_none());
+    assert_eq!(file_ext("archive.tar.GZ"), "gz");
+    assert_eq!(file_ext("README"), "");
+}

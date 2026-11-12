@@ -96,7 +96,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 if (running) {
                     refreshStatus()
                     if (!wasRunning) { refreshHistory(); refreshFiles(); watchContacts() }
-                    if (tick % 3 == 0) refreshRelays()
+                    if (tick % 3 == 0) { refreshRelays(); refreshRetention() }
                 } else status = null
                 wasRunning = running
                 tick++
@@ -540,6 +540,55 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }.onFailure { toast("Ошибка: ${it.message}") }
             refreshFiles(); refreshHistory()
         }
+    }
+
+    // ── хранение истории: шифрование и срок ─────────────────────────────
+
+    /** `/api/history/retention`: зашифрована ли история, сколько записей старше срока, пора ли спросить. */
+    var retention by mutableStateOf<JSONObject?>(null); private set
+    var retentionDialog by mutableStateOf(false)
+    private var retentionDismissed = false
+
+    private suspend fun refreshRetention() {
+        runCatching { api.get("/api/history/retention") }.onSuccess {
+            retention = it
+            if (it.optBoolean("due") && !retentionDismissed) retentionDialog = true
+        }
+    }
+
+    fun dismissRetention() { retentionDismissed = true; retentionDialog = false }
+
+    /** delete / keep / export / reencrypt. После вывода в открытый файл — сразу «Поделиться», чтобы унести его с телефона. */
+    fun historyAction(action: String) {
+        viewModelScope.launch {
+            val path = if (action == "reencrypt") "/api/history/reencrypt" else "/api/history/expired"
+            runCatching { api.post(path, mapOf("action" to action), timeoutMs = 60_000) }
+                .onSuccess {
+                    if (!it.optBoolean("ok")) { toast("История: ${it.optString("error")}"); return@onSuccess }
+                    retentionDialog = false
+                    when (action) {
+                        "delete" -> toast("Удалено записей: ${it.optInt("removed")}")
+                        "keep" -> toast("История перешифрована; старые записи остаются ещё на год")
+                        "reencrypt" -> toast("История перешифрована новым ключом")
+                        "export" -> {
+                            toast("Вынесено ${it.optInt("exported")} записей в ОТКРЫТЫЙ файл")
+                            shareExport(File(it.optString("path")))
+                        }
+                    }
+                }.onFailure { toast("Ошибка: ${it.message}") }
+            refreshRetention(); refreshHistory()
+        }
+    }
+
+    private fun shareExport(f: File) {
+        val ctx = getApplication<Application>()
+        runCatching {
+            val uri = androidx.core.content.FileProvider.getUriForFile(ctx, ctx.packageName + ".files", f)
+            val i = android.content.Intent(android.content.Intent.ACTION_SEND).setType("text/plain")
+                .putExtra(android.content.Intent.EXTRA_STREAM, uri).addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            ctx.startActivity(android.content.Intent.createChooser(i, "История (НЕ зашифрована)")
+                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+        }.onFailure { toast("Файл сохранён: ${f.absolutePath}") }
     }
 
     /** Предложенный файл: принять или отклонить. */

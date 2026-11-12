@@ -23,6 +23,8 @@ pub struct NodeIdentity {
     pub public_key: VerifyingKey,
     signing_key:    SigningKey,
     pub state_dir:  PathBuf,
+    /// Ключ для данных на диске (история), выведенный из KEK; None — узел запущен без KEK.
+    data_key:       Option<std::sync::Arc<zeroize::Zeroizing<[u8; 32]>>>,
 }
 
 /// Записать файл с правами 0600 (права ставятся до записи содержимого).
@@ -119,14 +121,26 @@ impl NodeIdentity {
     /// `identity.key.enc` (открытый `identity.key` шифруется и удаляется), `None` — как раньше.
     pub fn load_or_create_with_kek(state_dir: &Path, kek: Option<&[u8; 32]>) -> Result<Self> {
         std::fs::create_dir_all(state_dir)?;
+        // каталог узла — только владельцу: в нём ключ, история, принятые файлы
+        #[cfg(unix)]
+        { use std::os::unix::fs::PermissionsExt; let _ = std::fs::set_permissions(state_dir, std::fs::Permissions::from_mode(0o700)); }
         let signing_key = load_or_create_key(state_dir, kek)?;
 
         let public_key = signing_key.verifying_key();
         let node_id    = compute_node_id(&public_key);
+        // отдельный ключ для данных (HKDF от KEK с другой меткой): ключ узла и история не делят один ключ
+        let data_key = kek.map(|k| {
+            let mut out = zeroize::Zeroizing::new([0u8; 32]);
+            hkdf::Hkdf::<sha2::Sha256>::new(None, k).expand(b"p2p-overlay data at rest v1", out.as_mut()).expect("HKDF 32");
+            std::sync::Arc::new(out)
+        });
 
         info!("NodeID = {}", node_id);
-        Ok(Self { node_id, public_key, signing_key, state_dir: state_dir.to_owned() })
+        Ok(Self { node_id, public_key, signing_key, state_dir: state_dir.to_owned(), data_key })
     }
+
+    /// Ключ для шифрования данных на диске (история); None — узел без KEK, данные открыты.
+    pub fn data_key(&self) -> Option<&[u8; 32]> { self.data_key.as_deref().map(|k| &**k) }
 
     /// Подписать произвольные данные identity-ключом.
     pub fn sign(&self, data: &[u8]) -> Signature {

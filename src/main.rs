@@ -76,6 +76,10 @@ struct Cli {
     #[arg(long)]
     pool_scope: Option<String>,
 
+    /// Ошибки для других узлов: auto (по умолчанию: подробно в debug-сборке) | detailed | generic (без адресов)
+    #[arg(long)]
+    peer_errors: Option<String>,
+
     /// Согласие на приём файлов: known (по умолчанию) | ask | auto (стенд, эксперименты)
     #[arg(long)]
     file_accept: Option<String>,
@@ -131,6 +135,10 @@ async fn main() -> Result<()> {
     if cli.no_reuse_connections { cfg.transport.reuse_connections = false; }
     if let Some(s) = cli.pool_scope { cfg.transport.pool_scope = s; }
     if let Some(a) = cli.file_accept { cfg.files.accept = a; }
+    if let Some(p) = cli.peer_errors { cfg.transport.peer_errors = p; }
+    if !["auto", "detailed", "generic"].contains(&cfg.transport.peer_errors.as_str()) {
+        anyhow::bail!("transport.peer_errors = {}: допустимо auto, detailed, generic", cfg.transport.peer_errors);
+    }
     if !["known", "ask", "auto"].contains(&cfg.files.accept.as_str()) {
         anyhow::bail!("files.accept = {}: допустимо known, ask, auto", cfg.files.accept);
     }

@@ -130,10 +130,15 @@ pub fn blamed_addr(err: &str) -> Option<String> {
         while let Some(off) = err[from..].find(pat) {
             let pos = from + off;
             let rest = &err[pos + pat.len()..];
-            let addr: String = rest.chars().take_while(|c| c.is_ascii_hexdigit() || matches!(c, '.' | ':' | '[' | ']')).collect();
+            // адрес (подробные ошибки) или node:<16 hex NodeID> (generic-режим ретранслятора)
+            let addr: String = if let Some(id) = rest.strip_prefix("node:") {
+                format!("node:{}", id.chars().take_while(|c| c.is_ascii_hexdigit()).collect::<String>())
+            } else {
+                rest.chars().take_while(|c| c.is_ascii_hexdigit() || matches!(c, '.' | ':' | '[' | ']')).collect()
+            };
             let addr = addr.trim_end_matches(':').to_owned();
             let relevant = matches!(pat, "connect to " | "handshake timeout to ")
-                || ["refused", "timeout", "отказал"].iter().any(|w| rest.contains(w));
+                || ["refused", "timeout", "отказал", "недоступен"].iter().any(|w| rest.contains(w));
             if addr.contains(':') && relevant && best.as_ref().map(|b| pos > b.0).unwrap_or(true) {
                 best = Some((pos, addr));
             }

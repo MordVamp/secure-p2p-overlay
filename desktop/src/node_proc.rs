@@ -38,11 +38,12 @@ fn repo_root(bin: &Path) -> Option<PathBuf> {
 
 impl LocalNode {
     /// Основной узел: P2P-порт, API для приложения, bootstrap из настроек.
-    pub fn start(s: &Settings) -> Result<Self, String> {
+    /// `kek` — ключ шифрования (ключ узла и история хранятся зашифрованными; secrets.rs).
+    pub fn start(s: &Settings, kek: Option<&str>) -> Result<Self, String> {
         let state = PathBuf::from(&s.state_dir);
         let bootstrap: Vec<String> = s.bootstrap.split([',', ' ', ';']).map(str::trim)
             .filter(|b| !b.is_empty()).map(str::to_owned).collect();
-        Self::spawn(s, &state, s.listen_port, Some(s.gui_port), &bootstrap)
+        Self::spawn(s, &state, s.listen_port, Some(s.gui_port), &bootstrap, kek)
     }
 
     /// Вспомогательный ретранслятор № `i` (1..): порт `listen_port + i`, свой каталог
@@ -50,14 +51,17 @@ impl LocalNode {
     pub fn start_helper(s: &Settings, i: u16) -> Result<Self, String> {
         let state = PathBuf::from(format!("{}-helpers/h{i}", s.state_dir.trim_end_matches('/')));
         let port = s.listen_port.checked_add(i).ok_or("порт ретранслятора > 65535")?;
-        Self::spawn(s, &state, port, None, &[format!("127.0.0.1:{}", s.listen_port)])
+        Self::spawn(s, &state, port, None, &[format!("127.0.0.1:{}", s.listen_port)], None)
     }
 
-    fn spawn(s: &Settings, state: &Path, port: u16, gui_port: Option<u16>, bootstrap: &[String]) -> Result<Self, String> {
+    fn spawn(s: &Settings, state: &Path, port: u16, gui_port: Option<u16>, bootstrap: &[String], kek: Option<&str>) -> Result<Self, String> {
         let bin = find_node_binary(&s.node_bin);
         std::fs::create_dir_all(state).map_err(|e| format!("{}: {e}", state.display()))?;
         let log_path = state.join("node.log");
         let log = std::fs::File::create(&log_path).map_err(|e| format!("{}: {e}", log_path.display()))?;
+        // журнал узла содержит метаданные переписки — только владельцу
+        #[cfg(unix)]
+        { use std::os::unix::fs::PermissionsExt; let _ = std::fs::set_permissions(&log_path, std::fs::Permissions::from_mode(0o600)); }
         let mut cmd = Command::new(&bin);
         cmd.arg("-p").arg(port.to_string())
            .arg("--state-dir").arg(state)
@@ -68,6 +72,8 @@ impl LocalNode {
             cmd.arg("-c").arg(root.join("config/node_config.yaml")).current_dir(root);
         }
         for b in bootstrap { cmd.arg("-b").arg(b); }
+        // секрет — через окружение (не виден в списке процессов); узел удаляет его у себя после чтения
+        if let Some(k) = kek { cmd.env("P2P_IDENTITY_KEK", k); }
         let err = log.try_clone().map_err(|e| e.to_string())?;
         let child = cmd.stdin(Stdio::null()).stdout(Stdio::from(log)).stderr(Stdio::from(err))
             .spawn().map_err(|e| format!("не удалось запустить {}: {e}", bin.display()))?;

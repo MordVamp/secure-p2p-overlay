@@ -7,6 +7,7 @@
 mod api;
 mod app;
 mod node_proc;
+mod secrets;
 mod settings;
 mod theme;
 mod voice;
