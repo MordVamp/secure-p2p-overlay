@@ -186,6 +186,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             downloadsDir = f.optString("downloads_dir")
             val t = f.optJSONArray("transfers") ?: JSONArray()
             transfers = (0 until t.length()).map { t.getJSONObject(it) }.sortedByDescending { it.optLong("started_ms") }
+            fileSettings = f.optJSONObject("settings")
             val d = api.get("/api/downloads").optJSONArray("folders") ?: JSONArray()
             downloads = (0 until d.length()).map { d.getJSONObject(it) }
         }
@@ -495,7 +496,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     // ── файлы ────────────────────────────────────────────────────────────
 
-    var sendingFile by mutableStateOf<String?>(null); private set
+    /** Сколько файлов сейчас отправляется (узел ставит их в очередь: к одному получателю — по два). */
+    var sendingCount by mutableStateOf(0); private set
+    val sendingFile: String? get() = sendingCount.takeIf { it > 0 }?.let { n ->
+        "$n " + when { n % 10 == 1 && n % 100 != 11 -> "файл"; n % 10 in 2..4 && n % 100 !in 12..14 -> "файла"; else -> "файлов" }
+    }
+    /** Настройки приёма и заполненность квоты (`/api/settings/files`). */
+    var fileSettings by mutableStateOf<JSONObject?>(null); private set
 
     /** Файл для показа в чате: принятый — в downloads узла, отправленный — копия в files/sent. */
     fun localFile(m: ChatMsg): File? {
@@ -508,6 +515,34 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val peerDir = File(downloadsDir, m.peer.take(16))
         return listOf(File(peerDir, name), File(File(peerDir, "Большие файлы"), name), File(downloadsDir, name)).firstOrNull { it.exists() }
     }
+
+    /** Несколько файлов сразу (выбор нескольких фото): все уходят узлу, он сам отправляет по очереди. */
+    fun sendFiles(peer: String, uris: List<Uri>) {
+        if (uris.size > 1) toast("${uris.size} файлов в очереди: к одному получателю идут по два одновременно")
+        uris.forEach { sendFile(peer, it) }
+    }
+
+    fun setFileSettings(accept: String? = null, autoMb: Long? = null, quotaMb: Long? = null) {
+        viewModelScope.launch {
+            val q = buildMap {
+                accept?.let { put("accept", it) }; autoMb?.let { put("auto_accept_mb", it.toString()) }; quotaMb?.let { put("quota_mb", it.toString()) }
+            }
+            runCatching { api.post("/api/settings/files", q) }
+                .onSuccess { if (it.optBoolean("ok")) { fileSettings = it; toast("Настройки приёма сохранены") } else toast("Не сохранено: ${it.optString("error")}") }
+                .onFailure { toast("Ошибка: ${it.message}") }
+        }
+    }
+
+    /** Удалить принятый файл (освобождает квоту). */
+    fun deleteReceived(path: String) {
+        viewModelScope.launch {
+            runCatching { api.post("/api/downloads/delete", mapOf("path" to path)) }
+                .onSuccess { if (it.optBoolean("ok")) toast("Удалено: ${humanSize(it.optLong("freed"))}") else toast("Не удалено: ${it.optString("error")}") }
+            refreshFiles()
+        }
+    }
+
+    private fun humanSize(n: Long) = org.p2poverlay.android.ui.humanBytes(n)
 
     /** Скопировать выбранный файл (узлу нужен путь) и отправить. Копия остаётся в files/sent для превью. */
     fun sendFile(peer: String, uri: Uri) {
@@ -527,11 +562,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }.getOrNull()
             }
             if (f == null) { toast("Не удалось прочитать файл"); return@launch }
-            sendingFile = f.name
+            sendingCount++
+            refreshFiles()
+            // ждёт и в очереди отправителя, и согласия получателя — тайм-аут с запасом
             val r = runCatching {
-                api.post("/api/send_file", mapOf("target" to peer, "path" to f.absolutePath), timeoutMs = 600_000)
+                api.post("/api/send_file", mapOf("target" to peer, "path" to f.absolutePath), timeoutMs = 3_600_000)
             }
-            sendingFile = null
+            sendingCount--
             r.onSuccess {
                 if (it.optBoolean("ok")) {
                     val rep = it.optJSONObject("report")

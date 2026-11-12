@@ -299,8 +299,8 @@ fun Conversation(vm: AppViewModel, chat: String, onBack: () -> Unit) {
     var dialog by remember { mutableStateOf<String?>(null) }
     var photo by remember { mutableStateOf<java.io.File?>(null) }
     val list = rememberLazyListState()
-    val pickFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        uri?.let { vm.sendFile(chat, it) }
+    val pickFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isNotEmpty()) vm.sendFiles(chat, uris)
     }
     val takePhoto = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
         val f = photo
@@ -373,15 +373,15 @@ fun Conversation(vm: AppViewModel, chat: String, onBack: () -> Unit) {
             Surface(color = P.Side) {
                 Column(Modifier.navigationBarsPadding().imePadding()) {
                     vm.sendingFile?.let {
-                        Text("Отправка «$it» через туннель…", color = P.Yellow, fontSize = 12.sp,
+                        Text("Отправка: $it через туннель…", color = P.Yellow, fontSize = 12.sp,
                             modifier = Modifier.padding(start = 16.dp, top = 6.dp))
                     }
                     Row(Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
                         if (!group) {
-                            IconButton(onClick = { pickFile.launch(arrayOf("*/*")) }, enabled = vm.sendingFile == null) {
+                            IconButton(onClick = { pickFile.launch(arrayOf("*/*")) }) {
                                 Icon(Icons.Filled.AttachFile, "Файл", tint = P.Muted)
                             }
-                            IconButton(enabled = vm.sendingFile == null, onClick = {
+                            IconButton(onClick = {
                                 if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) launchCamera()
                                 else camPerm.launch(Manifest.permission.CAMERA)
                             }) { Icon(Icons.Filled.PhotoCamera, "Фото", tint = P.Muted) }

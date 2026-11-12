@@ -146,6 +146,10 @@ pub struct App {
     retention: Value,
     retention_dialog: bool,
     retention_dismissed: bool,
+    /// Поля «Приём файлов» (порог и квота, МиБ) — пока пользователь их правит.
+    fs_auto: String,
+    fs_quota: String,
+    fs_init: bool,
 }
 
 fn now_ms() -> u64 { SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0) }
@@ -219,6 +223,7 @@ impl App {
             groups: HashMap::new(), reported: Default::default(), typing_sent: HashMap::new(), safety: None, confirm_delete: None,
             calls: Value::Null, call_audio: None, call_sid: None, call_err: None, call_attention: None,
             kek_source: None, retention: Value::Null, retention_dialog: false, retention_dismissed: false,
+            fs_auto: String::new(), fs_quota: String::new(), fs_init: false,
         };
         if app.s.mode == Mode::Attach || app.s.autostart { app.connect(); }
         app
@@ -1030,6 +1035,9 @@ impl App {
         });
         ui.add_space(12.0);
 
+        card(ui, |ui| self.file_settings_card(ui));
+        ui.add_space(12.0);
+
         card(ui, |ui| self.storage_card(ui));
         ui.add_space(12.0);
 
@@ -1117,7 +1125,12 @@ impl App {
         if !self.connected() { self.not_connected_hint(ui); return; }
         // перетаскивание файла в окно
         let dropped: Vec<String> = ui.ctx().input(|i| i.raw.dropped_files.iter().filter_map(|f| f.path.as_ref().map(|p| p.display().to_string())).collect());
-        if let Some(p) = dropped.into_iter().next() { self.f_path = p; }
+        // несколько файлов сразу: если получатель выбран — все уходят узлу, он отправляет по очереди (по два)
+        if dropped.len() > 1 && !self.f_target.trim().is_empty() {
+            let target = self.f_target.trim().to_owned();
+            self.toast(format!("{} файлов в очереди: к одному получателю идут по два одновременно", dropped.len()), ACCENT());
+            for p in dropped { self.send_file_bg(target.clone(), p); }
+        } else if let Some(p) = dropped.into_iter().next() { self.f_path = p; }
         let hovering = ui.ctx().input(|i| !i.raw.hovered_files.is_empty());
         card(ui, |ui| {
             section_title(ui, "Отправить файл");
@@ -1134,12 +1147,7 @@ impl App {
                 let can = !self.f_path.trim().is_empty() && !self.f_target.trim().is_empty();
                 if ui.add_enabled(can, primary("Отправить →")).clicked() {
                     let (path, target) = (self.f_path.trim().to_owned(), self.f_target.trim().to_owned());
-                    let name = std::path::Path::new(&path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-                    self.f_sending.push(name.clone());
-                    self.bg(move |p| {
-                        let res = api::call(p, "POST", "/api/send_file", &[("target", &target), ("path", &path)], Duration::from_secs(1800));
-                        Msg::FileSent { name, res }
-                    });
+                    self.send_file_bg(target, path);
                 }
             });
             let (r, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 90.0), egui::Sense::hover());
@@ -1155,6 +1163,21 @@ impl App {
         ui.add_space(12.0);
         card(ui, |ui| {
             section_title(ui, "Передачи");
+            let fs = self.files["settings"].clone();
+            if fs["quota_warn"] == true {
+                egui::Frame::default().fill(YELLOW().gamma_multiply(0.12)).stroke(Stroke::new(1.0_f32, YELLOW().gamma_multiply(0.6)))
+                    .corner_radius(CornerRadius::same(8)).inner_margin(Margin::same(10)).show(ui, |ui| {
+                        ui.label(RichText::new(format!("⚠ Место для принятых файлов заполнено на {:.0} % ({} из {})",
+                            fs["quota_pct"].as_f64().unwrap_or(0.0), human_bytes(api::u(&fs, "used_bytes").unwrap_or(0)),
+                            human_bytes(api::u(&fs, "quota_bytes").unwrap_or(0)))).color(YELLOW()).strong());
+                        ui.label(RichText::new(if fs["quota_pct"].as_f64().unwrap_or(0.0) >= 100.0 { "Файлы больше не принимаются сами — каждый спросит вашего согласия. " }
+                                               else { "Когда заполнится, файлы перестанут приниматься сами — только с вашего согласия. " }).size(12.5).color(MUTED()));
+                        ui.label(RichText::new("\
+                                                Удалите ненужные (кнопки папок ниже открывают их в файловом менеджере) или увеличьте \
+                                                квоту: «Контакты и профиль» → «Приём файлов».").size(12.5).color(MUTED()));
+                    });
+                ui.add_space(6.0);
+            }
             let list = self.files["transfers"].as_array().cloned().unwrap_or_default();
             if let Some(d) = self.files["downloads_dir"].as_str().map(str::to_owned) {
                 let d = d.as_str();
@@ -1206,6 +1229,7 @@ impl App {
                     let c = match st.as_str() { "sent" | "received" => GREEN(), "failed" | "rejected" => RED(), _ => YELLOW() };
                     let label = match st.as_str() { "sent" => "доставлен", "received" => "получен", "sending" => "отправка",
                                                      "receiving" => "приём", "rejected" => "отклонён", "offered" => "ждёт вашего решения",
+                                                     "queued" => "в очереди",
                                                      "waiting" => "ждёт согласия получателя", _ => "ошибка" };
                     if st == "offered" {
                         let id = api::s(t, "transfer_id");
@@ -1322,6 +1346,63 @@ impl App {
                     });
                 });
             });
+    }
+
+    fn send_file_bg(&mut self, target: String, path: String) {
+        let name = std::path::Path::new(&path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        self.f_sending.push(name.clone());
+        self.bg(move |p| {
+            // ждёт и в очереди отправителя, и согласия получателя
+            let res = api::call(p, "POST", "/api/send_file", &[("target", &target), ("path", &path)], Duration::from_secs(3600));
+            Msg::FileSent { name, res }
+        });
+    }
+
+    /// «Приём файлов»: когда спрашивать согласие, порог «принимать сам», квота и её заполненность.
+    fn file_settings_card(&mut self, ui: &mut egui::Ui) {
+        section_title(ui, "Приём файлов");
+        let fs = self.files["settings"].clone();
+        if fs.is_null() { ui.label(RichText::new("узел не подключён").color(MUTED())); return; }
+        let accept = api::s(&fs, "accept");
+        let mut set: Option<Vec<(&'static str, String)>> = None;
+        for (v, t, hint) in [("known", "Знакомые — сами, остальное — спросить", "файлы до порога от тех, кому вы писали или кто в контактах"),
+                             ("ask", "Спрашивать всегда", "каждый файл — только после «Принять»"),
+                             ("auto", "Без вопросов (не рекомендуется)", "любой узел пришлёт файл без вашего ведома; квоты действуют")] {
+            ui.horizontal(|ui| {
+                if ui.radio(accept == v, RichText::new(t).color(if v == "auto" { YELLOW() } else { TEXT() })).clicked() && accept != v {
+                    set = Some(vec![("accept", v.to_owned())]);
+                }
+                ui.label(RichText::new(hint).size(12.0).color(MUTED()));
+            });
+        }
+        if !self.fs_init {
+            self.fs_auto = api::s(&fs, "auto_accept_mb");
+            self.fs_quota = api::s(&fs, "quota_mb");
+            self.fs_init = true;
+        }
+        ui.horizontal(|ui| {
+            ui.label("Принимать сам — до, МиБ");
+            ui.add_enabled(accept == "known", field(&mut self.fs_auto).desired_width(70.0));
+            ui.label("Квота, МиБ");
+            ui.add(field(&mut self.fs_quota).desired_width(90.0));
+            if ui.add(primary("Сохранить")).clicked() {
+                set = Some(vec![("auto_accept_mb", self.fs_auto.trim().to_owned()), ("quota_mb", self.fs_quota.trim().to_owned())]);
+            }
+        });
+        let pct = fs["quota_pct"].as_f64().unwrap_or(0.0);
+        let warn = fs["quota_warn"] == true;
+        ui.add(egui::ProgressBar::new((pct / 100.0).clamp(0.0, 1.0) as f32).fill(if warn { YELLOW() } else { ACCENT() })
+            .text(format!("{} из {} ({pct:.0} %)", human_bytes(api::u(&fs, "used_bytes").unwrap_or(0)), human_bytes(api::u(&fs, "quota_bytes").unwrap_or(0)))));
+        ui.label(RichText::new("Квота — для файлов, принятых без вопроса; принятые вами вручную ограничены только свободным местом. \
+                                При 90 % приложение предупредит.").size(12.0).color(if warn { YELLOW() } else { MUTED() }));
+        if let Some(q) = set {
+            self.fs_init = false;   // после сохранения — значения, принятые узлом
+            self.bg(move |p| {
+                let qq: Vec<(&str, &str)> = q.iter().map(|(k, v)| (*k, v.as_str())).collect();
+                let res = api::post(p, "/api/settings/files", &qq);
+                Msg::CallDone { what: "Приём файлов".into(), res }
+            });
+        }
     }
 
     fn history_action(&self, action: &'static str) {

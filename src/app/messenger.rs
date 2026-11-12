@@ -136,6 +136,11 @@ pub struct Messenger {
     audio_link: tokio::sync::OnceCell<(u16, [u8; crate::app::voice::TOKEN_LEN])>,
     /// Предел «заметных» сообщений от одного отправителя (текст, вызов, предложение файла…): ведро токенов.
     limiter:    crate::app::ratelimit::RateLimiter<NodeId>,
+    /// Настройки приёма файлов, меняемые в приложении (согласие, порог автоприёма, квота).
+    file_policy: std::sync::Mutex<crate::app::files::FilePolicy>,
+    /// Очередь исходящих файлов: не больше `MAX_INCOMING_PER_PEER` одновременно к одному получателю,
+    /// остальные ждут своей очереди (получатель больше и не примет).
+    send_slots: std::sync::Mutex<HashMap<NodeId, Arc<tokio::sync::Semaphore>>>,
 }
 
 /// Ведро токенов на отправителя: 5 в секунду, запас 30.
@@ -160,8 +165,10 @@ impl Messenger {
         metrics:   Arc<MetricsCollector>,
         cfg:       Arc<NodeConfig>,
     ) -> Self {
+        let policy = crate::app::files::FilePolicy::load(&cfg.node.state_dir, crate::app::files::FilePolicy {
+            accept: cfg.files.accept.clone(), auto_accept_bytes: cfg.files.auto_accept_bytes, max_total_bytes: cfg.files.max_total_bytes });
         let files = FileStore::new(&cfg.node.state_dir, cfg.files.max_bytes, cfg.files.incomplete_timeout_s * 1000)
-            .with_quota(crate::app::files::Quota { max_total_bytes: cfg.files.max_total_bytes, min_free_bytes: cfg.files.min_free_bytes });
+            .with_quota(crate::app::files::Quota { max_total_bytes: policy.max_total_bytes, min_free_bytes: cfg.files.min_free_bytes });
         Self { identity, dht, tunnels, forwarder, metrics, cfg, inbox: Mutex::new(VecDeque::new()),
                seen: Mutex::new(crate::app::replay::ReplayGuard::in_memory()), waiting: Mutex::new(Default::default()),
                keys: Mutex::new(Default::default()), history: None,
@@ -170,7 +177,8 @@ impl Messenger {
                events: Arc::new(EventBus::new()), outbox: Mutex::new(Outbox::in_memory()),
                watch: Mutex::new(Default::default()), typing: Mutex::new(Default::default()),
                probes: Mutex::new(VecDeque::new()), calls: Mutex::new(HashMap::new()),
-               voice: Default::default(), audio_link: tokio::sync::OnceCell::new(), limiter: crate::app::ratelimit::RateLimiter::new(RATE_PER_S, RATE_BURST) }
+               voice: Default::default(), audio_link: tokio::sync::OnceCell::new(), limiter: crate::app::ratelimit::RateLimiter::new(RATE_PER_S, RATE_BURST),
+               file_policy: std::sync::Mutex::new(policy), send_slots: Default::default() }
     }
 
     /// Хранить очередь офлайн-доставки в `<state_dir>/outbox.json` (переживает перезапуск).
@@ -838,6 +846,45 @@ impl Messenger {
     }
 
     /// Сводка передач (последние 50) и каталог загрузок.
+    /// Настройки приёма файлов и заполненность квоты.
+    pub async fn file_settings(&self) -> serde_json::Value {
+        let p = self.file_policy.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let (used, max) = self.files.lock().await.usage();
+        let pct = if max == 0 { 0.0 } else { 100.0 * used as f64 / max as f64 };
+        serde_json::json!({
+            "accept": p.accept, "auto_accept_mb": p.auto_accept_bytes >> 20, "quota_mb": p.max_total_bytes >> 20,
+            "used_bytes": used, "quota_bytes": max, "quota_pct": pct, "quota_warn": pct >= crate::app::files::QUOTA_WARN_PCT,
+        })
+    }
+
+    /// Изменить настройки приёма (то, что не передано, не меняется); сохраняются в `<state_dir>/file_settings.json`.
+    pub async fn set_file_settings(&self, accept: Option<&str>, auto_accept_mb: Option<u64>, quota_mb: Option<u64>) -> Result<serde_json::Value> {
+        let p = {
+            let mut p = self.file_policy.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(a) = accept {
+                if !["known", "ask", "auto"].contains(&a) { bail!("accept = {a}: допустимо known, ask, auto"); }
+                p.accept = a.to_owned();
+            }
+            if let Some(m) = auto_accept_mb { p.auto_accept_bytes = m.clamp(0, 8192) << 20; }
+            if let Some(m) = quota_mb {
+                if m < 16 { bail!("квота — не меньше 16 МиБ"); }
+                p.max_total_bytes = m.min(1 << 24) << 20;
+            }
+            p.save(&self.cfg.node.state_dir)?;
+            p.clone()
+        };
+        self.files.lock().await.quota.max_total_bytes = p.max_total_bytes;
+        info!("настройки приёма файлов: согласие {}, сам до {} МиБ, квота {} МиБ", p.accept, p.auto_accept_bytes >> 20, p.max_total_bytes >> 20);
+        Ok(self.file_settings().await)
+    }
+
+    /// Удалить принятый файл (освободить квоту).
+    pub async fn delete_received(&self, path: &str) -> Result<u64> {
+        let n = self.files.lock().await.delete_received(std::path::Path::new(path))?;
+        self.events.emit("file", serde_json::json!({ "status": "deleted", "path": path })).await;
+        Ok(n)
+    }
+
     pub async fn transfers(&self) -> (Vec<TransferInfo>, std::path::PathBuf) {
         (self.transfers.lock().await.iter().cloned().collect(), self.files.lock().await.dir.clone())
     }
@@ -926,27 +973,36 @@ impl Messenger {
                 };
                 // согласие: само (по политике) или решение пользователя — и почему его спрашивают
                 let known = self.is_known(&from).await;
-                let policy = self.cfg.files.accept.as_str();
+                let pol = self.file_policy.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                let policy = pol.accept.as_str();
                 // скрытые символы в имени исполняемого файла — всегда спросить, даже у знакомого
                 let name_warn = crate::app::files::name_warning(&o.name);
                 let auto = match policy {
                     "auto" => name_warn.is_none(),
                     "ask" => false,
-                    _ => o.size <= self.cfg.files.auto_accept_bytes && known && name_warn.is_none(),
+                    _ => o.size <= pol.auto_accept_bytes && known && name_warn.is_none(),
                 };
                 let mut why: Vec<String> = name_warn.into_iter().collect();
                 if o.size > crate::app::files::LARGE_FILE_BYTES {
                     why.push(format!("⚠ очень большой файл — {} (больше 2 ГиБ): займёт место и время, будет сохранён в «{}»",
                                      crate::app::files::human_bytes(o.size), crate::app::files::LARGE_DIR));
-                } else if o.size > self.cfg.files.auto_accept_bytes && policy != "auto" {
+                } else if o.size > pol.auto_accept_bytes && policy != "auto" {
                     why.push(format!("большой файл — {} (сам принимается до {})", crate::app::files::human_bytes(o.size),
-                                     crate::app::files::human_bytes(self.cfg.files.auto_accept_bytes)));
+                                     crate::app::files::human_bytes(pol.auto_accept_bytes)));
                 }
                 if !known && policy != "auto" { why.push("узел не из ваших контактов, и вы ему не писали".into()); }
                 if policy == "ask" { why.push("включено подтверждение каждого файла".into()); }
+                // квоты и формат — сразу (общая квота принятых — только для принимаемых без вопроса);
+                // квота заполнена — не отказ, а вопрос пользователю: принятые вручную ограничены только местом
+                let mut checked = self.files.lock().await.check_offer(from, &o, !auto);
+                let mut auto = auto;
+                if auto && checked.as_ref().is_err_and(|e| e.to_string().contains("квота")) {
+                    checked = self.files.lock().await.check_offer(from, &o, true);
+                    auto = false;
+                    why.insert(0, "место для файлов, принимаемых без вопроса, заполнено — принять вручную? \
+                                   (освободите место или увеличьте квоту в настройках)".into());
+                }
                 let info = TransferInfo { warning: (!why.is_empty()).then(|| why.join("; ")), ..info };
-                // квоты и формат — сразу (общая квота принятых — только для принимаемых без вопроса)
-                let checked = self.files.lock().await.check_offer(from, &o, !auto);
                 let res = match checked {
                     Err(e) => Err(e),
                     Ok(()) if auto => {
@@ -986,6 +1042,15 @@ impl Messenger {
                     };
                     self.update_transfer(&hid, |t| { t.done_blocks = t.blocks; t.status = if ok { "received".into() } else { "failed".into() };
                                                      t.error = err.clone(); t.path = path.clone(); t.finished_ms = Some(now_ms()); }).await;
+                    // квота заполнена на 90 % — предупредить (клиенты: «очистите или увеличьте в настройках»)
+                    if ok {
+                        let (used, max) = self.files.lock().await.usage();
+                        let pct = if max == 0 { 0.0 } else { 100.0 * used as f64 / max as f64 };
+                        if pct >= crate::app::files::QUOTA_WARN_PCT {
+                            self.events.emit("file", serde_json::json!({ "status": "quota_warning", "quota_pct": pct,
+                                "used_bytes": used, "quota_bytes": max })).await;
+                        }
+                    }
                     if let Some(h) = &self.history {
                         let name = self.transfers.lock().await.iter().find(|t| t.transfer_id == hid).map(|t| t.name.clone()).unwrap_or_default();
                         h.append(&HistoryEntry { ts_ms: now_ms(), dir: "in".into(), peer: from.to_hex(), message_id: hid.clone(),
@@ -1030,29 +1095,48 @@ impl Messenger {
         self.file_waiters.lock().await.insert(tid.clone(), (target, tx));
         let t0 = now_ms();
         self.upsert_transfer(TransferInfo { transfer_id: hid.clone(), dir: "out".into(), peer: target.to_hex(), name: name.clone(),
-            size, blocks, done_blocks: 0, status: "sending".into(), error: None, path: Some(path.display().to_string()),
+            size, blocks, done_blocks: 0, status: "queued".into(), error: None, path: Some(path.display().to_string()),
             started_ms: t0, finished_ms: None, ext: crate::app::files::file_ext(&name),
             warning: (size > crate::app::files::LARGE_FILE_BYTES).then(|| "очень большой файл — получателю нужно подтвердить приём".into()) }).await;
         let mut rep = FileReport { transfer_id: hid.clone(), name: name.clone(), size, blocks, ..Default::default() };
 
+        // очередь: к одному получателю — не больше двух файлов сразу (больше он и не примет), остальные ждут
+        let slot = {
+            let mut m = self.send_slots.lock().unwrap_or_else(|e| e.into_inner());
+            m.entry(target).or_insert_with(|| Arc::new(tokio::sync::Semaphore::new(crate::app::files::MAX_INCOMING_PER_PEER))).clone()
+        };
+        let _permit = slot.acquire_owned().await.map_err(|_| anyhow::anyhow!("очередь файлов закрыта"))?;
+
         let res: Result<()> = async {
             let offer = FileOffer { transfer_id: tid.clone(), name: name.clone(), size, sha256, block_size: bs as u32, blocks };
-            let m = self.build_kind(target, MessageKind::FileOffer, &offer)?;
-            rep.bytes_out += self.deliver(target, None, &m).await?.wire_bytes;
-            rep.messages_out += 1;
-            // согласие получателя: FileAck received = 0 (сразу или когда пользователь нажмёт «Принять»)
-            self.update_transfer(&hid, |t| t.status = "waiting".into()).await;
-            let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(self.cfg.files.offer_timeout_s + 15);
-            loop {
-                match tokio::time::timeout_at(deadline, rx.recv()).await {
-                    Ok(Some((m, n))) => {
-                        rep.bytes_in += n as u64;
-                        if m.kind == MessageKind::FileDone {
-                            let d: FileDone = decode(&m.payload)?;
-                            if !d.ok { bail!("получатель отказал: {}", d.error.unwrap_or_default()); }
-                        } else if decode::<FileAck>(&m.payload).is_ok_and(|a| a.received == 0) { break; }
+            // получатель занят (принимает много файлов от других) — подождать и предложить снова, до 30 мин
+            let busy_until = tokio::time::Instant::now() + std::time::Duration::from_secs(1800);
+            'offer: loop {
+                let m = self.build_kind(target, MessageKind::FileOffer, &offer)?;
+                rep.bytes_out += self.deliver(target, None, &m).await?.wire_bytes;
+                rep.messages_out += 1;
+                // согласие получателя: FileAck received = 0 (сразу или когда пользователь нажмёт «Принять»)
+                self.update_transfer(&hid, |t| t.status = "waiting".into()).await;
+                let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(self.cfg.files.offer_timeout_s + 15);
+                loop {
+                    match tokio::time::timeout_at(deadline, rx.recv()).await {
+                        Ok(Some((m, n))) => {
+                            rep.bytes_in += n as u64;
+                            if m.kind == MessageKind::FileDone {
+                                let d: FileDone = decode(&m.payload)?;
+                                if !d.ok {
+                                    let why = d.error.unwrap_or_default();
+                                    if why.contains("подождите") && tokio::time::Instant::now() < busy_until {
+                                        self.update_transfer(&hid, |t| t.status = "queued".into()).await;
+                                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                        continue 'offer;
+                                    }
+                                    bail!("получатель отказал: {why}");
+                                }
+                            } else if decode::<FileAck>(&m.payload).is_ok_and(|a| a.received == 0) { break 'offer; }
+                        }
+                        _ => bail!("получатель не принял файл за {} с", self.cfg.files.offer_timeout_s),
                     }
-                    _ => bail!("получатель не принял файл за {} с", self.cfg.files.offer_timeout_s),
                 }
             }
             self.update_transfer(&hid, |t| t.status = "sending".into()).await;

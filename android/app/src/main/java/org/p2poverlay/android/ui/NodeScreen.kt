@@ -39,6 +39,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.foundation.clickable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -217,6 +218,8 @@ fun NodeScreen(vm: AppViewModel, onScan: () -> Unit, onInvite: (Invite) -> Unit)
         }
 
         // ── журнал ──
+        SectionCard("Приём файлов") { FileSettingsSection(vm) }
+
         SectionCard("Хранение") { StorageSection(vm) }
 
         SectionCard("Журнал узла") {
@@ -306,4 +309,42 @@ fun RetentionDialog(vm: AppViewModel) {
         },
         confirmButton = { androidx.compose.material3.TextButton(onClick = { vm.dismissRetention() }) { Text("Позже") } },
     )
+}
+
+
+/** Согласие на приём, порог «принимать сам», квота на принятые файлы и её заполненность. */
+@Composable
+private fun FileSettingsSection(vm: AppViewModel) {
+    val fs = vm.fileSettings
+    if (fs == null) { Text("Узел не запущен", color = P.Muted, fontSize = 13.sp); return }
+    val accept = fs.optString("accept")
+    Text("Когда спрашивать согласие", color = P.Muted, fontSize = 13.sp)
+    listOf(
+        "known" to ("Знакомые — сами, остальное — спросить" to "сами — файлы до порога от тех, кому вы писали или кто в контактах"),
+        "ask" to ("Спрашивать всегда" to "каждый файл — только после «Принять»"),
+        "auto" to ("Без вопросов (не рекомендуется)" to "любой узел может прислать файл без вашего ведома; квоты действуют"),
+    ).forEach { (v, t) ->
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { vm.setFileSettings(accept = v) }) {
+            androidx.compose.material3.RadioButton(selected = accept == v, onClick = { vm.setFileSettings(accept = v) })
+            androidx.compose.foundation.layout.Column {
+                Text(t.first, color = if (v == "auto") P.Yellow else P.Text, fontSize = 14.sp)
+                Text(t.second, color = P.Muted, fontSize = 11.sp)
+            }
+        }
+    }
+    var auto by remember(fs) { mutableStateOf(fs.optLong("auto_accept_mb").toString()) }
+    var quota by remember(fs) { mutableStateOf(fs.optLong("quota_mb").toString()) }
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        androidx.compose.material3.OutlinedTextField(auto, { auto = it.filter(Char::isDigit) }, singleLine = true,
+            label = { Text("Сами — до, МиБ") }, modifier = Modifier.weight(1f), enabled = accept == "known")
+        androidx.compose.material3.OutlinedTextField(quota, { quota = it.filter(Char::isDigit) }, singleLine = true,
+            label = { Text("Квота, МиБ") }, modifier = Modifier.weight(1f))
+    }
+    androidx.compose.material3.Button(onClick = { vm.setFileSettings(autoMb = auto.toLongOrNull(), quotaMb = quota.toLongOrNull()) }) { Text("Сохранить") }
+    val pct = fs.optDouble("quota_pct").toFloat()
+    androidx.compose.material3.LinearProgressIndicator(progress = { (pct / 100f).coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth(),
+        color = if (fs.optBoolean("quota_warn")) P.Yellow else P.Accent)
+    Text("Занято ${humanBytes(fs.optLong("used_bytes"))} из ${humanBytes(fs.optLong("quota_bytes"))} (${pct.toInt()} %). Квота — для файлов, " +
+        "принятых без вопроса; принятые вами вручную ограничены только свободным местом. При 90 % — предупреждение.",
+        color = if (fs.optBoolean("quota_warn")) P.Yellow else P.Muted, fontSize = 12.sp)
 }

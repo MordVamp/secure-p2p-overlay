@@ -334,7 +334,24 @@ async fn route(node: Arc<Node>, req: Request) -> Response {
         ("/api/relays", false) => Response::json(json!({ "profiles": node.tunnel_mgr.profiles_json().await })),
         ("/api/files", false) => {
             let (t, dir) = node.messenger.transfers().await;
-            Response::json(json!({ "downloads_dir": dir.display().to_string(), "transfers": t }))
+            Response::json(json!({ "downloads_dir": dir.display().to_string(), "transfers": t,
+                                   "settings": node.messenger.file_settings().await }))
+        }
+        // настройки приёма файлов: согласие, порог автоприёма, квота (и её заполненность)
+        ("/api/settings/files", false) => Response::json(node.messenger.file_settings().await),
+        ("/api/settings/files", true) => {
+            let num = |k: &str| req.query.get(k).and_then(|v| v.parse::<u64>().ok());
+            match node.messenger.set_file_settings(req.query.get("accept").map(|s| s.as_str()), num("auto_accept_mb"), num("quota_mb")).await {
+                Ok(v) => { let mut v = v; v["ok"] = json!(true); Response::json(v) }
+                Err(e) => Response::json(json!({ "ok": false, "error": e.to_string() })),
+            }
+        }
+        ("/api/downloads/delete", true) => {
+            let Some(p) = req.query.get("path") else { return Response::error(400, "нужен path"); };
+            match node.messenger.delete_received(p).await {
+                Ok(n) => Response::json(json!({ "ok": true, "freed": n })),
+                Err(e) => Response::json(json!({ "ok": false, "error": e.to_string() })),
+            }
         }
         // принятые файлы на диске — по папкам собеседников
         ("/api/downloads", false) => {

@@ -20,6 +20,7 @@ import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenuItem
@@ -54,8 +55,8 @@ fun FilesScreen(vm: AppViewModel, sharedUri: android.net.Uri?, onSharedConsumed:
     val peers = (vm.contacts.map { it.nodeId } + vm.chats().map { it.chat }.filter { !vm.isGroup(it) }).distinct()
     var target by rememberSaveable { mutableStateOf(peers.firstOrNull() ?: "") }
     var open by rememberSaveable { mutableStateOf(false) }
-    val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null && target.isNotEmpty()) vm.sendFile(target, uri)
+    val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isNotEmpty() && target.isNotEmpty()) vm.sendFiles(target, uris)
     }
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
@@ -78,7 +79,7 @@ fun FilesScreen(vm: AppViewModel, sharedUri: android.net.Uri?, onSharedConsumed:
                 }
                 val busy = vm.sendingFile != null
                 Button(
-                    enabled = target.isNotEmpty() && !busy,
+                    enabled = target.isNotEmpty(),
                     onClick = {
                         if (sharedUri != null) { vm.sendFile(target, sharedUri); onSharedConsumed() }
                         else pick.launch(arrayOf("*/*"))
@@ -86,13 +87,25 @@ fun FilesScreen(vm: AppViewModel, sharedUri: android.net.Uri?, onSharedConsumed:
                 ) {
                     Icon(Icons.Filled.FileUpload, null)
                     Text(when {
-                        busy -> "  Отправка «${vm.sendingFile}»…"
+                        busy -> "  Отправляется ${vm.sendingFile} · ещё?"
                         sharedUri != null -> "  Отправить присланный файл"
-                        else -> "  Выбрать и отправить"
+                        else -> "  Выбрать и отправить (можно несколько)"
                     })
                 }
                 if (peers.isEmpty()) Text("Нет контактов — добавьте компьютер через QR на вкладке «Узел».",
                     color = P.Yellow, fontSize = 13.sp)
+            }
+        }
+        vm.fileSettings?.takeIf { it.optBoolean("quota_warn") }?.let { s ->
+            item(key = "quota") {
+                SectionCard {
+                    Text("⚠ Место для принятых файлов заполнено на ${s.optDouble("quota_pct").toInt()} %", color = P.Yellow, fontSize = 15.sp)
+                    val full = s.optDouble("quota_pct") >= 100
+                    Text("${humanBytes(s.optLong("used_bytes"))} из ${humanBytes(s.optLong("quota_bytes"))}. " +
+                        (if (full) "Файлы больше не принимаются сами — каждый спросит вашего согласия. "
+                         else "Когда заполнится, файлы перестанут приниматься сами — только с вашего согласия. ") +
+                        "Удалите ненужные файлы ниже (🗑) или увеличьте объём: «Узел» → «Приём файлов».", color = P.Muted, fontSize = 13.sp)
+                }
             }
         }
         if (vm.downloads.isNotEmpty()) {
@@ -139,6 +152,7 @@ private fun TransferRow(vm: AppViewModel, ctx: Context, t: JSONObject) {
         "sent", "delivered" -> "доставлен · SHA-256 ✓" to P.Green
         "received" -> "получен · SHA-256 ✓" to P.Green
         "sending" -> "отправка" to P.Yellow
+        "queued" -> "в очереди" to P.Muted
         "receiving" -> "приём" to P.Yellow
         "rejected" -> "отклонён" to P.Red
         "offered" -> "ждёт вашего решения" to P.Yellow
@@ -215,6 +229,9 @@ private fun DownloadFolder(vm: AppViewModel, ctx: Context, prefix: String, files
                 }
                 IconButton(onClick = { openFile(ctx, file, Intent.ACTION_VIEW) }) { Icon(Icons.AutoMirrored.Filled.OpenInNew, "Открыть") }
                 IconButton(onClick = { openFile(ctx, file, Intent.ACTION_SEND) }) { Icon(Icons.Filled.Share, "Поделиться") }
+                IconButton(onClick = { vm.deleteReceived(file.absolutePath) }) {
+                    Icon(Icons.Filled.Delete, "Удалить", tint = P.Red)
+                }
             }
         }
         if (files.size > 4) androidx.compose.material3.TextButton(onClick = { all = !all }) {

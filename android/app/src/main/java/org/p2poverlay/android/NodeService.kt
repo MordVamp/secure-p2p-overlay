@@ -208,6 +208,7 @@ class NodeService : Service() {
                 val e = ev.getJSONObject(i)
                 if (e.optString("kind") == "call") { incomingCall(nm, prefs, e); continue }
                 if (e.optString("kind") == "file" && e.optString("status") == "offered") { fileOffer(nm, prefs, e); continue }
+                if (e.optString("kind") == "file" && e.optString("status") == "quota_warning") { quotaWarning(nm, e); continue }
                 if (e.optString("kind") != "message") continue
                 if (MainActivity.visible || !prefs.notifyMessages) continue
                 val peer = e.optString("peer")
@@ -267,6 +268,18 @@ class NodeService : Service() {
             .setOngoing(true)
             .setTimeoutAfter(35_000)
             .build())
+    }
+
+    /** Квота на принятые файлы заполнена на 90 % — одно уведомление (обновляется, а не множится). */
+    private fun quotaWarning(nm: NotificationManager, e: org.json.JSONObject) {
+        val open = PendingIntent.getActivity(this, 2999, Intent(this, MainActivity::class.java),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        nm.notify(2999, NotificationCompat.Builder(this, P2pApp.CH_MSG)
+            .setSmallIcon(R.drawable.ic_stat_node)
+            .setContentTitle("Место для файлов заполнено на ${e.optDouble("quota_pct").toInt()} %")
+            .setStyle(NotificationCompat.BigTextStyle().bigText("Удалите ненужные принятые файлы («Файлы» → 🗑) или увеличьте " +
+                "квоту («Узел» → «Приём файлов»). Сверх квоты файлы принимаются только с вашего согласия."))
+            .setContentIntent(open).setAutoCancel(true).setOnlyAlertOnce(true).build())
     }
 
     /** Предложен файл, ждёт решения: уведомление с «Принять» и «Отклонить». */

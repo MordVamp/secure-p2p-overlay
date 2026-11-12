@@ -209,6 +209,38 @@ pub const MAX_INCOMING_TOTAL: usize = 8;
 pub const MAX_PENDING_PER_PEER: usize = 3;
 pub const MAX_PENDING_TOTAL: usize = 16;
 
+/// Настройки приёма, меняемые пользователем в приложении (`<state_dir>/file_settings.json` поверх `files.*`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FilePolicy {
+    /// known | ask | auto
+    pub accept:            String,
+    pub auto_accept_bytes: u64,
+    pub max_total_bytes:   u64,
+}
+
+impl FilePolicy {
+    pub fn path(state_dir: &Path) -> PathBuf { state_dir.join("file_settings.json") }
+
+    /// Сохранённые настройки или значения из конфигурации.
+    pub fn load(state_dir: &Path, default: FilePolicy) -> FilePolicy {
+        std::fs::read_to_string(Self::path(state_dir)).ok()
+            .and_then(|s| serde_json::from_str::<FilePolicy>(&s).ok())
+            .filter(|p| ["known", "ask", "auto"].contains(&p.accept.as_str()))
+            .unwrap_or(default)
+    }
+
+    pub fn save(&self, state_dir: &Path) -> Result<()> {
+        let p = Self::path(state_dir);
+        std::fs::write(&p, serde_json::to_vec_pretty(self)?)?;
+        #[cfg(unix)]
+        { use std::os::unix::fs::PermissionsExt; let _ = std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600)); }
+        Ok(())
+    }
+}
+
+/// Доля квоты, после которой клиенты предупреждают «очистите или увеличьте».
+pub const QUOTA_WARN_PCT: f64 = 90.0;
+
 /// Квоты места (из `files.*`).
 #[derive(Debug, Clone, Copy)]
 pub struct Quota { pub max_total_bytes: u64, pub min_free_bytes: u64 }
@@ -262,6 +294,27 @@ impl FileStore {
     }
 
     /// Сколько занимают уже принятые файлы (`downloads/` с папками собеседников, без `.partial`).
+    /// Занято принятыми файлами и квота (для предупреждения при 90 %).
+    pub fn usage(&self) -> (u64, u64) { (self.used_bytes(), self.quota.max_total_bytes) }
+
+    /// Удалить принятый файл — только внутри `downloads/` (не `.partial`). Ok — сколько байт освобождено.
+    pub fn delete_received(&self, path: &Path) -> Result<u64> {
+        let root = self.dir.canonicalize().context("downloads/ нет")?;
+        let p = path.canonicalize().context("файл не найден")?;
+        if !p.starts_with(&root) || p.starts_with(root.join(".partial")) || !p.is_file() {
+            bail!("можно удалять только принятые файлы в {}", root.display());
+        }
+        let n = std::fs::metadata(&p)?.len();
+        std::fs::remove_file(&p)?;
+        // пустая папка собеседника (и «Большие файлы») — тоже
+        let mut d = p.parent().map(Path::to_path_buf);
+        while let Some(dir) = d {
+            if dir == root || std::fs::remove_dir(&dir).is_err() { break; }
+            d = dir.parent().map(Path::to_path_buf);
+        }
+        Ok(n)
+    }
+
     fn used_bytes(&self) -> u64 {
         fn walk(d: &Path, depth: u32) -> u64 {
             let Ok(rd) = std::fs::read_dir(d) else { return 0 };

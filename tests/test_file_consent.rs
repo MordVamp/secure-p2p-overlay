@@ -204,3 +204,79 @@ fn very_large_files_go_to_separate_subfolder() {
     assert_eq!(s.target_dir(&a, LARGE_FILE_BYTES), d.join("downloads/cdcdcdcdcdcdcdcd"), "ровно 2 ГиБ — обычная папка");
     assert_eq!(s.target_dir(&a, LARGE_FILE_BYTES + 1), d.join("downloads/cdcdcdcdcdcdcdcd").join(LARGE_DIR));
 }
+
+fn node_at(base: u16, i: u16, boot: Option<u16>) -> (Proc, std::path::PathBuf) {
+    let d = std::env::temp_dir().join(format!("p2p-queue-n{}-{}", base + i, std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    let mut c = Command::new(env!("CARGO_BIN_EXE_p2p-node"));
+    c.args(["-c", "config/node_config.yaml", "-p", &(base + i).to_string(), "--gui-port", &(base + 20 + i).to_string(),
+            "--state-dir", &d.display().to_string(), "--metrics-dir", &d.join("m").display().to_string(),
+            "--mailbox-poll", "0", "--file-accept", "known"]);
+    if let Some(b) = boot { c.args(["-b", &format!("127.0.0.1:{b}")]); }
+    (Proc(c.stdout(Stdio::null()).stderr(Stdio::null()).spawn().expect("p2p-node")), d)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn sender_queue_settings_quota_warning_and_delete() {
+    const B: u16 = 8160;
+    const G: u16 = B + 20;
+    let mut n = vec![node_at(B, 0, None)];
+    for _ in 0..50 { if api(G, "GET", "/api/status", &[], 1).await.is_ok() { break; } tokio::time::sleep(Duration::from_millis(100)).await; }
+    n.extend((1..5).map(|i| node_at(B, i, Some(B))));
+    let mut ids = vec![];
+    for i in 0..5u16 {
+        let mut id = String::new();
+        for _ in 0..100 {
+            if let Ok(v) = api(G + i, "GET", "/api/status", &[], 1).await { id = v["node_id"].as_str().unwrap().into(); break; }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        ids.push(id);
+    }
+    tokio::time::sleep(Duration::from_secs(4)).await;
+    // получатель (4) «знает» отправителя (0), квота — 16 МиБ (минимум)
+    let w = api(G + 4, "POST", "/api/send", &[("target", &ids[0]), ("text", "привет")], 30).await.unwrap();
+    assert_eq!(w["delivered"], true, "{w}");
+    let s = api(G + 4, "POST", "/api/settings/files", &[("quota_mb", "16")], 10).await.unwrap();
+    assert_eq!(s["quota_mb"], 16, "{s}");
+    assert!(api(G + 4, "POST", "/api/settings/files", &[("accept", "всегда")], 10).await.unwrap()["ok"] == false);
+
+    // 4 фото сразу: получатель принимает по 2, остальные ждут в очереди отправителя — доходят все
+    let src = n[0].1.join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    let mut sends = vec![];
+    for k in 0..4 {
+        let p = src.join(format!("photo{k}.jpg"));
+        std::fs::write(&p, vec![k as u8; 3_900_000]).unwrap();   // ~3,7 МиБ — меньше порога 16 МиБ, принимается сам
+        let (ps, t) = (p.display().to_string(), ids[4].clone());
+        sends.push(tokio::spawn(async move { api(G, "POST", "/api/send_file", &[("target", &t), ("path", &ps)], 600).await.unwrap() }));
+    }
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    let f = api(G, "GET", "/api/files", &[], 5).await.unwrap();
+    let queued = f["transfers"].as_array().unwrap().iter().filter(|t| t["status"] == "queued").count();
+    assert!(queued >= 1, "часть файлов ждёт в очереди: {f}");
+    for s in sends { let r = s.await.unwrap(); assert_eq!(r["ok"], true, "{r}"); }
+
+    // 4 × 3,7 МиБ ≈ 14,9 из 16 МиБ — больше 90 %: предупреждение
+    let s = api(G + 4, "GET", "/api/settings/files", &[], 5).await.unwrap();
+    assert_eq!(s["quota_warn"], true, "{s}");
+    // квота заполнена: файл от знакомого — не отказ, а вопрос с объяснением
+    let p5 = src.join("photo5.jpg");
+    std::fs::write(&p5, vec![5u8; 3_900_000]).unwrap();
+    let (ps, t) = (p5.display().to_string(), ids[4].clone());
+    let send5 = tokio::spawn(async move { api(G, "POST", "/api/send_file", &[("target", &t), ("path", &ps)], 120).await.unwrap() });
+    let t5 = transfer(G + 4, "photo5.jpg").await;
+    assert_eq!(t5["status"], "offered", "{t5}");
+    assert!(t5["warning"].as_str().unwrap_or("").contains("заполнено"), "{t5}");
+    api(G + 4, "POST", "/api/file/reject", &[("transfer_id", t5["transfer_id"].as_str().unwrap())], 10).await.unwrap();
+    let _ = send5.await;
+    // удалить один файл — освобождается место, предупреждение уходит
+    let d = api(G + 4, "GET", "/api/downloads", &[], 5).await.unwrap();
+    let path = d["folders"][0]["files"][0]["path"].as_str().unwrap().to_owned();
+    let r = api(G + 4, "POST", "/api/downloads/delete", &[("path", &path)], 5).await.unwrap();
+    assert_eq!(r["ok"], true, "{r}");
+    assert!(api(G + 4, "POST", "/api/downloads/delete", &[("path", "/etc/passwd")], 5).await.unwrap()["ok"] == false,
+            "вне downloads/ — нельзя");
+    let s = api(G + 4, "GET", "/api/settings/files", &[], 5).await.unwrap();
+    assert_eq!(s["quota_warn"], false, "{s}");
+    drop(n);
+}
