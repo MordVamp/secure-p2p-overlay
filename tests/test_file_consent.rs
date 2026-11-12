@@ -147,19 +147,36 @@ async fn stranger_file_waits_for_consent_known_peer_is_automatic() {
 #[tokio::test]
 async fn dht_store_quota_per_publisher() {
     use p2p_overlay::dht::storage::{DhtRecord, DhtStore, RecordKey};
-    let s = DhtStore::new(1024);
-    let a = NodeId([1; 32]);
-    let ok = futures_count(&s, a, 100).await;
-    assert_eq!(ok, 64, "один публикатор занимает не больше 1/16 хранилища");
-    let b = DhtRecord::new(RecordKey::from_str("other-0"), vec![1], NodeId([2; 32]), 60);
-    assert!(s.store(b).await, "другой публикатор по-прежнему пишет");
+    fn rec(k: &str, p: u8, len: usize) -> DhtRecord { DhtRecord::new(RecordKey::from_str(k), vec![0; len], NodeId([p; 32]), 60) }
 
-    async fn futures_count(s: &DhtStore, p: NodeId, n: usize) -> usize {
-        let mut ok = 0;
-        for i in 0..n {
-            if s.store(DhtRecord::new(RecordKey::from_str(&format!("spam-{i}")), vec![0; 10], p, 60)).await { ok += 1; }
-        }
-        ok
+    // ADR-49: доля публикатора — не отказ, а вытеснение его же давно не нужных записей
+    let s = DhtStore::new(1024);
+    let (_, per_pub) = s.publisher_quota();
+    assert_eq!(per_pub, 256);
+    for i in 0..per_pub { assert!(s.store(rec(&format!("box-{i}"), 1, 10)).await); }
+    assert!(s.find(&RecordKey::from_str("box-0")).await.is_some(), "box-0 читают — она нужна");
+    assert!(s.store(rec("box-new", 1, 10)).await, "новая запись принята, а не отвергнута");
+    assert!(s.find(&RecordKey::from_str("box-0")).await.is_some(), "нужная запись осталась");
+    assert!(s.find(&RecordKey::from_str("box-1")).await.is_none(), "вытеснена самая давно не нужная");
+    assert_eq!(s.usage().await.1, per_pub, "у публикатора по-прежнему не больше его доли");
+
+    // квота по объёму: 1/16 общего объёма
+    let s = DhtStore::with_limits(1024, 1 << 20);
+    let (bytes, _) = s.publisher_quota();
+    assert_eq!(bytes, 64 * 1024);
+    for i in 0..20 { assert!(s.store(rec(&format!("big-{i}"), 1, 10_000)).await); }
+    assert!(s.usage().await.0 <= bytes, "крупные записи одного публикатора не больше 1/16 объёма");
+    assert!(!s.store(rec("huge", 1, 100_000)).await, "запись больше доли публикатора отвергается");
+    assert!(s.store(rec("other", 2, 10)).await, "другой публикатор по-прежнему пишет");
+
+    // общее переполнение: несколько «личностей» злоумышленника вытесняют свои записи, а не записи честного узла,
+    // пока у честного не больше справедливой доли (при неограниченном числе личностей доля стремится к нулю — Sybil, T34)
+    let s = DhtStore::with_limits(48, 32 << 20);
+    for i in 0..5 { assert!(s.store(rec(&format!("honest-{i}"), 9, 100)).await); }
+    for p in 1..=4u8 { for i in 0..16 { assert!(s.store(rec(&format!("spam-{p}-{i}"), p, 100)).await); } }
+    assert_eq!(s.usage().await.1, 48, "хранилище заполнено, но не переполнено");
+    for i in 0..5 {
+        assert!(s.find(&RecordKey::from_str(&format!("honest-{i}"))).await.is_some(), "честная запись honest-{i} на месте");
     }
 }
 

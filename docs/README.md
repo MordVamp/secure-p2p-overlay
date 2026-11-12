@@ -34,12 +34,13 @@
 
 | Документ | Описание |
 |----------|----------|
-| [defense/Theory.md](defense/Theory.md) | Теория (краткая): DHT, Kademlia, TLS, туннели, метрики |
+| [defense/Theory.md](defense/Theory.md) | Теория: DHT, Kademlia, TLS, туннели, метрики; E2E и прямая секретность, срок жизни ключей, постквантовые алгоритмы (ML-KEM), доверие, DoS и Sybil, данные на диске, голос, файлы |
 | [defense/Theory_Etapy_1-2.md](defense/Theory_Etapy_1-2.md) | **Подробная теория Этапов 1–2** — каждый термин, цели, архитектурные решения |
 | [defense/Defense_Etapy_1-2.md](defense/Defense_Etapy_1-2.md) | Что показывать и рассказывать на защите этапов 1–2 |
 | [defense/Zapiska.md](defense/Zapiska.md) | **Пояснительная записка** — 15 разделов по §20 ТЗ, 25 источников |
-| [defense/Presentation.pptx](defense/Presentation.pptx) · [PDF](defense/Presentation.pdf) | **Презентация** к защите, 12 слайдов; текст доклада — в заметках |
-| [defense/Doklad.md](defense/Doklad.md) | Текст доклада (7–10 мин) по слайдам |
+| [defense/Presentation.pptx](defense/Presentation.pptx) · [PDF](defense/Presentation.pdf) | **Презентация** к защите, 20 слайдов (1–11 — сеть и эксперимент, 12–19 — приложения, звонки, защита информации, дальнейшие шаги); текст доклада — в заметках |
+| [defense/Doklad.md](defense/Doklad.md) | Текст доклада по слайдам (полный ≈ 15 мин, короткий ≈ 9 мин) |
+| [defense/Defense_Guide.md](defense/Defense_Guide.md) | **Гайд к защите**: подготовка стенда, сценарий показа на ПК и телефоне с командами, запасные планы, вопросы и ответы |
 | [defense/Report_Etapy_1-2.md](defense/Report_Etapy_1-2.md) | Краткий отчёт по этапам 1–2 |
 
 ---
