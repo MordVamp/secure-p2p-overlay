@@ -4,6 +4,17 @@
 
 ---
 
+## [2026-11-12] 0.5.0: релизы, версия, CI без эмулятора
+- Версия 0.5.0 (узел, desktop, Android `versionCode 5`); `--version` у `p2p-node`, `p2p-orchestrator`, `p2p-desktop`;
+  `version` в `/api/status`; версия внизу вкладки «Узел» на Android.
+- `.github/workflows/release.yml`: по тегу `v*` — Linux tar.gz, Windows zip (.exe), Android APK (arm64 / x86_64 /
+  universal), `SHA256SUMS.txt`, GitHub Release; ключ подписи APK — из секретов репозитория.
+- CI (`android.yml`): инструментальные тесты в эмуляторе убраны (на раннере падали при зелёном локальном прогоне);
+  действия обновлены до версий на Node 24.
+- `Cargo.lock` — в git (воспроизводимые сборки CI и релизов).
+- Android: убраны предупреждения сборки (`extractNativeLibs` в манифесте — его задаёт `useLegacyPackaging`;
+  `Icons.AutoMirrored.Filled.VolumeUp`).
+
 ## [2026-11-12] docs: материалы к защите — 20 слайдов, теория, гайд показа
 - Презентация расширена до 20 слайдов (+ приложения, звонки, файлы, пределы ресурсов, данные на устройстве, личность
   и доверие, проверка, прямая секретность и ML-KEM); выводы дополнены; `Doklad.md` — из заметок (полный ≈ 15 мин,

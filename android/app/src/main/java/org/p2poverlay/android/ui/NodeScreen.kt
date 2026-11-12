@@ -232,6 +232,9 @@ fun NodeScreen(vm: AppViewModel, onScan: () -> Unit, onInvite: (Invite) -> Unit)
                 Text(lines.joinToString("\n").ifEmpty { "пусто" }, fontFamily = FontFamily.Monospace, fontSize = 10.sp, color = P.Muted)
             }
         }
+
+        val version = remember { runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName }.getOrNull() ?: "?" }
+        Text("P2P Overlay $version", fontSize = 12.sp, color = P.Muted, modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp))
     }
 }
 

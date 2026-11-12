@@ -16,7 +16,7 @@ use p2p_overlay::identity::node_identity::NodeIdentity;
 use p2p_overlay::node::Node;
 
 #[derive(Parser, Debug)]
-#[command(name = "p2p-node", about = "[Coursework] Secure P2P Overlay Node")]
+#[command(name = "p2p-node", version, about = "[Coursework] Secure P2P Overlay Node")]
 struct Cli {
     /// Путь к YAML-конфигу узла (NODE_STATE_DIR, LISTEN_HOST, LISTEN_PORT, …)
     #[arg(short, long, default_value = "config/node_config.yaml")]

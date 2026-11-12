@@ -63,6 +63,7 @@ async fn route(node: Arc<Node>, req: Request) -> Response {
             let store   = node.dht.export_store().await;
             let pool    = crate::rpc::pool::stats().await;
             Response::json(json!({
+                "version": env!("CARGO_PKG_VERSION"),
                 "node_id": node.own_contact.node_id.to_hex(),
                 "addr":    format!("{}:{}", node.own_contact.host, node.own_contact.port),
                 // ссылка-приглашение (QR в desktop/Android): адрес для bootstrap + NodeID для контакта

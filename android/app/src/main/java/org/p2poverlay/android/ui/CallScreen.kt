@@ -32,7 +32,7 @@ import androidx.compose.material.icons.filled.CallEnd
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
-import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Hearing
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -173,7 +173,7 @@ fun CallScreen(vm: AppViewModel) {
                     RoundButton(if (vm.muted) Icons.Filled.MicOff else Icons.Filled.Mic, if (vm.muted) "Микрофон выкл." else "Микрофон",
                         if (vm.muted) P.Text else P.Card, iconTint = if (vm.muted) P.Rail else P.Text) { vm.toggleMute() }
                     RoundButton(Icons.Filled.CallEnd, "Завершить", P.Red) { vm.endCall(sid) }
-                    RoundButton(if (vm.speaker) Icons.Filled.VolumeUp else Icons.Filled.Hearing, if (vm.speaker) "Динамик" else "У уха",
+                    RoundButton(if (vm.speaker) Icons.AutoMirrored.Filled.VolumeUp else Icons.Filled.Hearing, if (vm.speaker) "Динамик" else "У уха",
                         if (vm.speaker) P.Text else P.Card, iconTint = if (vm.speaker) P.Rail else P.Text) { vm.toggleSpeaker() }
                 }
             }

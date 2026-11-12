@@ -35,6 +35,26 @@ bash experiments/run_all.sh          # N=15 → experiments/results/<сцена�
                                      # в конце — pcap: dumpcap на lo + положительный контроль
 ```
 
+## Скачать
+
+Готовые сборки — на странице **Releases** репозитория (собирает `.github/workflows/release.yml` по тегу `vX.Y.Z`):
+
+| Файл | Что внутри |
+|---|---|
+| `p2p-overlay-<версия>-linux-x86_64.tar.gz` | `p2p-node`, `p2p-orchestrator`, `p2p-desktop`, `config/node_config.yaml`, документация |
+| `p2p-overlay-<версия>-windows-x86_64.zip` | то же, `.exe` |
+| `p2p-overlay-<версия>-android-arm64-v8a.apk` | телефон; `-x86_64` — эмулятор, `-universal` — любое устройство |
+| `SHA256SUMS.txt` | контрольные суммы: `sha256sum -c SHA256SUMS.txt` |
+
+```bash
+tar xzf p2p-overlay-0.5.0-linux-x86_64.tar.gz && cd p2p-overlay-0.5.0-linux-x86_64
+./p2p-desktop            # находит p2p-node и config/ рядом с собой
+```
+
+Выпустить версию: поднять `version` в `Cargo.toml`, `desktop/Cargo.toml` и `versionName`/`versionCode` в
+`android/app/build.gradle.kts`, затем `git tag v0.5.0 && git push origin v0.5.0`. Ключ подписи APK — секреты
+`ANDROID_KEYSTORE_BASE64` (`base64 -w0 android/release.jks`) и `ANDROID_KEYSTORE_PASSWORD` в настройках репозитория.
+
 ## Быстрый старт
 
 ```bash

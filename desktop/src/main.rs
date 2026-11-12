@@ -14,6 +14,10 @@ mod voice;
 
 fn main() -> eframe::Result<()> {
     let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| a == "--version" || a == "-V") {
+        println!("p2p-desktop {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
     if let Some(i) = args.iter().position(|a| a == "--profile") {
         match args.get(i + 1).filter(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')) {
             Some(p) => settings::set_profile(p),

@@ -19,7 +19,7 @@ use p2p_overlay::acceptance::{self, Params};
 use p2p_overlay::gui::orch_gui::{self, Orchestrator};
 
 #[derive(Parser, Debug)]
-#[command(name = "p2p-orchestrator", about = "Оркестратор кластера P2P-узлов")]
+#[command(name = "p2p-orchestrator", version, about = "Оркестратор кластера P2P-узлов")]
 struct Cli {
     /// Порт веб-интерфейса (только 127.0.0.1)
     #[arg(long, default_value_t = 8080)]

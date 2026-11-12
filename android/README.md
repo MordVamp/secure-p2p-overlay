@@ -53,7 +53,8 @@ cargo test                                   # узел: 154 теста, из н
 cd android && ./gradlew testDebugUnitTest    # JVM: ссылка-приглашение, режимы (6)
 ./gradlew connectedDebugAndroidTest          # на устройстве/эмуляторе: вкладки, «Узел», новый чат (3)
 ```
-CI: `.github/workflows/android.yml` — тесты узла, кросс-сборка узла, APK, JVM-тесты и инструментальные тесты в эмуляторе.
+CI: `.github/workflows/android.yml` — тесты узла, кросс-сборка узла, APK, JVM-тесты. Инструментальные тесты — только
+локально (на раннере GitHub эмулятор стабильно падал при зелёном локальном прогоне). Релизные APK — `release.yml` (README, «Скачать»).
 
 ## Подключение к компьютеру
 
