@@ -1,0 +1,114 @@
+{
+  "N": 21,
+  "R": 3,
+  "alpha": 3,
+  "bootstrap_graph": "star",
+  "build": "debug",
+  "channel": "tls",
+  "commit": "5fee18365b263131d207188d0780b3177dfca4d0",
+  "config": {
+    "dht": {
+      "alpha": 3,
+      "k_bucket_size": 4,
+      "node_id_bits": 256,
+      "ping_timeout_ms": 5000,
+      "refresh_interval_seconds": 60,
+      "replication_factor": 3,
+      "republish_interval_seconds": 80,
+      "rpc_timeout_ms": 5000,
+      "store_quorum": 2,
+      "ttl_seconds": 180
+    },
+    "files": {
+      "accept": "known",
+      "auto_accept_bytes": 16777216,
+      "block_size": 40960,
+      "incomplete_timeout_s": 60,
+      "max_bytes": 8589934592,
+      "max_total_bytes": 2147483648,
+      "min_free_bytes": 536870912,
+      "offer_timeout_s": 120,
+      "window": 8
+    },
+    "level": "advanced",
+    "mailbox": {
+      "enabled": true,
+      "max_age_s": 604800,
+      "max_messages": 20,
+      "poll_interval_s": 60
+    },
+    "node": {
+      "advertise_host": "",
+      "bootstrap_peers": [],
+      "listen_host": "0.0.0.0",
+      "listen_port": 7001,
+      "log_level": "INFO",
+      "metrics_dir": "./metrics/node-01",
+      "state_dir": "./state/node-01"
+    },
+    "security": {
+      "channel": "tls",
+      "session_id_ttl_seconds": 3600
+    },
+    "transport": {
+      "connect_timeout_ms": 3000,
+      "idle_timeout_ms": 60000,
+      "max_frame_payload": 65536,
+      "pool_scope": "tunnels",
+      "protocol_version": 1,
+      "read_timeout_ms": 5000,
+      "reuse_connections": true
+    },
+    "tunnel": {
+      "ack_timeout_ms": 5000,
+      "build_timeout_ms": 15000,
+      "max_hops": 5,
+      "min_relays": 3,
+      "pool_size": 3,
+      "relay": true,
+      "relay_selection": "rating",
+      "ttl_seconds": 600
+    }
+  },
+  "config_file": "config/node_config_advanced.yaml",
+  "connections": "pool:tunnels",
+  "driver": "p2p-orchestrator scenario (Rust)",
+  "finished_at": "2026-11-12T22:16:43+0300",
+  "k": 4,
+  "netem": null,
+  "params": {
+    "channels": [
+      "tls",
+      "ake"
+    ],
+    "lookups": 30,
+    "messages_per_pair": 3,
+    "pairs": 15,
+    "pings": 30
+  },
+  "scenario": "channel_compare",
+  "seed": 1,
+  "started_at": "2026-11-12T22:16:10+0300",
+  "timebase": "длительности *_s и *_ms оркестратора — монотонные часы (Instant); *_ms из API узла — часы узла",
+  "timeouts_ms": {
+    "ack_timeout_ms": 5000,
+    "build_timeout_ms": 15000,
+    "connect_timeout_ms": 3000,
+    "idle_timeout_ms": 60000,
+    "ping_timeout_ms": 5000,
+    "read_timeout_ms": 5000,
+    "rpc_timeout_ms": 5000
+  },
+  "tunnel": {
+    "ack_timeout_ms": 5000,
+    "build_timeout_ms": 15000,
+    "max_hops": 5,
+    "min_relays": 3,
+    "pool_size": 3,
+    "relay": true,
+    "relay_selection": "rating",
+    "ttl_seconds": 600
+  },
+  "worktree_diff_sha256": "b84b157ea17572a59bf838089e9c08da0ae43a3bcc02804962bf2de4a9ed3178",
+  "worktree_dirty": true
+}

@@ -1,0 +1,143 @@
+2026-11-12T19:05:39.739296Z  INFO p2p_overlay::identity::node_identity: Generating new identity in "logs/scenarios/files_1794510339_7400/state2"
+2026-11-12T19:05:39.740187Z  INFO p2p_overlay::identity::node_identity: NodeID = f5775163101bf1d577e3ba1798b33f52fc63c405d9d07f4558c0e8def0d84f8a
+2026-11-12T19:05:39.742641Z  INFO p2p_overlay::rpc::pool: Соединения между узлами переиспользуются: туннели; DHT — соединение на каждый запрос (пул до 128, простой 30000 мс)
+2026-11-12T19:05:39.743370Z  INFO p2p_overlay::node: Listening on 0.0.0.0:7402 NodeID=f5775163
+2026-11-12T19:05:39.743513Z  INFO p2p_overlay::gui::http: GUI: http://127.0.0.1:7425/
+2026-11-12T19:05:39.743695Z  INFO p2p_overlay::dht::node: Bootstrap: connecting to 1 peers
+2026-11-12T19:05:39.751443Z  INFO p2p_overlay::rpc: PONG from 3bddbce3@127.0.0.1:7400 rtt=8ms
+2026-11-12T19:05:39.751506Z  INFO p2p_overlay::dht::node: Bootstrap peer 127.0.0.1:7400 (3bddbce3) reachable, NodeID=3bddbce3bd5f91e93f9f76fb9ee8f01f3e9426d2d1d173d6beb00947f0ed74a1
+2026-11-12T19:05:39.751547Z  INFO p2p_overlay::dht::node: Starting self-lookup NodeID=f5775163
+2026-11-12T19:05:39.751577Z  INFO p2p_overlay::dht::lookup: [lookup-a368e2af] start target=f5775163
+2026-11-12T19:05:39.765318Z  INFO p2p_overlay::dht::lookup: [lookup-a368e2af] done target=f5775163 closest=2 rpc=2 iter=3 dur=14ms
+2026-11-12T19:05:39.765558Z  INFO p2p_overlay::dht::node: Self-lookup done: 2 closest contacts, 2 RPC, 3 iter, 14ms
+2026-11-12T19:05:39.765624Z  INFO p2p_overlay::dht::node: Routing table: 2 contacts in 1 non-empty buckets
+2026-11-12T19:05:39.767185Z  INFO p2p_overlay::dht::lookup: [lookup-db9fe4a3] start target=2d480833
+2026-11-12T19:05:39.776984Z  INFO p2p_overlay::dht::lookup: [lookup-db9fe4a3] done target=2d480833 closest=2 rpc=2 iter=2 dur=9ms
+2026-11-12T19:05:39.838777Z  INFO p2p_overlay::node: NodeRecord опубликован на 3 репликах
+2026-11-12T19:05:46.013288Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=33e425be hop=0/3 from=9fbd8f8c@127.0.0.1:7420
+2026-11-12T19:05:46.114276Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=a0eb3ac8 hop=1/3 from=9accb7d8@127.0.0.1:7408
+2026-11-12T19:05:46.578041Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=36e2b14f hop=0/3 from=0584ffdb@127.0.0.1:7418
+2026-11-12T19:05:47.220690Z  INFO p2p_overlay::app::messenger: ← msg d6b550ac from 1579411b kind=FileOffer
+2026-11-12T19:05:47.221722Z  INFO p2p_overlay::app::messenger: ← файл f100_2.bin от 1579411b: 102400 байт
+2026-11-12T19:05:47.221814Z  INFO p2p_overlay::dht::lookup: [lookup-be9e9ead] start target=1579411b
+2026-11-12T19:05:47.247093Z  INFO p2p_overlay::dht::lookup: [lookup-be9e9ead] done target=1579411b closest=4 rpc=6 iter=2 dur=26ms
+2026-11-12T19:05:47.247407Z  INFO p2p_overlay::tunnel::manager: Building tunnel to 1579411b
+2026-11-12T19:05:47.256775Z  INFO p2p_overlay::tunnel::builder: [tunnel-8120b352] hop 0 confirmed: 0584ffdb@127.0.0.1:7418
+2026-11-12T19:05:47.264273Z  INFO p2p_overlay::tunnel::builder: [tunnel-8120b352] hop 1 confirmed: 32cc7728@127.0.0.1:7401
+2026-11-12T19:05:47.271649Z  INFO p2p_overlay::tunnel::builder: [tunnel-8120b352] hop 2 confirmed: 3ef43b01@127.0.0.1:7413
+2026-11-12T19:05:47.271743Z  INFO p2p_overlay::tunnel::session: [tunnel-8120b352] Building → Active
+2026-11-12T19:05:47.271795Z  INFO p2p_overlay::tunnel::builder: [tunnel-8120b352] ACTIVE — 3 hops [0584ffdb → 32cc7728 → 3ef43b01 → 1579411b], build took 24ms
+2026-11-12T19:05:47.283631Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=10ms
+2026-11-12T19:05:47.284131Z  INFO p2p_overlay::tunnel::builder: [tunnel-0361e175] hop 0 confirmed: 398116b3@127.0.0.1:7415
+2026-11-12T19:05:47.291856Z  INFO p2p_overlay::tunnel::builder: [tunnel-0361e175] hop 1 confirmed: 3bddbce3@127.0.0.1:7400
+2026-11-12T19:05:47.301664Z  INFO p2p_overlay::tunnel::builder: [tunnel-0361e175] hop 2 confirmed: 55e6072a@127.0.0.1:7403
+2026-11-12T19:05:47.301760Z  INFO p2p_overlay::tunnel::session: [tunnel-0361e175] Building → Active
+2026-11-12T19:05:47.301832Z  INFO p2p_overlay::tunnel::builder: [tunnel-0361e175] ACTIVE — 3 hops [398116b3 → 3bddbce3 → 55e6072a → 1579411b], build took 28ms
+2026-11-12T19:05:47.312784Z  INFO p2p_overlay::tunnel::builder: [tunnel-9ee16315] hop 0 confirmed: 9fbd8f8c@127.0.0.1:7420
+2026-11-12T19:05:47.322506Z  INFO p2p_overlay::tunnel::builder: [tunnel-9ee16315] hop 1 confirmed: 9e0a9f77@127.0.0.1:7409
+2026-11-12T19:05:47.332274Z  INFO p2p_overlay::tunnel::builder: [tunnel-9ee16315] hop 2 confirmed: 9815e97a@127.0.0.1:7417
+2026-11-12T19:05:47.332358Z  INFO p2p_overlay::tunnel::session: [tunnel-9ee16315] Building → Active
+2026-11-12T19:05:47.332395Z  INFO p2p_overlay::tunnel::builder: [tunnel-9ee16315] ACTIVE — 3 hops [9fbd8f8c → 9e0a9f77 → 9815e97a → 1579411b], build took 30ms
+2026-11-12T19:05:47.461497Z  INFO p2p_overlay::app::messenger: ← msg 0218d47b from 1579411b kind=FileBlock
+2026-11-12T19:05:47.578671Z  INFO p2p_overlay::app::messenger: ← msg b60689c6 from 1579411b kind=FileBlock
+2026-11-12T19:05:47.599574Z  INFO p2p_overlay::app::messenger: ← msg 6302b4ff from 1579411b kind=FileBlock
+2026-11-12T19:05:47.611170Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=4ms
+2026-11-12T19:05:47.616830Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=3ms
+2026-11-12T19:05:47.721917Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=7d3917bf hop=0/3 from=9fbd8f8c@127.0.0.1:7420
+2026-11-12T19:05:47.835065Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=150f1d07 hop=2/3 from=7b9d713e@127.0.0.1:7414
+2026-11-12T19:05:48.908384Z  INFO p2p_overlay::dht::lookup: [lookup-f3956188] start target=ffc26675
+2026-11-12T19:05:48.935272Z  INFO p2p_overlay::dht::lookup: [lookup-f3956188] done target=ffc26675 closest=4 rpc=4 iter=2 dur=27ms
+2026-11-12T19:05:48.935675Z  INFO p2p_overlay::tunnel::manager: Building tunnel to ffc26675
+2026-11-12T19:05:48.938573Z  INFO p2p_overlay::tunnel::builder: [tunnel-7512aff6] hop 0 confirmed: 3ef43b01@127.0.0.1:7413
+2026-11-12T19:05:48.940253Z  INFO p2p_overlay::tunnel::builder: [tunnel-7512aff6] hop 1 confirmed: 32cc7728@127.0.0.1:7401
+2026-11-12T19:05:48.941579Z  INFO p2p_overlay::tunnel::builder: [tunnel-7512aff6] hop 2 confirmed: 0584ffdb@127.0.0.1:7418
+2026-11-12T19:05:48.941675Z  INFO p2p_overlay::tunnel::session: [tunnel-7512aff6] Building → Active
+2026-11-12T19:05:48.941762Z  INFO p2p_overlay::tunnel::builder: [tunnel-7512aff6] ACTIVE — 3 hops [3ef43b01 → 32cc7728 → 0584ffdb → ffc26675], build took 6ms
+2026-11-12T19:05:48.947944Z  INFO p2p_overlay::tunnel::builder: [tunnel-e4564177] hop 0 confirmed: 3bddbce3@127.0.0.1:7400
+2026-11-12T19:05:48.949286Z  INFO p2p_overlay::tunnel::builder: [tunnel-e4564177] hop 1 confirmed: 9fbd8f8c@127.0.0.1:7420
+2026-11-12T19:05:48.950843Z  INFO p2p_overlay::tunnel::builder: [tunnel-e4564177] hop 2 confirmed: 9e0a9f77@127.0.0.1:7409
+2026-11-12T19:05:48.950945Z  INFO p2p_overlay::tunnel::session: [tunnel-e4564177] Building → Active
+2026-11-12T19:05:48.951002Z  INFO p2p_overlay::tunnel::builder: [tunnel-e4564177] ACTIVE — 3 hops [3bddbce3 → 9fbd8f8c → 9e0a9f77 → ffc26675], build took 5ms
+2026-11-12T19:05:48.954354Z  INFO p2p_overlay::tunnel::builder: [tunnel-6cfc3588] hop 0 confirmed: 9815e97a@127.0.0.1:7417
+2026-11-12T19:05:48.956345Z  INFO p2p_overlay::tunnel::builder: [tunnel-6cfc3588] hop 1 confirmed: 55e6072a@127.0.0.1:7403
+2026-11-12T19:05:48.957126Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=13ms
+2026-11-12T19:05:48.958291Z  INFO p2p_overlay::tunnel::builder: [tunnel-6cfc3588] hop 2 confirmed: 398116b3@127.0.0.1:7415
+2026-11-12T19:05:48.958402Z  INFO p2p_overlay::tunnel::session: [tunnel-6cfc3588] Building → Active
+2026-11-12T19:05:48.958496Z  INFO p2p_overlay::tunnel::builder: [tunnel-6cfc3588] ACTIVE — 3 hops [9815e97a → 55e6072a → 398116b3 → ffc26675], build took 7ms
+2026-11-12T19:05:49.032979Z  INFO p2p_overlay::app::messenger: ← msg edc7d719 from ffc26675 kind=FileAck
+2026-11-12T19:05:49.135642Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=64ms
+2026-11-12T19:05:49.251859Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=56ms
+2026-11-12T19:05:49.384488Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=82ms
+2026-11-12T19:05:49.464179Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=41ms
+2026-11-12T19:05:49.565488Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=56ms
+2026-11-12T19:05:49.688794Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=56ms
+2026-11-12T19:05:49.804951Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=52ms
+2026-11-12T19:05:49.914206Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=52ms
+2026-11-12T19:05:49.992648Z  INFO p2p_overlay::app::messenger: ← msg ecfcf4c1 from ffc26675 kind=FileAck
+2026-11-12T19:05:50.101018Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=58ms
+2026-11-12T19:05:50.216740Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=55ms
+2026-11-12T19:05:50.336168Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=58ms
+2026-11-12T19:05:50.451563Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=62ms
+2026-11-12T19:05:50.571285Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=60ms
+2026-11-12T19:05:50.684316Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=61ms
+2026-11-12T19:05:50.804334Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=62ms
+2026-11-12T19:05:50.914541Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=56ms
+2026-11-12T19:05:50.972013Z  INFO p2p_overlay::app::messenger: ← msg 9bc4dbad from ffc26675 kind=FileAck
+2026-11-12T19:05:51.067855Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=44ms
+2026-11-12T19:05:51.172830Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=50ms
+2026-11-12T19:05:51.291160Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=52ms
+2026-11-12T19:05:51.398415Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=48ms
+2026-11-12T19:05:51.502152Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=52ms
+2026-11-12T19:05:51.621855Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=61ms
+2026-11-12T19:05:51.725803Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=47ms
+2026-11-12T19:05:51.843365Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=57ms
+2026-11-12T19:05:51.922038Z  INFO p2p_overlay::app::messenger: ← msg e1a99fa3 from ffc26675 kind=FileAck
+2026-11-12T19:05:52.023650Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=51ms
+2026-11-12T19:05:52.103594Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=41ms
+2026-11-12T19:05:52.193509Z  INFO p2p_overlay::app::messenger: ← msg 845c9b10 from ffc26675 kind=FileAck
+2026-11-12T19:05:52.201143Z  INFO p2p_overlay::app::messenger: ← msg 9a57efb4 from ffc26675 kind=FileDone
+2026-11-12T19:05:52.369613Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=cdc14d0a hop=0/3 from=9e0a9f77@127.0.0.1:7409
+2026-11-12T19:05:55.743176Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=01ec82e6 hop=1/3 from=3ef43b01@127.0.0.1:7413
+2026-11-12T19:05:59.224033Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=aeab9da8 hop=2/3 from=398116b3@127.0.0.1:7415
+2026-11-12T19:06:06.508499Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=ac771f06 hop=0/3 from=0584ffdb@127.0.0.1:7418
+2026-11-12T19:06:37.870284Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=9b0621af hop=2/3 from=9fbd8f8c@127.0.0.1:7420
+2026-11-12T19:06:39.745632Z  INFO p2p_overlay::node: Bucket refresh: 4 targets
+2026-11-12T19:06:39.745817Z  INFO p2p_overlay::dht::lookup: [lookup-f49b9ea2] start target=f5775163
+2026-11-12T19:06:39.745851Z  INFO p2p_overlay::dht::lookup: [lookup-c2f7a3d4] start target=f5775163
+2026-11-12T19:06:39.745894Z  INFO p2p_overlay::dht::lookup: [lookup-ce753080] start target=f5775163
+2026-11-12T19:06:39.745949Z  INFO p2p_overlay::dht::lookup: [lookup-68a8ad23] start target=f5775163
+2026-11-12T19:06:39.776252Z  INFO p2p_overlay::dht::lookup: [lookup-68a8ad23] done target=f5775163 closest=4 rpc=4 iter=2 dur=31ms
+2026-11-12T19:06:39.780254Z  INFO p2p_overlay::dht::lookup: [lookup-f49b9ea2] done target=f5775163 closest=4 rpc=4 iter=2 dur=35ms
+2026-11-12T19:06:39.781667Z  INFO p2p_overlay::dht::lookup: [lookup-ce753080] done target=f5775163 closest=4 rpc=4 iter=2 dur=36ms
+2026-11-12T19:06:39.785694Z  INFO p2p_overlay::dht::lookup: [lookup-c2f7a3d4] done target=f5775163 closest=4 rpc=4 iter=2 dur=40ms
+2026-11-12T19:06:49.744866Z  INFO p2p_overlay::tunnel::session: [tunnel-8120b352] Active → Degraded
+2026-11-12T19:06:49.745002Z  INFO p2p_overlay::tunnel::session: [tunnel-0361e175] Active → Degraded
+2026-11-12T19:06:49.745063Z  INFO p2p_overlay::tunnel::session: [tunnel-9ee16315] Active → Degraded
+2026-11-12T19:06:49.745138Z  INFO p2p_overlay::tunnel::session: [tunnel-e4564177] Active → Degraded
+2026-11-12T19:06:49.745211Z  INFO p2p_overlay::tunnel::session: [tunnel-6cfc3588] Active → Degraded
+2026-11-12T19:06:59.744881Z  INFO p2p_overlay::tunnel::session: [tunnel-7512aff6] Active → Degraded
+2026-11-12T19:06:59.746537Z  INFO p2p_overlay::dht::lookup: [lookup-6439c1c7] start target=2d480833
+2026-11-12T19:06:59.783265Z  INFO p2p_overlay::dht::lookup: [lookup-6439c1c7] done target=2d480833 closest=4 rpc=7 iter=3 dur=37ms
+2026-11-12T19:07:09.370952Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=01f6f245 hop=2/3 from=1579411b@127.0.0.1:7405
+2026-11-12T19:07:39.745408Z  INFO p2p_overlay::node: Bucket refresh: 4 targets
+2026-11-12T19:07:39.745603Z  INFO p2p_overlay::dht::lookup: [lookup-8d69902f] start target=f5775163
+2026-11-12T19:07:39.745621Z  INFO p2p_overlay::dht::lookup: [lookup-75ea7ad4] start target=f5775163
+2026-11-12T19:07:39.745631Z  INFO p2p_overlay::dht::lookup: [lookup-cf8997ee] start target=f5775163
+2026-11-12T19:07:39.745666Z  INFO p2p_overlay::dht::lookup: [lookup-852c1cd2] start target=f5775163
+2026-11-12T19:07:39.777206Z  INFO p2p_overlay::dht::lookup: [lookup-8d69902f] done target=f5775163 closest=4 rpc=4 iter=2 dur=32ms
+2026-11-12T19:07:39.778848Z  INFO p2p_overlay::dht::lookup: [lookup-cf8997ee] done target=f5775163 closest=4 rpc=4 iter=2 dur=33ms
+2026-11-12T19:07:39.779871Z  INFO p2p_overlay::dht::lookup: [lookup-75ea7ad4] done target=f5775163 closest=4 rpc=4 iter=2 dur=34ms
+2026-11-12T19:07:39.782026Z  INFO p2p_overlay::dht::lookup: [lookup-852c1cd2] done target=f5775163 closest=4 rpc=4 iter=2 dur=37ms
+2026-11-12T19:07:40.774894Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=5de21d9e hop=1/3 from=9fbd8f8c@127.0.0.1:7420
+2026-11-12T19:08:11.623161Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=7f9174c6 hop=1/3 from=398116b3@127.0.0.1:7415
+2026-11-12T19:08:19.746426Z  INFO p2p_overlay::dht::lookup: [lookup-6b086d6e] start target=2d480833
+2026-11-12T19:08:19.779850Z  INFO p2p_overlay::dht::lookup: [lookup-6b086d6e] done target=2d480833 closest=4 rpc=7 iter=3 dur=33ms
+2026-11-12T19:08:39.745482Z  INFO p2p_overlay::node: Bucket refresh: 4 targets
+2026-11-12T19:08:39.745657Z  INFO p2p_overlay::dht::lookup: [lookup-d10fdd4b] start target=f5775163
+2026-11-12T19:08:39.745760Z  INFO p2p_overlay::dht::lookup: [lookup-b642725f] start target=f5775163
+2026-11-12T19:08:39.745891Z  INFO p2p_overlay::dht::lookup: [lookup-a379ccda] start target=f5775163
+2026-11-12T19:08:39.745897Z  INFO p2p_overlay::dht::lookup: [lookup-53bd0c39] start target=f5775163
+2026-11-12T19:08:39.771383Z  INFO p2p_overlay::dht::lookup: [lookup-d10fdd4b] done target=f5775163 closest=4 rpc=4 iter=2 dur=26ms
+2026-11-12T19:08:39.780436Z  INFO p2p_overlay::dht::lookup: [lookup-a379ccda] done target=f5775163 closest=4 rpc=4 iter=2 dur=35ms
+2026-11-12T19:08:39.782952Z  INFO p2p_overlay::dht::lookup: [lookup-b642725f] done target=f5775163 closest=4 rpc=4 iter=2 dur=37ms
+2026-11-12T19:08:39.785532Z  INFO p2p_overlay::dht::lookup: [lookup-53bd0c39] done target=f5775163 closest=4 rpc=4 iter=2 dur=40ms

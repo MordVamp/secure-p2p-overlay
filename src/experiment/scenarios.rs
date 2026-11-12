@@ -984,8 +984,8 @@ async fn sfiles(a: &Args) -> Result<bool> {
                 .unwrap_or_else(|e| json!({ "ok": false, "error": e.to_string() }));
             let wall = ms_since(t0);
             let rep = &r["report"];
-            // целостность у получателя: файл в его downloads/ и SHA-256 совпадает
-            let got = std::fs::read(net.dir.join(format!("state{to}/downloads/{name}"))).ok();
+            // целостность у получателя: файл в папке отправителя `downloads/<16 hex NodeID>/` (ADR-46), SHA-256 совпадает
+            let got = std::fs::read(net.dir.join(format!("state{to}/downloads/{}/{name}", &net.id(from)[..16]))).ok();
             let verified = got.map(|g| Sha256::digest(&g) == Sha256::digest(&data)).unwrap_or(false);
             rows.push(vec![s(label), s(size), s(k), s(from), s(to), s(is_true(&r["ok"])), jv(&rep["duration_ms"]), f1(wall),
                            jv(&rep["goodput_mib_s"]).chars().take(8).collect(), jv(&rep["bytes_out"]), jv(&rep["bytes_in"]),
@@ -1011,7 +1011,7 @@ async fn sfiles(a: &Args) -> Result<bool> {
                   предложение → блоки по {} КиБ окнами по {} → подтверждения → итоговая проверка SHA-256 получателем. \
                   goodput = размер / время от предложения до итогового подтверждения; служебная доля = (байты конвертов в обе стороны − \
                   размер) / байты конвертов — накладные расходы прикладного протокола (подпись, конверт, метаданные, подтверждения), \
-                  без TLS/TCP и без умножения на число hop. Целостность проверена по SHA-256 файла в `downloads/` получателя.\n\n{}",
+                  без TLS/TCP и без умножения на число hop. Целостность проверена по SHA-256 файла в `downloads/<папка отправителя>/` получателя.\n\n{}",
                  40, 8, lines.join("\n")))?;
     Ok(all_ok)
 }

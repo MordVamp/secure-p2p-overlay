@@ -1,0 +1,406 @@
+2026-11-12T19:05:40.191546Z  INFO p2p_overlay::identity::node_identity: Generating new identity in "logs/scenarios/files_1794510339_7400/state5"
+2026-11-12T19:05:40.192076Z  INFO p2p_overlay::identity::node_identity: NodeID = 1579411b8b9a93bd474a307290adcd39f2e5dfbde1c5076eb11214cf9e4cb19d
+2026-11-12T19:05:40.193489Z  INFO p2p_overlay::rpc::pool: Соединения между узлами переиспользуются: туннели; DHT — соединение на каждый запрос (пул до 128, простой 30000 мс)
+2026-11-12T19:05:40.193884Z  INFO p2p_overlay::node: Listening on 0.0.0.0:7405 NodeID=1579411b
+2026-11-12T19:05:40.194048Z  INFO p2p_overlay::dht::node: Bootstrap: connecting to 1 peers
+2026-11-12T19:05:40.194036Z  INFO p2p_overlay::gui::http: GUI: http://127.0.0.1:7428/
+2026-11-12T19:05:40.203358Z  INFO p2p_overlay::rpc: PONG from 3bddbce3@127.0.0.1:7400 rtt=9ms
+2026-11-12T19:05:40.203491Z  INFO p2p_overlay::dht::node: Bootstrap peer 127.0.0.1:7400 (3bddbce3) reachable, NodeID=3bddbce3bd5f91e93f9f76fb9ee8f01f3e9426d2d1d173d6beb00947f0ed74a1
+2026-11-12T19:05:40.203572Z  INFO p2p_overlay::dht::node: Starting self-lookup NodeID=1579411b
+2026-11-12T19:05:40.203625Z  INFO p2p_overlay::dht::lookup: [lookup-69f1ae61] start target=1579411b
+2026-11-12T19:05:40.218804Z  INFO p2p_overlay::dht::lookup: [lookup-69f1ae61] done target=1579411b closest=4 rpc=4 iter=3 dur=15ms
+2026-11-12T19:05:40.218979Z  INFO p2p_overlay::dht::node: Self-lookup done: 4 closest contacts, 4 RPC, 3 iter, 15ms
+2026-11-12T19:05:40.219024Z  INFO p2p_overlay::dht::node: Routing table: 4 contacts in 3 non-empty buckets
+2026-11-12T19:05:40.219948Z  INFO p2p_overlay::dht::lookup: [lookup-f4c7fa4c] start target=36ac7148
+2026-11-12T19:05:40.237612Z  INFO p2p_overlay::dht::lookup: [lookup-f4c7fa4c] done target=36ac7148 closest=4 rpc=4 iter=2 dur=18ms
+2026-11-12T19:05:40.319918Z  INFO p2p_overlay::node: NodeRecord опубликован на 4 репликах
+2026-11-12T19:05:46.024380Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=33e425be hop=1/3 from=9fbd8f8c@127.0.0.1:7420
+2026-11-12T19:05:46.123910Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=a0eb3ac8 hop=2/3 from=9accb7d8@127.0.0.1:7408
+2026-11-12T19:05:46.618713Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=71b12173 hop=1/3 from=0584ffdb@127.0.0.1:7418
+2026-11-12T19:05:46.650479Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=1ef5fc79 hop=0/3 from=c555b764@127.0.0.1:7406
+2026-11-12T19:05:47.132628Z  INFO p2p_overlay::dht::lookup: [lookup-7af01dd9] start target=f5775163
+2026-11-12T19:05:47.163822Z  INFO p2p_overlay::dht::lookup: [lookup-7af01dd9] done target=f5775163 closest=4 rpc=6 iter=2 dur=31ms
+2026-11-12T19:05:47.164150Z  INFO p2p_overlay::tunnel::manager: Building tunnel to f5775163
+2026-11-12T19:05:47.174819Z  INFO p2p_overlay::tunnel::builder: [tunnel-dfb2de2a] hop 0 confirmed: ffc26675@127.0.0.1:7404
+2026-11-12T19:05:47.184361Z  INFO p2p_overlay::tunnel::builder: [tunnel-dfb2de2a] hop 1 confirmed: d70a4b52@127.0.0.1:7411
+2026-11-12T19:05:47.192046Z  INFO p2p_overlay::tunnel::builder: [tunnel-dfb2de2a] hop 2 confirmed: dfd1dca8@127.0.0.1:7412
+2026-11-12T19:05:47.192122Z  INFO p2p_overlay::tunnel::session: [tunnel-dfb2de2a] Building → Active
+2026-11-12T19:05:47.192172Z  INFO p2p_overlay::tunnel::builder: [tunnel-dfb2de2a] ACTIVE — 3 hops [ffc26675 → d70a4b52 → dfd1dca8 → f5775163], build took 28ms
+2026-11-12T19:05:47.203416Z  INFO p2p_overlay::tunnel::builder: [tunnel-acd65bd1] hop 0 confirmed: c555b764@127.0.0.1:7406
+2026-11-12T19:05:47.212400Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=19ms
+2026-11-12T19:05:47.213056Z  INFO p2p_overlay::tunnel::builder: [tunnel-acd65bd1] hop 1 confirmed: c126bc23@127.0.0.1:7419
+2026-11-12T19:05:47.222968Z  INFO p2p_overlay::tunnel::builder: [tunnel-acd65bd1] hop 2 confirmed: 9fbd8f8c@127.0.0.1:7420
+2026-11-12T19:05:47.223071Z  INFO p2p_overlay::tunnel::session: [tunnel-acd65bd1] Building → Active
+2026-11-12T19:05:47.223121Z  INFO p2p_overlay::tunnel::builder: [tunnel-acd65bd1] ACTIVE — 3 hops [c555b764 → c126bc23 → 9fbd8f8c → f5775163], build took 30ms
+2026-11-12T19:05:47.231700Z  INFO p2p_overlay::tunnel::builder: [tunnel-3eb47402] hop 0 confirmed: 9e0a9f77@127.0.0.1:7409
+2026-11-12T19:05:47.242117Z  INFO p2p_overlay::tunnel::builder: [tunnel-3eb47402] hop 1 confirmed: 9815e97a@127.0.0.1:7417
+2026-11-12T19:05:47.251635Z  INFO p2p_overlay::tunnel::builder: [tunnel-3eb47402] hop 2 confirmed: 9accb7d8@127.0.0.1:7408
+2026-11-12T19:05:47.251733Z  INFO p2p_overlay::tunnel::session: [tunnel-3eb47402] Building → Active
+2026-11-12T19:05:47.251795Z  INFO p2p_overlay::tunnel::builder: [tunnel-3eb47402] ACTIVE — 3 hops [9e0a9f77 → 9815e97a → 9accb7d8 → f5775163], build took 28ms
+2026-11-12T19:05:47.298816Z  INFO p2p_overlay::app::messenger: ← msg 130f69c0 from f5775163 kind=FileAck
+2026-11-12T19:05:47.407483Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=64ms
+2026-11-12T19:05:47.527791Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=63ms
+2026-11-12T19:05:47.582692Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=35ms
+2026-11-12T19:05:47.628648Z  INFO p2p_overlay::app::messenger: ← msg ae7d92db from f5775163 kind=FileAck
+2026-11-12T19:05:47.645438Z  INFO p2p_overlay::app::messenger: ← msg d24f8883 from f5775163 kind=FileDone
+2026-11-12T19:05:47.725722Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=7d3917bf hop=2/3 from=9fbd8f8c@127.0.0.1:7420
+2026-11-12T19:05:47.843060Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=0ea1adab hop=0/3 from=7b9d713e@127.0.0.1:7414
+2026-11-12T19:05:48.281306Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=50731e82 hop=2/3 from=32cc7728@127.0.0.1:7401
+2026-11-12T19:05:48.367900Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=e3d0cef9 hop=2/3 from=3bddbce3@127.0.0.1:7400
+2026-11-12T19:05:55.820413Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=77be01e9 hop=0/3 from=dfd1dca8@127.0.0.1:7412
+2026-11-12T19:05:59.098380Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=ebd135b4 hop=0/3 from=9815e97a@127.0.0.1:7417
+2026-11-12T19:06:02.315134Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=fda69afe hop=0/3 from=3bddbce3@127.0.0.1:7400
+2026-11-12T19:06:02.383186Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=2afb58ff hop=1/3 from=9815e97a@127.0.0.1:7417
+2026-11-12T19:06:06.449501Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=1577eb51 hop=1/3 from=32cc7728@127.0.0.1:7401
+2026-11-12T19:06:06.510114Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=ac771f06 hop=1/3 from=0584ffdb@127.0.0.1:7418
+2026-11-12T19:06:37.884632Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=98602ff5 hop=1/3 from=9fbd8f8c@127.0.0.1:7420
+2026-11-12T19:06:37.935323Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=83c2bb64 hop=0/3 from=3bddbce3@127.0.0.1:7400
+2026-11-12T19:06:40.195424Z  INFO p2p_overlay::node: Bucket refresh: 4 targets
+2026-11-12T19:06:40.195621Z  INFO p2p_overlay::dht::lookup: [lookup-0e87f08f] start target=1579411b
+2026-11-12T19:06:40.195630Z  INFO p2p_overlay::dht::lookup: [lookup-975b3eb2] start target=1579411b
+2026-11-12T19:06:40.195653Z  INFO p2p_overlay::dht::lookup: [lookup-1c201627] start target=1579411b
+2026-11-12T19:06:40.195691Z  INFO p2p_overlay::dht::lookup: [lookup-e00c0c08] start target=1579411b
+2026-11-12T19:06:40.225894Z  INFO p2p_overlay::dht::lookup: [lookup-975b3eb2] done target=1579411b closest=4 rpc=4 iter=2 dur=30ms
+2026-11-12T19:06:40.227972Z  INFO p2p_overlay::dht::lookup: [lookup-1c201627] done target=1579411b closest=4 rpc=4 iter=2 dur=32ms
+2026-11-12T19:06:40.230175Z  INFO p2p_overlay::dht::lookup: [lookup-e00c0c08] done target=1579411b closest=4 rpc=4 iter=2 dur=35ms
+2026-11-12T19:06:40.230954Z  INFO p2p_overlay::dht::lookup: [lookup-0e87f08f] done target=1579411b closest=4 rpc=4 iter=2 dur=35ms
+2026-11-12T19:06:50.195658Z  INFO p2p_overlay::tunnel::session: [tunnel-dfb2de2a] Active → Degraded
+2026-11-12T19:06:50.195756Z  INFO p2p_overlay::tunnel::session: [tunnel-acd65bd1] Active → Degraded
+2026-11-12T19:06:50.195815Z  INFO p2p_overlay::tunnel::session: [tunnel-3eb47402] Active → Degraded
+2026-11-12T19:07:00.196637Z  INFO p2p_overlay::dht::lookup: [lookup-6fdea200] start target=36ac7148
+2026-11-12T19:07:00.219771Z  INFO p2p_overlay::dht::lookup: [lookup-6fdea200] done target=36ac7148 closest=4 rpc=4 iter=2 dur=23ms
+2026-11-12T19:07:09.266929Z  INFO p2p_overlay::app::messenger: ← msg 90d63576 from dfd1dca8 kind=FileOffer
+2026-11-12T19:07:09.268006Z  INFO p2p_overlay::app::messenger: ← файл f10240_2.bin от dfd1dca8: 10485760 байт
+2026-11-12T19:07:09.268095Z  INFO p2p_overlay::dht::lookup: [lookup-30699fed] start target=dfd1dca8
+2026-11-12T19:07:09.296357Z  INFO p2p_overlay::dht::lookup: [lookup-30699fed] done target=dfd1dca8 closest=4 rpc=8 iter=3 dur=28ms
+2026-11-12T19:07:09.296596Z  INFO p2p_overlay::tunnel::manager: Building tunnel to dfd1dca8
+2026-11-12T19:07:09.303974Z  INFO p2p_overlay::tunnel::builder: [tunnel-87331bdd] hop 0 confirmed: d70a4b52@127.0.0.1:7411
+2026-11-12T19:07:09.310833Z  INFO p2p_overlay::tunnel::builder: [tunnel-87331bdd] hop 1 confirmed: ffc26675@127.0.0.1:7404
+2026-11-12T19:07:09.319104Z  INFO p2p_overlay::tunnel::builder: [tunnel-87331bdd] hop 2 confirmed: 9e0a9f77@127.0.0.1:7409
+2026-11-12T19:07:09.319169Z  INFO p2p_overlay::tunnel::session: [tunnel-87331bdd] Building → Active
+2026-11-12T19:07:09.319207Z  INFO p2p_overlay::tunnel::builder: [tunnel-87331bdd] ACTIVE — 3 hops [d70a4b52 → ffc26675 → 9e0a9f77 → dfd1dca8], build took 23ms
+2026-11-12T19:07:09.328141Z  INFO p2p_overlay::tunnel::builder: [tunnel-8327b6b5] hop 0 confirmed: c555b764@127.0.0.1:7406
+2026-11-12T19:07:09.337149Z  INFO p2p_overlay::tunnel::builder: [tunnel-8327b6b5] hop 1 confirmed: 9fbd8f8c@127.0.0.1:7420
+2026-11-12T19:07:09.340639Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=20ms
+2026-11-12T19:07:09.347220Z  INFO p2p_overlay::tunnel::builder: [tunnel-8327b6b5] hop 2 confirmed: 9accb7d8@127.0.0.1:7408
+2026-11-12T19:07:09.347284Z  INFO p2p_overlay::tunnel::session: [tunnel-8327b6b5] Building → Active
+2026-11-12T19:07:09.347329Z  INFO p2p_overlay::tunnel::builder: [tunnel-8327b6b5] ACTIVE — 3 hops [c555b764 → 9fbd8f8c → 9accb7d8 → dfd1dca8], build took 27ms
+2026-11-12T19:07:09.355868Z  INFO p2p_overlay::tunnel::builder: [tunnel-01f6f245] hop 0 confirmed: c126bc23@127.0.0.1:7419
+2026-11-12T19:07:09.362424Z  INFO p2p_overlay::tunnel::builder: [tunnel-01f6f245] hop 1 confirmed: 9815e97a@127.0.0.1:7417
+2026-11-12T19:07:09.371883Z  INFO p2p_overlay::tunnel::builder: [tunnel-01f6f245] hop 2 confirmed: f5775163@127.0.0.1:7402
+2026-11-12T19:07:09.371993Z  INFO p2p_overlay::tunnel::session: [tunnel-01f6f245] Building → Active
+2026-11-12T19:07:09.372053Z  INFO p2p_overlay::tunnel::builder: [tunnel-01f6f245] ACTIVE — 3 hops [c126bc23 → 9815e97a → f5775163 → dfd1dca8], build took 25ms
+2026-11-12T19:07:09.503227Z  INFO p2p_overlay::app::messenger: ← msg 06ebe9d1 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:09.615990Z  INFO p2p_overlay::app::messenger: ← msg 8c071cb3 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:09.725630Z  INFO p2p_overlay::app::messenger: ← msg 8a5cbb42 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:09.796235Z  INFO p2p_overlay::app::messenger: ← msg 326dbf58 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:09.925060Z  INFO p2p_overlay::app::messenger: ← msg f7d82e93 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:10.006000Z  INFO p2p_overlay::app::messenger: ← msg f6162893 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:10.135979Z  INFO p2p_overlay::app::messenger: ← msg f5092219 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:10.228285Z  INFO p2p_overlay::app::messenger: ← msg 5a724bdb from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:10.237475Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=5ms
+2026-11-12T19:07:10.396695Z  INFO p2p_overlay::app::messenger: ← msg 8bb2eadd from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:10.511820Z  INFO p2p_overlay::app::messenger: ← msg 8de14d60 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:10.621215Z  INFO p2p_overlay::app::messenger: ← msg df4d0b50 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:10.703041Z  INFO p2p_overlay::app::messenger: ← msg f565476d from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:10.791742Z  INFO p2p_overlay::app::messenger: ← msg 27163d6c from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:10.923119Z  INFO p2p_overlay::app::messenger: ← msg 9888bb06 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:11.025781Z  INFO p2p_overlay::app::messenger: ← msg d896095a from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:11.105930Z  INFO p2p_overlay::app::messenger: ← msg 249dec8e from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:11.114981Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=3ms
+2026-11-12T19:07:11.297230Z  INFO p2p_overlay::app::messenger: ← msg 5409b6b7 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:11.414589Z  INFO p2p_overlay::app::messenger: ← msg 1c421805 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:11.522245Z  INFO p2p_overlay::app::messenger: ← msg 81b75fe3 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:11.622243Z  INFO p2p_overlay::app::messenger: ← msg 4ecaa5f6 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:11.735504Z  INFO p2p_overlay::app::messenger: ← msg 1942fd6b from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:11.854099Z  INFO p2p_overlay::app::messenger: ← msg 15672bba from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:11.968345Z  INFO p2p_overlay::app::messenger: ← msg dcf80f6c from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:12.084307Z  INFO p2p_overlay::app::messenger: ← msg 42f476a9 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:12.093564Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=4ms
+2026-11-12T19:07:12.223466Z  INFO p2p_overlay::app::messenger: ← msg c5bb92e5 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:12.340077Z  INFO p2p_overlay::app::messenger: ← msg cb5e114b from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:12.435598Z  INFO p2p_overlay::app::messenger: ← msg 558b5f7c from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:12.572184Z  INFO p2p_overlay::app::messenger: ← msg 25a77072 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:12.679910Z  INFO p2p_overlay::app::messenger: ← msg 7576c688 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:12.783953Z  INFO p2p_overlay::app::messenger: ← msg dce1b15d from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:12.885987Z  INFO p2p_overlay::app::messenger: ← msg bf0193f5 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:12.988401Z  INFO p2p_overlay::app::messenger: ← msg 279743e5 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:12.997360Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=4ms
+2026-11-12T19:07:13.124417Z  INFO p2p_overlay::app::messenger: ← msg 13902255 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:13.264500Z  INFO p2p_overlay::app::messenger: ← msg 3c5eea2f from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:13.361771Z  INFO p2p_overlay::app::messenger: ← msg 8e001d57 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:13.485402Z  INFO p2p_overlay::app::messenger: ← msg 3fa90760 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:13.575311Z  INFO p2p_overlay::app::messenger: ← msg 646be5d7 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:13.673853Z  INFO p2p_overlay::app::messenger: ← msg e7627109 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:13.759667Z  INFO p2p_overlay::app::messenger: ← msg ba0471f4 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:13.868694Z  INFO p2p_overlay::app::messenger: ← msg 42a8f892 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:13.878529Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=5ms
+2026-11-12T19:07:14.033439Z  INFO p2p_overlay::app::messenger: ← msg c763e530 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:14.178902Z  INFO p2p_overlay::app::messenger: ← msg 7633d678 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:14.278932Z  INFO p2p_overlay::app::messenger: ← msg aa6d49e1 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:14.357638Z  INFO p2p_overlay::app::messenger: ← msg 573d2f8b from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:14.477200Z  INFO p2p_overlay::app::messenger: ← msg 46e81a2f from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:14.598524Z  INFO p2p_overlay::app::messenger: ← msg fa0ab102 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:14.709248Z  INFO p2p_overlay::app::messenger: ← msg 14d704e4 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:14.838126Z  INFO p2p_overlay::app::messenger: ← msg ded59d32 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:14.846924Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=3ms
+2026-11-12T19:07:15.000400Z  INFO p2p_overlay::app::messenger: ← msg 917eb825 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:15.107476Z  INFO p2p_overlay::app::messenger: ← msg fd45dc75 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:15.202819Z  INFO p2p_overlay::app::messenger: ← msg a02b0723 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:15.280397Z  INFO p2p_overlay::app::messenger: ← msg 879c6772 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:15.411863Z  INFO p2p_overlay::app::messenger: ← msg be77c16b from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:15.545205Z  INFO p2p_overlay::app::messenger: ← msg c0689d7d from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:15.629624Z  INFO p2p_overlay::app::messenger: ← msg dbb4d4ca from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:15.758387Z  INFO p2p_overlay::app::messenger: ← msg 777ca458 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:15.767579Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=4ms
+2026-11-12T19:07:15.899610Z  INFO p2p_overlay::app::messenger: ← msg 0e135525 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:16.023908Z  INFO p2p_overlay::app::messenger: ← msg 3726a9a0 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:16.128536Z  INFO p2p_overlay::app::messenger: ← msg d164e144 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:16.245828Z  INFO p2p_overlay::app::messenger: ← msg 46a6397f from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:16.371451Z  INFO p2p_overlay::app::messenger: ← msg 5ad7b054 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:16.469111Z  INFO p2p_overlay::app::messenger: ← msg 923e5295 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:16.580129Z  INFO p2p_overlay::app::messenger: ← msg 35f28185 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:16.681552Z  INFO p2p_overlay::app::messenger: ← msg 796149fa from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:16.690542Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=4ms
+2026-11-12T19:07:16.852867Z  INFO p2p_overlay::app::messenger: ← msg a6872572 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:16.986668Z  INFO p2p_overlay::app::messenger: ← msg 6fe78ed4 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:17.093350Z  INFO p2p_overlay::app::messenger: ← msg be6b9022 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:17.162725Z  INFO p2p_overlay::app::messenger: ← msg bfbbde0c from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:17.292868Z  INFO p2p_overlay::app::messenger: ← msg 8d432c6b from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:17.405093Z  INFO p2p_overlay::app::messenger: ← msg 2556a52e from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:17.523531Z  INFO p2p_overlay::app::messenger: ← msg d5bd4051 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:17.641268Z  INFO p2p_overlay::app::messenger: ← msg 4b65b047 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:17.649463Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=4ms
+2026-11-12T19:07:17.799760Z  INFO p2p_overlay::app::messenger: ← msg 239714c3 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:17.943958Z  INFO p2p_overlay::app::messenger: ← msg 31341d4a from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:18.063684Z  INFO p2p_overlay::app::messenger: ← msg 439ad41a from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:18.153084Z  INFO p2p_overlay::app::messenger: ← msg b2f89fcf from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:18.224214Z  INFO p2p_overlay::app::messenger: ← msg 0eb5a94c from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:18.329414Z  INFO p2p_overlay::app::messenger: ← msg f0386fd8 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:18.446913Z  INFO p2p_overlay::app::messenger: ← msg 74b97cbb from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:18.515611Z  INFO p2p_overlay::app::messenger: ← msg f7c71e01 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:18.523712Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=4ms
+2026-11-12T19:07:18.653634Z  INFO p2p_overlay::app::messenger: ← msg a62c1dd7 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:18.791090Z  INFO p2p_overlay::app::messenger: ← msg 4cbfa8e9 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:18.896359Z  INFO p2p_overlay::app::messenger: ← msg f2180ffe from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:18.970108Z  INFO p2p_overlay::app::messenger: ← msg ccc24072 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:19.080056Z  INFO p2p_overlay::app::messenger: ← msg 7d841dc2 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:19.194548Z  INFO p2p_overlay::app::messenger: ← msg 530d153b from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:19.311838Z  INFO p2p_overlay::app::messenger: ← msg 2e59c7de from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:19.411755Z  INFO p2p_overlay::app::messenger: ← msg 178706e2 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:19.420218Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=4ms
+2026-11-12T19:07:19.584988Z  INFO p2p_overlay::app::messenger: ← msg a25bffb9 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:19.655519Z  INFO p2p_overlay::app::messenger: ← msg 97ce05d2 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:19.794520Z  INFO p2p_overlay::app::messenger: ← msg f4f82673 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:19.919190Z  INFO p2p_overlay::app::messenger: ← msg f24dfe85 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:20.036839Z  INFO p2p_overlay::app::messenger: ← msg 0aa0d87a from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:20.139970Z  INFO p2p_overlay::app::messenger: ← msg 247d11ed from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:20.255741Z  INFO p2p_overlay::app::messenger: ← msg 13e826f1 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:20.355425Z  INFO p2p_overlay::app::messenger: ← msg 8bddc89d from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:20.363462Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=4ms
+2026-11-12T19:07:20.521754Z  INFO p2p_overlay::app::messenger: ← msg eb78ce0c from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:20.666176Z  INFO p2p_overlay::app::messenger: ← msg fcbee15d from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:20.763662Z  INFO p2p_overlay::app::messenger: ← msg 9b45c267 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:20.875924Z  INFO p2p_overlay::app::messenger: ← msg b1ef8dcb from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:20.980074Z  INFO p2p_overlay::app::messenger: ← msg 44c16da4 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:21.098251Z  INFO p2p_overlay::app::messenger: ← msg 7ba094e4 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:21.206836Z  INFO p2p_overlay::app::messenger: ← msg 1d575d3a from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:21.321753Z  INFO p2p_overlay::app::messenger: ← msg 2cdc9ca1 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:21.330951Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=4ms
+2026-11-12T19:07:21.490500Z  INFO p2p_overlay::app::messenger: ← msg f87795e7 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:21.635054Z  INFO p2p_overlay::app::messenger: ← msg 30643e68 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:21.741566Z  INFO p2p_overlay::app::messenger: ← msg 44f6cdef from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:21.859324Z  INFO p2p_overlay::app::messenger: ← msg 73e02308 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:21.936883Z  INFO p2p_overlay::app::messenger: ← msg d3a0fd07 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:22.031181Z  INFO p2p_overlay::app::messenger: ← msg 0127460f from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:22.142581Z  INFO p2p_overlay::app::messenger: ← msg 9e5d78a3 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:22.261470Z  INFO p2p_overlay::app::messenger: ← msg 2132c983 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:22.269547Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=4ms
+2026-11-12T19:07:22.417862Z  INFO p2p_overlay::app::messenger: ← msg 55af3b9e from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:22.551324Z  INFO p2p_overlay::app::messenger: ← msg 049c22d8 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:22.657819Z  INFO p2p_overlay::app::messenger: ← msg 32faf686 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:22.767947Z  INFO p2p_overlay::app::messenger: ← msg 82eaf8bc from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:22.877933Z  INFO p2p_overlay::app::messenger: ← msg faa04e9d from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:22.978266Z  INFO p2p_overlay::app::messenger: ← msg 9d791e97 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:23.092637Z  INFO p2p_overlay::app::messenger: ← msg 31e52cc2 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:23.200811Z  INFO p2p_overlay::app::messenger: ← msg 0f5ca838 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:23.210433Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=5ms
+2026-11-12T19:07:23.361350Z  INFO p2p_overlay::app::messenger: ← msg 558aa0f9 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:23.494142Z  INFO p2p_overlay::app::messenger: ← msg da865d06 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:23.602817Z  INFO p2p_overlay::app::messenger: ← msg 192436ef from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:23.676580Z  INFO p2p_overlay::app::messenger: ← msg 3b52a90e from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:23.771687Z  INFO p2p_overlay::app::messenger: ← msg cc9d915d from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:23.914703Z  INFO p2p_overlay::app::messenger: ← msg 479b0c2b from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:24.004832Z  INFO p2p_overlay::app::messenger: ← msg 21ba7988 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:24.095344Z  INFO p2p_overlay::app::messenger: ← msg c7a9f8e8 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:24.103455Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=4ms
+2026-11-12T19:07:24.263661Z  INFO p2p_overlay::app::messenger: ← msg bbe7c9b6 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:24.391181Z  INFO p2p_overlay::app::messenger: ← msg b16f1f31 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:24.501683Z  INFO p2p_overlay::app::messenger: ← msg 58e8b30b from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:24.618206Z  INFO p2p_overlay::app::messenger: ← msg 327e18df from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:24.724661Z  INFO p2p_overlay::app::messenger: ← msg c08b06a2 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:24.825495Z  INFO p2p_overlay::app::messenger: ← msg f1572d0b from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:24.942850Z  INFO p2p_overlay::app::messenger: ← msg a9b11275 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:25.003389Z  INFO p2p_overlay::app::messenger: ← msg fd079006 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:25.012264Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=5ms
+2026-11-12T19:07:25.181325Z  INFO p2p_overlay::app::messenger: ← msg 959570d3 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:25.297968Z  INFO p2p_overlay::app::messenger: ← msg f2cbcb8b from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:25.384265Z  INFO p2p_overlay::app::messenger: ← msg 68ee358a from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:25.487501Z  INFO p2p_overlay::app::messenger: ← msg e87ed28a from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:25.581817Z  INFO p2p_overlay::app::messenger: ← msg d9b1d64b from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:25.692191Z  INFO p2p_overlay::app::messenger: ← msg 95dc6fbb from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:25.832972Z  INFO p2p_overlay::app::messenger: ← msg e05f2f15 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:25.937005Z  INFO p2p_overlay::app::messenger: ← msg d14e0de4 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:25.946711Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=4ms
+2026-11-12T19:07:26.103190Z  INFO p2p_overlay::app::messenger: ← msg 6f27bbbf from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:26.247252Z  INFO p2p_overlay::app::messenger: ← msg 6abf4099 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:26.357524Z  INFO p2p_overlay::app::messenger: ← msg b4ac67ce from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:26.465402Z  INFO p2p_overlay::app::messenger: ← msg 32db210d from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:26.574771Z  INFO p2p_overlay::app::messenger: ← msg 262076b2 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:26.676198Z  INFO p2p_overlay::app::messenger: ← msg 450694ae from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:26.800318Z  INFO p2p_overlay::app::messenger: ← msg 0ea4ff04 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:26.901448Z  INFO p2p_overlay::app::messenger: ← msg 8c94ba1d from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:26.913388Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=5ms
+2026-11-12T19:07:27.091698Z  INFO p2p_overlay::app::messenger: ← msg ac7b9c06 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:27.205136Z  INFO p2p_overlay::app::messenger: ← msg a2b9d223 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:27.321427Z  INFO p2p_overlay::app::messenger: ← msg e86f3c1c from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:27.437724Z  INFO p2p_overlay::app::messenger: ← msg 643c7644 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:27.559201Z  INFO p2p_overlay::app::messenger: ← msg 4c5bc3a0 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:27.633500Z  INFO p2p_overlay::app::messenger: ← msg f5f1e0bd from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:27.772815Z  INFO p2p_overlay::app::messenger: ← msg ce2573a5 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:27.862055Z  INFO p2p_overlay::app::messenger: ← msg e72907b2 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:27.871635Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=4ms
+2026-11-12T19:07:28.028158Z  INFO p2p_overlay::app::messenger: ← msg c8289764 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:28.165316Z  INFO p2p_overlay::app::messenger: ← msg 28dd6241 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:28.266116Z  INFO p2p_overlay::app::messenger: ← msg 8c0693cd from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:28.385576Z  INFO p2p_overlay::app::messenger: ← msg 95c2c87e from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:28.475454Z  INFO p2p_overlay::app::messenger: ← msg 414e1558 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:28.567214Z  INFO p2p_overlay::app::messenger: ← msg 17df864c from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:28.678133Z  INFO p2p_overlay::app::messenger: ← msg 9e209916 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:28.818343Z  INFO p2p_overlay::app::messenger: ← msg 12b611fc from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:28.827560Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=4ms
+2026-11-12T19:07:28.972654Z  INFO p2p_overlay::app::messenger: ← msg 96f18140 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:29.101229Z  INFO p2p_overlay::app::messenger: ← msg b8cebf47 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:29.219116Z  INFO p2p_overlay::app::messenger: ← msg 7dd21bd7 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:29.296037Z  INFO p2p_overlay::app::messenger: ← msg a9439195 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:29.422594Z  INFO p2p_overlay::app::messenger: ← msg 8a01f2ae from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:29.503942Z  INFO p2p_overlay::app::messenger: ← msg 02da145f from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:29.639200Z  INFO p2p_overlay::app::messenger: ← msg 182451ca from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:29.731286Z  INFO p2p_overlay::app::messenger: ← msg bb84a5cb from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:29.739055Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=4ms
+2026-11-12T19:07:29.877029Z  INFO p2p_overlay::app::messenger: ← msg 2cc4f98d from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:29.996672Z  INFO p2p_overlay::app::messenger: ← msg 17bfdcd5 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:30.113514Z  INFO p2p_overlay::app::messenger: ← msg c18ea770 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:30.224803Z  INFO p2p_overlay::app::messenger: ← msg 57e8914e from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:30.315619Z  INFO p2p_overlay::app::messenger: ← msg 0733b6fd from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:30.451407Z  INFO p2p_overlay::app::messenger: ← msg 5e142248 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:30.567142Z  INFO p2p_overlay::app::messenger: ← msg 0b9d03ae from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:30.694724Z  INFO p2p_overlay::app::messenger: ← msg 64af00f1 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:30.703409Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=4ms
+2026-11-12T19:07:30.850160Z  INFO p2p_overlay::app::messenger: ← msg e7a7d215 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:30.979136Z  INFO p2p_overlay::app::messenger: ← msg 814072e0 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:31.101959Z  INFO p2p_overlay::app::messenger: ← msg 2c3b91f0 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:31.204759Z  INFO p2p_overlay::app::messenger: ← msg e6ca1661 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:31.314181Z  INFO p2p_overlay::app::messenger: ← msg 65e64272 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:31.435103Z  INFO p2p_overlay::app::messenger: ← msg 769ad3db from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:31.536840Z  INFO p2p_overlay::app::messenger: ← msg 194dd8f9 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:31.638667Z  INFO p2p_overlay::app::messenger: ← msg 17f44133 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:31.648277Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=5ms
+2026-11-12T19:07:31.799937Z  INFO p2p_overlay::app::messenger: ← msg ebc11948 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:31.939061Z  INFO p2p_overlay::app::messenger: ← msg 86d537e5 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:32.037692Z  INFO p2p_overlay::app::messenger: ← msg 0a057051 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:32.158421Z  INFO p2p_overlay::app::messenger: ← msg 7f75e502 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:32.261192Z  INFO p2p_overlay::app::messenger: ← msg 09c8a080 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:32.381486Z  INFO p2p_overlay::app::messenger: ← msg 1a8c8a6e from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:32.488419Z  INFO p2p_overlay::app::messenger: ← msg 774f5755 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:32.598863Z  INFO p2p_overlay::app::messenger: ← msg 69fb2402 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:32.607354Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=4ms
+2026-11-12T19:07:32.764988Z  INFO p2p_overlay::app::messenger: ← msg adca1746 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:32.907634Z  INFO p2p_overlay::app::messenger: ← msg 024c6184 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:33.017703Z  INFO p2p_overlay::app::messenger: ← msg 5fab6f93 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:33.124268Z  INFO p2p_overlay::app::messenger: ← msg 54fa91c1 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:33.211176Z  INFO p2p_overlay::app::messenger: ← msg 3f191adb from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:33.329371Z  INFO p2p_overlay::app::messenger: ← msg 66dee0d5 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:33.457002Z  INFO p2p_overlay::app::messenger: ← msg 142a0adb from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:33.550991Z  INFO p2p_overlay::app::messenger: ← msg 5c75a345 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:33.558426Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=3ms
+2026-11-12T19:07:33.661592Z  INFO p2p_overlay::app::messenger: ← msg 3862cf74 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:33.811845Z  INFO p2p_overlay::app::messenger: ← msg 0bca60d9 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:33.920703Z  INFO p2p_overlay::app::messenger: ← msg 1912f122 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:34.044751Z  INFO p2p_overlay::app::messenger: ← msg bd21b19c from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:34.135452Z  INFO p2p_overlay::app::messenger: ← msg abb6827e from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:34.269449Z  INFO p2p_overlay::app::messenger: ← msg 5be53294 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:34.378505Z  INFO p2p_overlay::app::messenger: ← msg deff188f from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:34.471053Z  INFO p2p_overlay::app::messenger: ← msg 4c473c24 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:34.484528Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=4ms
+2026-11-12T19:07:34.660230Z  INFO p2p_overlay::app::messenger: ← msg 01fb2881 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:34.777380Z  INFO p2p_overlay::app::messenger: ← msg 2adf14c9 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:34.886400Z  INFO p2p_overlay::app::messenger: ← msg 41ce9c2f from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:35.010919Z  INFO p2p_overlay::app::messenger: ← msg 497e6923 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:35.126167Z  INFO p2p_overlay::app::messenger: ← msg 2f13b7da from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:35.217304Z  INFO p2p_overlay::app::messenger: ← msg 7c6af8b4 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:35.355673Z  INFO p2p_overlay::app::messenger: ← msg 22f946d9 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:35.446292Z  INFO p2p_overlay::app::messenger: ← msg 4c980602 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:35.455580Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=4ms
+2026-11-12T19:07:35.609192Z  INFO p2p_overlay::app::messenger: ← msg b5f59357 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:35.722353Z  INFO p2p_overlay::app::messenger: ← msg cdb318ae from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:35.838670Z  INFO p2p_overlay::app::messenger: ← msg 78795058 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:35.946977Z  INFO p2p_overlay::app::messenger: ← msg 29948c5b from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:36.067090Z  INFO p2p_overlay::app::messenger: ← msg 4e921e89 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:36.158364Z  INFO p2p_overlay::app::messenger: ← msg e7076b3a from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:36.299865Z  INFO p2p_overlay::app::messenger: ← msg 3ce7dd96 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:36.400775Z  INFO p2p_overlay::app::messenger: ← msg 82dcb984 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:36.409215Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=4ms
+2026-11-12T19:07:36.566710Z  INFO p2p_overlay::app::messenger: ← msg a22bc730 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:36.708377Z  INFO p2p_overlay::app::messenger: ← msg b0b273ce from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:36.795477Z  INFO p2p_overlay::app::messenger: ← msg b000e199 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:36.893175Z  INFO p2p_overlay::app::messenger: ← msg 31f0eee2 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:37.001070Z  INFO p2p_overlay::app::messenger: ← msg 3fdf49ff from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:37.122042Z  INFO p2p_overlay::app::messenger: ← msg 32e9c971 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:37.238505Z  INFO p2p_overlay::app::messenger: ← msg 811bc11e from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:37.332504Z  INFO p2p_overlay::app::messenger: ← msg 75fd191d from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:37.346168Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=5ms
+2026-11-12T19:07:37.515732Z  INFO p2p_overlay::app::messenger: ← msg c470c530 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:37.636555Z  INFO p2p_overlay::app::messenger: ← msg 13f1f7b1 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:37.726003Z  INFO p2p_overlay::app::messenger: ← msg 033d06e5 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:37.849009Z  INFO p2p_overlay::app::messenger: ← msg d2057ceb from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:37.956536Z  INFO p2p_overlay::app::messenger: ← msg c691037f from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:38.059175Z  INFO p2p_overlay::app::messenger: ← msg a59976f7 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:38.179979Z  INFO p2p_overlay::app::messenger: ← msg c2dc6624 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:38.311582Z  INFO p2p_overlay::app::messenger: ← msg c3152357 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:38.320789Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=4ms
+2026-11-12T19:07:38.472974Z  INFO p2p_overlay::app::messenger: ← msg ad829d5d from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:38.563726Z  INFO p2p_overlay::app::messenger: ← msg aea40778 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:38.705335Z  INFO p2p_overlay::app::messenger: ← msg 6e3acb86 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:38.819163Z  INFO p2p_overlay::app::messenger: ← msg 2960295d from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:38.912408Z  INFO p2p_overlay::app::messenger: ← msg 5173e585 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:39.055139Z  INFO p2p_overlay::app::messenger: ← msg 3b476c37 from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:39.166000Z  INFO p2p_overlay::app::messenger: ← msg bbffbdef from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:39.249713Z  INFO p2p_overlay::app::messenger: ← msg 46cb4a8d from dfd1dca8 kind=FileBlock
+2026-11-12T19:07:39.670266Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=4ms
+2026-11-12T19:07:39.677078Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=4ms
+2026-11-12T19:07:40.195511Z  INFO p2p_overlay::node: Bucket refresh: 4 targets
+2026-11-12T19:07:40.195710Z  INFO p2p_overlay::dht::lookup: [lookup-0d7b1887] start target=1579411b
+2026-11-12T19:07:40.195723Z  INFO p2p_overlay::dht::lookup: [lookup-4216e933] start target=1579411b
+2026-11-12T19:07:40.195775Z  INFO p2p_overlay::dht::lookup: [lookup-dd06b790] start target=1579411b
+2026-11-12T19:07:40.195833Z  INFO p2p_overlay::dht::lookup: [lookup-87067eaa] start target=1579411b
+2026-11-12T19:07:40.228803Z  INFO p2p_overlay::dht::lookup: [lookup-87067eaa] done target=1579411b closest=4 rpc=4 iter=2 dur=33ms
+2026-11-12T19:07:40.230975Z  INFO p2p_overlay::dht::lookup: [lookup-0d7b1887] done target=1579411b closest=4 rpc=4 iter=2 dur=35ms
+2026-11-12T19:07:40.233815Z  INFO p2p_overlay::dht::lookup: [lookup-dd06b790] done target=1579411b closest=4 rpc=4 iter=2 dur=38ms
+2026-11-12T19:07:40.234872Z  INFO p2p_overlay::dht::lookup: [lookup-4216e933] done target=1579411b closest=4 rpc=4 iter=2 dur=39ms
+2026-11-12T19:07:40.766571Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=5de21d9e hop=0/3 from=9fbd8f8c@127.0.0.1:7420
+2026-11-12T19:07:40.882647Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=a5dd87b4 hop=1/3 from=53968d0b@127.0.0.1:7410
+2026-11-12T19:08:10.195253Z  INFO p2p_overlay::tunnel::session: [tunnel-8327b6b5] Active → Degraded
+2026-11-12T19:08:10.195374Z  INFO p2p_overlay::tunnel::session: [tunnel-01f6f245] Active → Degraded
+2026-11-12T19:08:20.196723Z  INFO p2p_overlay::dht::lookup: [lookup-7613aa6c] start target=36ac7148
+2026-11-12T19:08:20.222863Z  INFO p2p_overlay::dht::lookup: [lookup-7613aa6c] done target=36ac7148 closest=4 rpc=4 iter=2 dur=26ms
+2026-11-12T19:08:40.195093Z  INFO p2p_overlay::tunnel::session: [tunnel-87331bdd] Active → Degraded
+2026-11-12T19:08:40.195137Z  INFO p2p_overlay::node: Bucket refresh: 4 targets
+2026-11-12T19:08:40.195292Z  INFO p2p_overlay::dht::lookup: [lookup-880b3071] start target=1579411b
+2026-11-12T19:08:40.195292Z  INFO p2p_overlay::dht::lookup: [lookup-0e8788fa] start target=1579411b
+2026-11-12T19:08:40.195362Z  INFO p2p_overlay::dht::lookup: [lookup-866e9dee] start target=1579411b
+2026-11-12T19:08:40.195374Z  INFO p2p_overlay::dht::lookup: [lookup-0ed1d72a] start target=1579411b
+2026-11-12T19:08:40.222700Z  INFO p2p_overlay::dht::lookup: [lookup-880b3071] done target=1579411b closest=4 rpc=4 iter=2 dur=27ms
+2026-11-12T19:08:40.223915Z  INFO p2p_overlay::dht::lookup: [lookup-0ed1d72a] done target=1579411b closest=4 rpc=4 iter=2 dur=28ms
+2026-11-12T19:08:40.225999Z  INFO p2p_overlay::dht::lookup: [lookup-866e9dee] done target=1579411b closest=4 rpc=4 iter=2 dur=30ms
+2026-11-12T19:08:40.228429Z  INFO p2p_overlay::dht::lookup: [lookup-0e8788fa] done target=1579411b closest=4 rpc=4 iter=2 dur=33ms
