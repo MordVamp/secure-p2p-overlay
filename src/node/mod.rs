@@ -285,6 +285,21 @@ impl Node {
             });
         }
 
+        // ── звонки: тайм-аут вызова, отчёты получателя (и проверка туннеля), FEC под потери ─
+        {
+            let msgr = self.messenger.clone();
+            let mut rx = shutdown_rx.clone();
+            tokio::spawn(async move {
+                let mut t = tokio::time::interval(std::time::Duration::from_secs(5));
+                loop {
+                    tokio::select! {
+                        _ = t.tick() => msgr.call_housekeeping().await,
+                        _ = rx.changed() => break,
+                    }
+                }
+            });
+        }
+
         // ── §10.1: TTL-очистка хранилища и переопубликование своих записей; §13.2: неполные файлы ─
         {
             let dht = self.dht.clone();
@@ -297,7 +312,6 @@ impl Node {
                         _ = t.tick() => {
                             dht.store.evict_expired().await;
                             msgr.evict_stale_files().await;
-                            msgr.expire_calls().await;   // вызов без ответа 30 с; уборка старых звонков
                         }
                         _ = rx.changed() => break,
                     }

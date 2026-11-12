@@ -210,12 +210,7 @@ fun NodeScreen(vm: AppViewModel, onScan: () -> Unit, onInvite: (Invite) -> Unit)
                 bio = it; p.biometricLock = it
             }
             Text("Тема", color = P.Muted, fontSize = 13.sp)
-            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                listOf("system" to "Системная", "light" to "Светлая", "dark" to "Тёмная").forEachIndexed { i, (v, l) ->
-                    SegmentedButton(selected = vm.themePref == v, onClick = { vm.themePref = v; p.theme = v },
-                        shape = SegmentedButtonDefaults.itemShape(i, 3)) { Text(l) }
-                }
-            }
+            ThemePicker(vm.themePref) { vm.themePref = it; p.theme = it }
             Text("Ключ узла хранится зашифрованным (identity.key.enc), ключ шифрования — в Android Keystore. " +
                 "Локальный API узла закрыт токеном: другие приложения телефона не могут им воспользоваться.",
                 color = P.Muted, fontSize = 12.sp)

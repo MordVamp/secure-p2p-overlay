@@ -34,6 +34,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
@@ -106,7 +107,7 @@ fun ChatsList(vm: AppViewModel, onOpen: (String) -> Unit, onScan: () -> Unit) {
     var deleting by remember { mutableStateOf<String?>(null) }
     val chats = vm.chats()
     Scaffold(
-        containerColor = P.Rail,
+        containerColor = P.Screen,
         floatingActionButton = {
             Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 SmallFloatingActionButton(onClick = { newGroup = true }, containerColor = P.Card) {
@@ -316,9 +317,11 @@ fun Conversation(vm: AppViewModel, chat: String, onBack: () -> Unit) {
     }
     val name = vm.nameOf(chat)
     val typing = vm.typing.containsKey(chat)
+    val callWithMic = rememberWithMic { vm.startCall(it) }
     Scaffold(
         containerColor = P.Main,
         topBar = {
+            Column {
             TopAppBar(
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = P.Side),
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Назад") } },
@@ -342,6 +345,9 @@ fun Conversation(vm: AppViewModel, chat: String, onBack: () -> Unit) {
                     }
                 },
                 actions = {
+                    IconButton(onClick = { callWithMic(chat) }, enabled = !vm.callLive) {
+                        Icon(Icons.Filled.Call, if (group) "Групповой звонок" else "Позвонить", tint = if (vm.callLive) P.Muted else P.Accent)
+                    }
                     IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, "Меню") }
                     DropdownMenu(menu, { menu = false }) {
                         if (!group) {
@@ -360,6 +366,8 @@ fun Conversation(vm: AppViewModel, chat: String, onBack: () -> Unit) {
                     }
                 },
             )
+            Decor.TopEdge()
+            }
         },
         bottomBar = {
             Surface(color = P.Side) {
@@ -395,6 +403,7 @@ fun Conversation(vm: AppViewModel, chat: String, onBack: () -> Unit) {
             }
         },
     ) { pad ->
+        Box(Modifier.padding(pad).fillMaxSize()) { Decor.Backdrop(Modifier.matchParentSize()) }
         LazyColumn(
             Modifier.padding(pad).fillMaxSize().padding(horizontal = 10.dp), state = list,
             verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -432,7 +441,7 @@ private fun Bubble(vm: AppViewModel, m: ChatMsg, group: Boolean) {
             color = when { failed -> P.Red.copy(alpha = 0.25f); m.out -> P.AccentDim; else -> P.BubbleIn },
             shape = RoundedCornerShape(18.dp, 18.dp, if (m.out) 4.dp else 18.dp, if (m.out) 18.dp else 4.dp),
             shadowElevation = if (P.dark || m.out) 0.dp else 1.dp,
-            modifier = Modifier.widthIn(max = 300.dp),
+            modifier = with(Decor) { Modifier.bubbleDecor(m.out && !failed, m.key) }.widthIn(max = 300.dp),
         ) {
             Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
                 if (group && !m.out) Text(vm.nameOf(m.peer), color = colorFor(m.peer), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
@@ -441,7 +450,8 @@ private fun Bubble(vm: AppViewModel, m: ChatMsg, group: Boolean) {
                     Thumbnail(file) { openLocal(ctx, file) }
                     Spacer(Modifier.size(4.dp))
                     Text(file.name, fontSize = 12.sp, color = fg.copy(alpha = 0.75f))
-                } else Text(m.text, fontSize = 15.sp, color = fg)
+                } else Text(m.text, fontSize = 15.sp,
+                    color = if (m.status == "call_missed" || m.status == "call_rejected") (if (m.out) Color.White else P.Red) else fg)
                 Row(Modifier.align(Alignment.End), verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     val meta = buildString {
@@ -451,7 +461,7 @@ private fun Bubble(vm: AppViewModel, m: ChatMsg, group: Boolean) {
                         append(hhmm(m.ts))
                     }
                     Text(meta, fontSize = 11.sp, color = fg.copy(alpha = 0.65f))
-                    if (m.out) {
+                    if (m.out && !m.status.startsWith("call_")) {
                         val (icon, tint) = when {
                             m.readMs != null -> Icons.Filled.DoneAll to P.Read
                             m.status == "delivered" -> Icons.Filled.DoneAll to Color.White

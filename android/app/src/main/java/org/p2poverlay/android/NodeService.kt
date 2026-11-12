@@ -49,6 +49,12 @@ class NodeService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> { stopNode(); stopForeground(STOP_FOREGROUND_REMOVE); stopSelf(); return START_NOT_STICKY }
+            ACTION_CALL_REJECT -> {
+                val sid = intent.getStringExtra(EXTRA_SID).orEmpty()
+                getSystemService(NotificationManager::class.java).cancel(callNotifId(sid))
+                scope.launch { runCatching { NodeApi.of(this@NodeService).post("/api/call/reject", mapOf("call_id" to sid)) } }
+                return START_STICKY
+            }
             else -> {
                 startInForeground("Запуск узла…")
                 if (proc?.isAlive != true) scope.launch { startNode() }
@@ -193,6 +199,7 @@ class NodeService : Service() {
             val ev = r.optJSONArray("events") ?: continue
             for (i in 0 until ev.length()) {
                 val e = ev.getJSONObject(i)
+                if (e.optString("kind") == "call") { incomingCall(nm, prefs, e); continue }
                 if (e.optString("kind") != "message") continue
                 if (MainActivity.visible || !prefs.notifyMessages) continue
                 val peer = e.optString("peer")
@@ -213,6 +220,45 @@ class NodeService : Service() {
                     .build())
             }
         }
+    }
+
+    /**
+     * Входящий звонок: уведомление в стиле вызова (мелодия, «Ответить» / «Отклонить», на заблокированном
+     * экране — полноэкранный вызов). Когда звонок принят, отклонён или закончился — уведомление снимается.
+     */
+    private fun incomingCall(nm: NotificationManager, prefs: Prefs, e: org.json.JSONObject) {
+        val sid = e.optString("id")
+        val ringing = e.optString("state") == "ringing" && !e.optBoolean("outgoing")
+        if (!ringing) { nm.cancel(callNotifId(sid)); return }
+        val group = e.optJSONObject("group")
+        val peers = e.optJSONArray("peers")
+        val peer = group?.optString("initiator") ?: peers?.optJSONObject(0)?.optString("peer").orEmpty()
+        val who = prefs.contacts.firstOrNull { it.nodeId == peer }?.name ?: "${shortId(peer)}…"
+        val title = if (group != null) "${group.optString("name")} · $who" else who
+        val answer = PendingIntent.getActivity(this, sid.hashCode(),
+            Intent(this, MainActivity::class.java).putExtra(MainActivity.EXTRA_CALL, sid).putExtra(MainActivity.EXTRA_CALL_ACCEPT, true)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        val full = PendingIntent.getActivity(this, sid.hashCode() + 1,
+            Intent(this, MainActivity::class.java).putExtra(MainActivity.EXTRA_CALL, sid)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        val decline = PendingIntent.getService(this, sid.hashCode() + 2,
+            Intent(this, NodeService::class.java).setAction(ACTION_CALL_REJECT).putExtra(EXTRA_SID, sid),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        val person = androidx.core.app.Person.Builder().setName(title).setImportant(true).build()
+        nm.notify(callNotifId(sid), NotificationCompat.Builder(this, P2pApp.CH_CALL)
+            .setSmallIcon(R.drawable.ic_stat_node)
+            .setStyle(NotificationCompat.CallStyle.forIncomingCall(person, decline, answer))
+            .setContentTitle(title)
+            .setContentText(if (group != null) "Групповой звонок через оверлей" else "Звонок через оверлей · E2E")
+            .setCategory(NotificationCompat.CATEGORY_CALL)
+            .setPriority(NotificationCompat.PRIORITY_MAX)
+            .setFullScreenIntent(full, true)
+            .setContentIntent(full)
+            .setOngoing(true)
+            .setTimeoutAfter(35_000)
+            .build())
     }
 
     // ── смена сети: Wi-Fi ↔ мобильная, новый адрес — узел перезапускается с новым --advertise ──
@@ -257,6 +303,9 @@ class NodeService : Service() {
     companion object {
         const val ACTION_START = "start"
         const val ACTION_STOP = "stop"
+        const val ACTION_CALL_REJECT = "call_reject"
+        const val EXTRA_SID = "sid"
+        fun callNotifId(sid: String) = 1000 + (sid.hashCode() and 0xffff)
         private const val NOTIF_ID = 1
 
         private val _state = MutableStateFlow<RunState>(RunState.Stopped)

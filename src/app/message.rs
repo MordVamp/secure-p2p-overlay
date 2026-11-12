@@ -32,6 +32,9 @@ pub enum MessageKind {
     CallAnswer,
     CallReject,
     CallHangup,
+    /// Отчёт получателя о звонке (как RTCP RR): принято, потеряно, джиттер, буфер — каждые 5 с по обычному
+    /// пути с TUNNEL_ACK; заодно проверяет туннель (обрыв → перестроение, как у текста).
+    CallReport,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -66,6 +69,7 @@ impl MessageKind {
             MessageKind::FileOffer => 4, MessageKind::FileBlock => 5, MessageKind::FileAck => 6, MessageKind::FileDone => 7,
             MessageKind::Typing => 8, MessageKind::Read => 9, MessageKind::GroupText => 10, MessageKind::Probe => 11,
             MessageKind::CallOffer => 12, MessageKind::CallAnswer => 13, MessageKind::CallReject => 14, MessageKind::CallHangup => 15,
+            MessageKind::CallReport => 16,
         }
     }
 }

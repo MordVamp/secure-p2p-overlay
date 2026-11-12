@@ -1,0 +1,76 @@
+2026-11-12T09:45:21.336615Z  INFO p2p_overlay::identity::node_identity: Generating new identity in "logs/scenarios/voice_1794476721_7400/state0"
+2026-11-12T09:45:21.336781Z  INFO p2p_overlay::identity::node_identity: NodeID = eb11eb137e0e24dbc836aed31942c53101f5e5bea55411bff138e6fb06674f6f
+2026-11-12T09:45:21.337150Z  INFO p2p_overlay::rpc::pool: Соединения между узлами переиспользуются: туннели; DHT — соединение на каждый запрос (пул до 128, простой 30000 мс)
+2026-11-12T09:45:21.337410Z  INFO p2p_overlay::gui::http: GUI: http://127.0.0.1:7417/
+2026-11-12T09:45:21.337464Z  INFO p2p_overlay::node: Listening on 0.0.0.0:7400 NodeID=eb11eb13
+2026-11-12T09:45:21.341210Z  INFO p2p_overlay::dht::node: No bootstrap peers — running as seed node
+2026-11-12T09:45:21.341461Z  INFO p2p_overlay::dht::lookup: [lookup-ee045d9a] start target=14607280
+2026-11-12T09:45:21.341539Z  INFO p2p_overlay::dht::lookup: [lookup-ee045d9a] no initial candidates
+2026-11-12T09:45:21.341867Z  WARN p2p_overlay::node: NodeRecord: STORE: подтверждено 1 из 3 реплик, нужно ≥2
+2026-11-12T09:45:46.852618Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=2b42e868 hop=1/2 from=0170e74a@127.0.0.1:7410
+2026-11-12T09:45:53.373496Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=5cab8aea hop=1/2 from=904c69a7@127.0.0.1:7407
+2026-11-12T09:45:59.950518Z  INFO p2p_overlay::app::messenger: ← msg 75048031 from 75056ab9 kind=CallOffer
+2026-11-12T09:45:59.955417Z  INFO p2p_overlay::app::messenger::call_ops: 📞 входящий звонок от 75056ab9
+2026-11-12T09:45:59.956853Z  INFO p2p_overlay::dht::lookup: [lookup-6b49b716] start target=75056ab9
+2026-11-12T09:45:59.967882Z  INFO p2p_overlay::dht::lookup: [lookup-6b49b716] done target=75056ab9 closest=3 rpc=5 iter=2 dur=11ms
+2026-11-12T09:45:59.967992Z  INFO p2p_overlay::tunnel::manager: Building tunnel to 75056ab9
+2026-11-12T09:45:59.970068Z  INFO p2p_overlay::tunnel::builder: [tunnel-c8117a94] hop 0 confirmed: 79b892e3@127.0.0.1:7402
+2026-11-12T09:45:59.972222Z  INFO p2p_overlay::tunnel::builder: [tunnel-c8117a94] hop 1 confirmed: 680df8b2@127.0.0.1:7414
+2026-11-12T09:45:59.972267Z  INFO p2p_overlay::tunnel::session: [tunnel-c8117a94] Building → Active
+2026-11-12T09:45:59.972279Z  INFO p2p_overlay::tunnel::builder: [tunnel-c8117a94] ACTIVE — 2 hops [79b892e3 → 680df8b2 → 75056ab9], build took 4ms
+2026-11-12T09:45:59.984033Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=12ms
+2026-11-12T09:46:01.343707Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=1ms
+2026-11-12T09:46:02.152028Z  INFO p2p_overlay::app::messenger: ← msg 7257c7ad from 75056ab9 kind=CallReport
+2026-11-12T09:46:05.989612Z  INFO p2p_overlay::app::messenger: ← msg 00ef6861 from 75056ab9 kind=CallHangup
+2026-11-12T09:46:13.043479Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=a6a25573 hop=0/2 from=79b892e3@127.0.0.1:7402
+2026-11-12T09:46:19.579729Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=11013fe5 hop=0/2 from=fd0e978f@127.0.0.1:7405
+2026-11-12T09:46:19.596407Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=0c274cb3 hop=1/2 from=cfe0c638@127.0.0.1:7413
+2026-11-12T09:46:21.342576Z  INFO p2p_overlay::node: Bucket refresh: 4 targets
+2026-11-12T09:46:21.342683Z  INFO p2p_overlay::dht::lookup: [lookup-6460c938] start target=eb11eb13
+2026-11-12T09:46:21.342942Z  INFO p2p_overlay::dht::lookup: [lookup-235348e8] start target=eb11eb13
+2026-11-12T09:46:21.342996Z  INFO p2p_overlay::dht::lookup: [lookup-c09a2fbc] start target=eb11eb13
+2026-11-12T09:46:21.343120Z  INFO p2p_overlay::dht::lookup: [lookup-bfedbd49] start target=eb11eb13
+2026-11-12T09:46:21.359449Z  INFO p2p_overlay::dht::lookup: [lookup-6460c938] done target=eb11eb13 closest=3 rpc=3 iter=2 dur=17ms
+2026-11-12T09:46:21.359675Z  INFO p2p_overlay::dht::lookup: [lookup-c09a2fbc] done target=eb11eb13 closest=3 rpc=3 iter=2 dur=17ms
+2026-11-12T09:46:21.359801Z  INFO p2p_overlay::dht::lookup: [lookup-235348e8] done target=eb11eb13 closest=3 rpc=3 iter=2 dur=17ms
+2026-11-12T09:46:21.364534Z  INFO p2p_overlay::dht::lookup: [lookup-bfedbd49] done target=eb11eb13 closest=3 rpc=3 iter=2 dur=21ms
+2026-11-12T09:46:26.099764Z  INFO p2p_overlay::dht::lookup: [lookup-f9a6a1c8] start target=1808e8fd
+2026-11-12T09:46:26.111322Z  INFO p2p_overlay::dht::lookup: [lookup-f9a6a1c8] done target=1808e8fd closest=3 rpc=6 iter=3 dur=12ms
+2026-11-12T09:46:26.111448Z  INFO p2p_overlay::tunnel::manager: Building tunnel to 1808e8fd
+2026-11-12T09:46:26.113436Z  INFO p2p_overlay::tunnel::builder: [tunnel-7837bd02] hop 0 confirmed: 0d9588f0@127.0.0.1:7412
+2026-11-12T09:46:26.115051Z  INFO p2p_overlay::tunnel::builder: [tunnel-7837bd02] hop 1 confirmed: 0170e74a@127.0.0.1:7410
+2026-11-12T09:46:26.115078Z  INFO p2p_overlay::tunnel::session: [tunnel-7837bd02] Building → Active
+2026-11-12T09:46:26.115087Z  INFO p2p_overlay::tunnel::builder: [tunnel-7837bd02] ACTIVE — 2 hops [0d9588f0 → 0170e74a → 1808e8fd], build took 4ms
+2026-11-12T09:46:26.125276Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=10ms
+2026-11-12T09:46:26.144512Z  INFO p2p_overlay::app::messenger: ← msg f5654b96 from 1808e8fd kind=CallAnswer
+2026-11-12T09:46:26.145032Z  INFO p2p_overlay::app::messenger::call_ops: 📞 звонок с 1808e8fd принят
+2026-11-12T09:46:26.343384Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=1ms
+2026-11-12T09:46:28.087486Z  INFO p2p_overlay::app::messenger: ← msg 0dc68bed from 1808e8fd kind=CallReport
+2026-11-12T09:46:31.344016Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=2ms
+2026-11-12T09:46:32.138017Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=1ms
+2026-11-12T09:46:41.342823Z  INFO p2p_overlay::dht::lookup: [lookup-bb52eadf] start target=14607280
+2026-11-12T09:46:41.352568Z  INFO p2p_overlay::dht::lookup: [lookup-bb52eadf] done target=14607280 closest=3 rpc=6 iter=3 dur=10ms
+2026-11-12T09:46:45.992233Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=883d7acb hop=1/2 from=75056ab9@127.0.0.1:7403
+2026-11-12T09:46:52.585695Z  INFO p2p_overlay::app::messenger: ← msg fe62dab0 from 680df8b2 kind=CallOffer
+2026-11-12T09:46:52.585900Z  INFO p2p_overlay::app::messenger::call_ops: 📞 групповой звонок «сценарий» от 680df8b2
+2026-11-12T09:46:52.589567Z  INFO p2p_overlay::dht::lookup: [lookup-8baa3fc2] start target=680df8b2
+2026-11-12T09:46:52.604176Z  INFO p2p_overlay::dht::lookup: [lookup-8baa3fc2] done target=680df8b2 closest=3 rpc=5 iter=3 dur=15ms
+2026-11-12T09:46:52.604298Z  INFO p2p_overlay::tunnel::manager: Building tunnel to 680df8b2
+2026-11-12T09:46:52.604963Z  INFO p2p_overlay::tunnel::builder: [tunnel-c17cf3d8] hop 0 confirmed: 79b892e3@127.0.0.1:7402
+2026-11-12T09:46:52.607677Z  INFO p2p_overlay::tunnel::builder: [tunnel-c17cf3d8] hop 1 confirmed: 75056ab9@127.0.0.1:7403
+2026-11-12T09:46:52.607698Z  INFO p2p_overlay::tunnel::session: [tunnel-c17cf3d8] Building → Active
+2026-11-12T09:46:52.607706Z  INFO p2p_overlay::tunnel::builder: [tunnel-c17cf3d8] ACTIVE — 2 hops [79b892e3 → 75056ab9 → 680df8b2], build took 3ms
+2026-11-12T09:46:52.610890Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=3ms
+2026-11-12T09:46:52.615531Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=3ms
+2026-11-12T09:46:52.621865Z  INFO p2p_overlay::app::messenger: ← msg f0404b8c from 1808e8fd kind=CallAnswer
+2026-11-12T09:46:52.622420Z  INFO p2p_overlay::app::messenger::call_ops: 📞 звонок с 1808e8fd принят
+2026-11-12T09:46:53.088203Z  INFO p2p_overlay::app::messenger: ← msg 07fd531d from 1808e8fd kind=CallReport
+2026-11-12T09:46:53.865695Z  INFO p2p_overlay::app::messenger: ← msg 19f86c2f from 680df8b2 kind=CallReport
+2026-11-12T09:46:56.344183Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=1ms
+2026-11-12T09:46:56.344426Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=2ms
+2026-11-12T09:46:58.088621Z  INFO p2p_overlay::app::messenger: ← msg edd29ead from 1808e8fd kind=CallReport
+2026-11-12T09:46:58.626861Z  INFO p2p_overlay::app::messenger: ← msg b783aa1b from 680df8b2 kind=CallHangup
+2026-11-12T09:46:58.629446Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=2ms
+2026-11-12T09:46:58.631200Z  INFO p2p_overlay::app::messenger: ← msg 49007131 from 1808e8fd kind=CallHangup
+2026-11-12T09:46:59.162191Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=1bdb4991 hop=1/2 from=79b892e3@127.0.0.1:7402
+2026-11-12T09:46:59.205647Z  INFO p2p_overlay::rpc: ← TUNNEL_BUILD id=4f3daa96 hop=1/2 from=03df7210@127.0.0.1:7406

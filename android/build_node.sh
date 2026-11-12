@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Кросс-компиляция узла p2p-node под Android и укладка в APK как libp2pnode.so.
 #
-# Нужно: Android NDK (ANDROID_NDK_HOME или $ANDROID_HOME/ndk/<версия>) и Rust-цели
+# Нужно: Android NDK (ANDROID_NDK_HOME или $ANDROID_HOME/ndk/<версия>), CMake (+ ninja или make) и Rust-цели
 #   rustup target add aarch64-linux-android x86_64-linux-android
 # Использование: android/build_node.sh [release|debug] [abi…]   (по умолчанию release, arm64-v8a x86_64)
 set -euo pipefail
@@ -30,6 +30,13 @@ for abi in "${ABIS[@]}"; do
   export "CARGO_TARGET_${TU}_LINKER=$TC/${T}${API}-clang"
   export "CC_${T//-/_}=$TC/${T}${API}-clang"
   export "AR_${T//-/_}=$TC/llvm-ar"
+  # libopus (звонки) собирается из исходников крейтом audiopus_sys через CMake: тулчейн NDK с нужным ABI
+  # (сам тулчейн NDK по умолчанию берёт armeabi-v7a), статическая сборка, генератор Ninja
+  tcf=target/android-$abi.cmake
+  mkdir -p target
+  printf 'set(ANDROID_ABI %s)\nset(ANDROID_PLATFORM %s)\ninclude(%s/build/cmake/android.toolchain.cmake)\n' "$abi" "$API" "$NDK" > "$tcf"
+  export CMAKE_TOOLCHAIN_FILE="$PWD/$tcf" LIBOPUS_STATIC=1 CMAKE_POLICY_VERSION_MINIMUM=3.5
+  command -v ninja >/dev/null && export CMAKE_GENERATOR=Ninja
   echo "== $abi ($T, $PROFILE)"
   flag=(); [ "$PROFILE" = release ] && flag=(--release)
   "$CARGO" build "${flag[@]}" --target "$T" --bin p2p-node

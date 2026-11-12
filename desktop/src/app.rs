@@ -47,6 +47,9 @@ enum Msg {
     FileSent { name: String, res: Result<Value, String> },
     Safety { peer: String, res: Result<Value, String> },
     Deleted { peer: String, res: Result<Value, String> },
+    /// `/api/calls`: сеансы звонков (опрос 0,4 с).
+    Calls(Value),
+    CallDone { what: String, res: Result<Value, String> },
 }
 
 struct ChatMsg {
@@ -127,6 +130,12 @@ pub struct App {
     typing_sent: HashMap<String, Instant>,
     safety: Option<(String, Result<Value, String>)>,
     confirm_delete: Option<String>,
+    /// Звонки: сеансы от узла, звук текущего звонка, для какого сеанса он запущен.
+    calls: Value,
+    call_audio: Option<crate::voice::CallAudio>,
+    call_sid: Option<String>,
+    call_err: Option<String>,
+    call_attention: Option<String>,
 }
 
 fn now_ms() -> u64 { SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0) }
@@ -140,6 +149,20 @@ fn tz_offset_s() -> i64 {
     let h: i64 = s[1..3].parse().unwrap_or(0);
     let m: i64 = s[3..5].parse().unwrap_or(0);
     sign * (h * 3600 + m * 60)
+}
+
+fn hex_bytes(h: &str) -> Vec<u8> {
+    (0..h.len() / 2).filter_map(|i| u8::from_str_radix(&h[2 * i..2 * i + 2], 16).ok()).collect()
+}
+
+/// «Вызов…», «Соединение…» или длительность разговора.
+fn call_status(s: &Value) -> String {
+    match (s["state"].as_str(), s["duration_s"].as_u64()) {
+        (Some("ringing"), _) => "вызов…".into(),
+        (Some("ended"), _) => "завершён".into(),
+        (_, Some(d)) => format!("{}:{:02}", d / 60, d % 60),
+        _ => "соединение…".into(),
+    }
 }
 
 fn ms(v: Option<u64>) -> String { v.map(|x| format!("{x} мс")).unwrap_or_else(|| "—".into()) }
@@ -169,6 +192,7 @@ impl App {
             c_name: String::new(), c_id: String::new(), alias_in: String::new(), j_filter: 0,
             files: Value::Null, relays: Value::Null, f_target: String::new(), f_path: String::new(), f_sending: vec![],
             groups: HashMap::new(), reported: Default::default(), typing_sent: HashMap::new(), safety: None, confirm_delete: None,
+            calls: Value::Null, call_audio: None, call_sid: None, call_err: None, call_attention: None,
         };
         if app.s.mode == Mode::Attach || app.s.autostart { app.connect(); }
         app
@@ -299,6 +323,8 @@ impl App {
                     }
                     Err(e) => self.toast(e, RED),
                 },
+                Msg::Calls(v) => { self.calls = v; self.sync_call_audio(); }
+                Msg::CallDone { what, res } => if let Err(e) = api::ok(res) { self.toast(format!("{what}: {e}"), RED); },
                 Msg::Alias { name, res } => match api::ok(res) {
                     Ok(v) => {
                         self.toast(format!("Псевдоним @{name} опубликован ({} реплик)", api::s(&v, "stored_on")), GREEN);
@@ -465,6 +491,20 @@ impl App {
 }
 
 fn spawn_poller(port: Arc<AtomicU16>, tx: Sender<Msg>, ctx: egui::Context) {
+    // звонки — отдельно и чаще: входящий вызов, длительность, кто говорит
+    {
+        let (port, tx, ctx) = (port.clone(), tx.clone(), ctx.clone());
+        std::thread::spawn(move || loop {
+            let p = port.load(Ordering::Relaxed);
+            if p != 0 {
+                if let Ok(v) = api::call(p, "GET", "/api/calls", &[], Duration::from_secs(3)) {
+                    if tx.send(Msg::Calls(v)).is_err() { break; }
+                    ctx.request_repaint();
+                }
+            }
+            std::thread::sleep(Duration::from_millis(400));
+        });
+    }
     std::thread::spawn(move || loop {
         let p = port.load(Ordering::Relaxed);
         if p != 0 {
@@ -510,6 +550,7 @@ impl eframe::App for App {
             }
         }
         self.rail(ctx);
+        self.call_banner(ctx);
         match self.tab {
             Tab::Chats => self.chats_tab(ctx),
             tab => {
@@ -705,6 +746,12 @@ impl App {
                             }
                             if ui.button("Маршрут").on_hover_text("Цепочка ретрансляторов текущего туннеля").clicked() {
                                 self.request_route(peer.clone());
+                            }
+                        }
+                        if self.feature("calls") {
+                            let live = self.live_call().is_some();
+                            if ui.add_enabled(!live, primary("📞")).on_hover_text(if Self::is_group(&peer) { "Групповой звонок" } else { "Позвонить" }).clicked() {
+                                self.start_call(peer.clone());
                             }
                         }
                         if ui.button("📋").on_hover_text("Скопировать NodeID").clicked() {
@@ -1048,41 +1095,219 @@ impl App {
         });
     }
 
-    fn calls_tab(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Звонки");
-        ui.add_space(10.0);
-        self.coming_soon(ui, "calls", "📞 Голосовые звонки — запланированы",
-            "Групповой звонок 3–5 узлов в LAN: состав звонка — подписанная DHT-запись, сигнализация INVITE / ACCEPT / BYE \
-             по защищённому каналу, ключ звонка передаётся каждому участнику E2E, инициатор — временный SFU.");
-        ui.add_enabled_ui(false, |ui| {
-            card(ui, |ui| {
-                section_title(ui, "Участники");
-                let people: Vec<(String, String)> = self.s.contacts.iter().take(4)
-                    .map(|c| (c.node_id.clone(), c.name.clone())).collect();
-                ui.horizontal_wrapped(|ui| {
-                    let me = self.my_id();
-                    let mut tiles = vec![(if me.is_empty() { "me".into() } else { me }, "Вы".to_owned())];
-                    tiles.extend(people);
-                    for (id, name) in tiles {
-                        egui::Frame::default().fill(BG_MAIN).corner_radius(CornerRadius::same(14)).inner_margin(Margin::same(16))
-                            .show(ui, |ui| {
-                                ui.set_width(150.0);
-                                ui.vertical_centered(|ui| {
-                                    theme::avatar(ui, &id, &name, 64.0);
-                                    ui.label(RichText::new(&name).strong());
-                                    ui.label(RichText::new("🔇 не в звонке").size(12.0).color(MUTED));
-                                });
-                            });
-                    }
+    // ── Звонки ─────────────────────────────────────────────────────────────
+
+    /// Текущий сеанс (вызов или разговор).
+    fn live_call(&self) -> Option<Value> {
+        self.calls["sessions"].as_array()?.iter().find(|s| s["state"] != "ended").cloned()
+    }
+
+    fn call_title(&self, s: &Value) -> String {
+        match s["group"].as_object() {
+            Some(g) => format!("👥 {}", g.get("name").and_then(Value::as_str).unwrap_or("Групповой звонок")),
+            None => self.display_name(&api::s(&s["peers"][0], "peer")),
+        }
+    }
+
+    /// Звук включается, когда звонок наш (исходящий или принятый), и выключается по его окончании.
+    fn sync_call_audio(&mut self) {
+        let want = self.live_call().filter(|s| !(s["state"] == "ringing" && s["outgoing"] != true)).map(|s| api::s(&s, "id"));
+        if want == self.call_sid { return; }
+        self.call_audio = None;
+        self.call_sid = want.clone();
+        self.call_err = None;
+        let Some(_) = want else { return };
+        let p = self.port.load(Ordering::Relaxed);
+        match api::ok(api::get(p, "/api/call/audio", &[])) {
+            Ok(v) => {
+                let token = hex_bytes(&api::s(&v, "token"));
+                match crate::voice::CallAudio::start(api::u(&v, "port").unwrap_or(0) as u16, token) {
+                    Ok(a) => self.call_audio = Some(a),
+                    Err(e) => { self.call_err = Some(e.clone()); self.toast(format!("Звук: {e}"), RED); }
+                }
+            }
+            Err(e) => self.call_err = Some(e),
+        }
+    }
+
+    fn start_call(&mut self, peer: String) {
+        let me = self.my_id();
+        let group = self.groups.get(&peer).cloned();
+        self.tab = Tab::Calls;
+        self.bg(move |p| {
+            let res = match group {
+                Some((name, members)) => {
+                    let m: Vec<String> = members.into_iter().filter(|x| *x != me).collect();
+                    let gid = peer.trim_start_matches("g:").to_owned();
+                    api::call(p, "POST", "/api/call/start", &[("members", &m.join(",")), ("name", &name), ("chat", &gid)], Duration::from_secs(60))
+                }
+                None => api::call(p, "POST", "/api/call/start", &[("target", &peer)], Duration::from_secs(60)),
+            };
+            Msg::CallDone { what: "Звонок".into(), res }
+        });
+    }
+
+    fn call_action(&self, path: &'static str, sid: String) {
+        self.bg(move |p| {
+            let res = api::call(p, "POST", path, &[("call_id", &sid)], Duration::from_secs(60));
+            Msg::CallDone { what: "Звонок".into(), res }
+        });
+    }
+
+    /// Полоса над окном: входящий вызов (ответить / отклонить) или идущий звонок вне вкладки «Звонки».
+    fn call_banner(&mut self, ctx: &egui::Context) {
+        let Some(s) = self.live_call() else { return };
+        let sid = api::s(&s, "id");
+        let incoming = s["state"] == "ringing" && s["outgoing"] != true;
+        if !incoming && self.tab == Tab::Calls { return; }
+        if incoming && self.call_attention.as_deref() != Some(sid.as_str()) {
+            self.call_attention = Some(sid.clone());
+            ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(egui::UserAttentionType::Critical));
+        }
+        let fill = if incoming { ACCENT_DIM } else { GREEN.gamma_multiply(0.75) };
+        egui::TopBottomPanel::top("call_banner").frame(egui::Frame::default().fill(fill).inner_margin(Margin::symmetric(18, 10)))
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("📞").size(20.0));
+                    let title = self.call_title(&s);
+                    let what = if incoming {
+                        if s["group"].is_object() { "входящий групповой звонок".to_owned() } else { "входящий звонок".to_owned() }
+                    } else { call_status(&s) };
+                    ui.label(RichText::new(format!("{title} — {what}")).size(15.0).strong().color(Color32::WHITE));
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if incoming {
+                            if ui.add(danger("Отклонить")).clicked() { self.call_action("/api/call/reject", sid.clone()); }
+                            if ui.add(egui::Button::new(RichText::new("Ответить").color(Color32::WHITE)).fill(GREEN)).clicked() {
+                                self.call_action("/api/call/accept", sid.clone());
+                                self.tab = Tab::Calls;
+                            }
+                        } else {
+                            if ui.add(danger("Завершить")).clicked() { self.call_action("/api/call/hangup", sid.clone()); }
+                            if ui.button("Открыть").clicked() { self.tab = Tab::Calls; }
+                        }
+                    });
                 });
             });
-            ui.add_space(12.0);
+    }
+
+    fn calls_tab(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Звонки");
+        ui.label(RichText::new("Голос идёт через туннель из ≥2 ретрансляторов: Opus 16 кГц, свой ключ на каждый звонок (X25519 → \
+                                AES-256-GCM), кадры без подтверждений; групповой — «каждый с каждым», до 5 участников.").color(MUTED));
+        ui.add_space(10.0);
+        if !self.connected() { self.not_connected_hint(ui); return; }
+        if !self.feature("calls") {
+            self.coming_soon(ui, "calls", "📞 Звонки", "Подключённый узел звонки не поддерживает — обновите p2p-node.");
+            return;
+        }
+        match self.live_call() {
+            Some(s) => self.call_view(ui, &s),
+            None => self.call_start_view(ui),
+        }
+    }
+
+    fn call_view(&mut self, ui: &mut egui::Ui, s: &Value) {
+        let sid = api::s(s, "id");
+        let incoming = s["state"] == "ringing" && s["outgoing"] != true;
+        card(ui, |ui| {
             ui.horizontal(|ui| {
-                let _ = ui.add_sized([170.0, 44.0], primary("📞 Начать звонок"));
-                let _ = ui.add_sized([140.0, 44.0], egui::Button::new("🔇 Микрофон"));
-                let _ = ui.add_sized([140.0, 44.0], egui::Button::new("🔊 Звук"));
-                let _ = ui.add_sized([150.0, 44.0], danger("⛔ Завершить"));
+                ui.label(RichText::new(self.call_title(s)).size(22.0).strong());
+                theme::pill(ui, &call_status(s), if s["state"] == "active" { GREEN } else { YELLOW });
+                if let Some(m) = s["mos"].as_f64() {
+                    theme::pill_resp(ui, &format!("MOS {m:.1}"), if m >= 4.0 { GREEN } else if m >= 3.6 { YELLOW } else { RED })
+                        .on_hover_text("Оценка качества по E-модели ITU-T G.107: задержка «рот — ухо» и слышимые потери");
+                }
             });
+            ui.add_space(12.0);
+            let me = self.my_id();
+            let mut tiles: Vec<(String, String, f32, String, Value)> = vec![(me.clone(), "Вы".into(),
+                self.call_audio.as_ref().map_or(0.0, |a| a.level()), "active".into(), Value::Null)];
+            for p in s["peers"].as_array().cloned().unwrap_or_default() {
+                if p["state"] == "ended" && s["state"] != "ended" { continue; }
+                let id = api::s(&p, "peer");
+                tiles.push((id.clone(), self.display_name(&id), p["level"].as_f64().unwrap_or(0.0) as f32, api::s(&p, "state"), p["quality"].clone()));
+            }
+            ui.horizontal_wrapped(|ui| {
+                for (id, name, level, st, q) in tiles {
+                    let speaking = level > 0.02;
+                    egui::Frame::default().fill(BG_MAIN).corner_radius(CornerRadius::same(14)).inner_margin(Margin::same(16))
+                        .stroke(Stroke::new(if speaking { 3.0_f32 } else { 1.0_f32 }, if speaking { GREEN } else { BG_RAIL }))
+                        .show(ui, |ui| {
+                            ui.set_width(160.0);
+                            ui.vertical_centered(|ui| {
+                                theme::avatar(ui, &id, &name, 64.0);
+                                ui.label(RichText::new(&name).strong());
+                                let sub = match st.as_str() {
+                                    "ringing" => "вызов…".to_owned(),
+                                    _ if id == me => if self.call_audio.as_ref().is_some_and(|a| a.muted.load(Ordering::Relaxed)) { "🔇 микрофон выкл.".into() } else { "🎤".into() },
+                                    _ => match (q["mouth_to_ear_ms"].as_f64(), q["loss_audible_pct"].as_f64()) {
+                                        (Some(d), Some(l)) => format!("{d:.0} мс · потери {l:.1}%"),
+                                        _ => "соединение…".into(),
+                                    },
+                                };
+                                ui.label(RichText::new(sub).size(12.0).color(MUTED));
+                            });
+                        });
+                }
+            });
+        });
+        ui.add_space(12.0);
+        ui.horizontal(|ui| {
+            if incoming {
+                if ui.add_sized([170.0, 44.0], egui::Button::new(RichText::new("📞 Ответить").color(Color32::WHITE)).fill(GREEN)).clicked() {
+                    self.call_action("/api/call/accept", sid.clone());
+                }
+                if ui.add_sized([150.0, 44.0], danger("Отклонить")).clicked() { self.call_action("/api/call/reject", sid.clone()); }
+            } else {
+                if let Some(a) = &self.call_audio {
+                    let m = a.muted.load(Ordering::Relaxed);
+                    if ui.add_sized([150.0, 44.0], egui::Button::new(if m { "🔇 Включить микрофон" } else { "🎤 Выключить микрофон" })).clicked() {
+                        a.muted.store(!m, Ordering::Relaxed);
+                    }
+                }
+                if ui.add_sized([150.0, 44.0], danger("⛔ Завершить")).clicked() { self.call_action("/api/call/hangup", sid.clone()); }
+            }
+        });
+        if let Some(a) = &self.call_audio { ui.label(RichText::new(&a.devices).size(12.0).color(MUTED)); }
+        if let Some(e) = &self.call_err { ui.label(RichText::new(format!("Звук: {e}")).color(RED)); }
+    }
+
+    fn call_start_view(&mut self, ui: &mut egui::Ui) {
+        let mut call = None;
+        card(ui, |ui| {
+            section_title(ui, "Позвонить");
+            let mut targets: Vec<(String, String)> = self.s.contacts.iter().map(|c| (c.node_id.clone(), c.name.clone())).collect();
+            for (g, (name, members)) in &self.groups {
+                if members.len() <= 5 { targets.push((g.clone(), format!("👥 {name} ({})", members.len()))); }
+            }
+            if targets.is_empty() { ui.label(RichText::new("Нет контактов и групп — добавьте собеседника на вкладке «Контакты».").color(MUTED)); }
+            for (id, name) in targets {
+                ui.horizontal(|ui| {
+                    theme::avatar(ui, &id, &name, 32.0);
+                    ui.label(RichText::new(&name).strong());
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if ui.add(primary("📞 Позвонить")).clicked() { call = Some(id.clone()); }
+                    });
+                });
+            }
+        });
+        if let Some(id) = call { self.start_call(id); }
+        ui.add_space(12.0);
+        card(ui, |ui| {
+            section_title(ui, "Недавние звонки");
+            let recent: Vec<&Value> = self.history.iter().rev().filter(|e| api::s(e, "status").starts_with("call_")).take(15).collect();
+            if recent.is_empty() { ui.label(RichText::new("звонков пока не было").color(MUTED)); }
+            for e in recent {
+                ui.horizontal(|ui| {
+                    let c = match api::s(e, "status").as_str() { "call_ended" => GREEN, "call_missed" => RED, _ => YELLOW };
+                    ui.label(RichText::new(if api::s(e, "dir") == "out" { "↗" } else { "↘" }).color(c));
+                    ui.label(api::s(e, "text"));
+                    ui.label(RichText::new(self.display_name(&api::s(e, "peer"))).color(MUTED));
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        ui.label(RichText::new(self.time(api::u(e, "ts_ms").unwrap_or(0))).size(12.0).color(MUTED));
+                    });
+                });
+            }
         });
     }
 

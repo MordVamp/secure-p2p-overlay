@@ -76,6 +76,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     val sentDir: File get() = File(getApplication<Application>().filesDir, "sent").apply { mkdirs() }
 
+    /** Текущий сеанс звонка (JSON из /api/calls → sessions); после завершения виден ещё 2,5 с. */
+    var call by mutableStateOf<JSONObject?>(null); private set
+    var callMinimized by mutableStateOf(false)
+    var muted by mutableStateOf(false); private set
+    var speaker by mutableStateOf(false); private set
+    private var callEndedAt = 0L
+
     init {
         if (prefs.autostart && runState.value is RunState.Stopped) NodeService.start(app)
         // сводка сети — редкий опрос (интервал по режиму)
@@ -117,10 +124,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         "message" -> { typing.remove(e.optString("peer")); hist = true }
                         "status", "read", "history" -> hist = true
                         "file" -> { files = true; hist = true }
+                        "call" -> { refreshCalls(); hist = true }
                     }
                 }
                 if (hist) refreshHistory()
                 if (files) refreshFiles()
+            }
+        }
+        // идёт звонок — состояние, длительность, громкость участников и качество (каждые 0,5 с)
+        viewModelScope.launch {
+            while (true) {
+                if (call != null && runState.value is RunState.Running) refreshCalls()
+                delay(if (call != null) 500 else 2000)
             }
         }
         // «печатает» гаснет само
@@ -360,6 +375,83 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             refreshHistory()
         }
     }
+
+    // ── звонки ───────────────────────────────────────────────────────────
+
+    // состояние звонка объявлено до init: его читает цикл опроса
+
+    val callLive: Boolean get() = call?.optString("state").let { it == "ringing" || it == "active" }
+
+    suspend fun refreshCalls() {
+        val arr = runCatching { api.get("/api/calls").optJSONArray("sessions") }.getOrNull() ?: return
+        val list = (0 until arr.length()).map { arr.getJSONObject(it) }
+        val live = list.firstOrNull { it.optString("state") != "ended" }
+        val now = System.currentTimeMillis()
+        if (live != null) {
+            if (call?.optString("id") != live.optString("id")) { callMinimized = false; muted = false; CallService.setMuted(false) }
+            call = live; callEndedAt = 0
+            return
+        }
+        val c = call ?: return
+        if (callEndedAt == 0L) {
+            callEndedAt = now
+            call = list.firstOrNull { it.optString("id") == c.optString("id") } ?: JSONObject(c.toString()).put("state", "ended")
+        } else if (now - callEndedAt > 2500) { call = null; callEndedAt = 0; callMinimized = false }
+    }
+
+    /** Название звонка: собеседник или «группа · кто звонит». */
+    fun callTitle(c: JSONObject): String {
+        val g = c.optJSONObject("group") ?: return nameOf(c.optJSONArray("peers")?.optJSONObject(0)?.optString("peer").orEmpty())
+        return g.optString("name", "Групповой звонок")
+    }
+
+    fun startCall(chat: String) {
+        if (callLive) { toast("Уже идёт звонок"); return }
+        viewModelScope.launch {
+            val r = runCatching {
+                if (isGroup(chat)) {
+                    val g = groups()[chat.removePrefix("g:")] ?: error("группа не найдена")
+                    api.post("/api/call/start", mapOf("members" to g.members.filter { it != myId }.joinToString(","),
+                        "name" to g.name, "chat" to g.id), timeoutMs = 60_000)
+                } else api.post("/api/call/start", mapOf("target" to chat), timeoutMs = 60_000)
+            }
+            r.onSuccess {
+                if (it.optBoolean("ok")) {
+                    CallService.start(getApplication(), it.optString("call_id"), nameOf(chat))
+                    refreshCalls()
+                } else toast("Звонок не удался: ${it.optString("error")}")
+            }.onFailure { toast("Ошибка: ${it.message}") }
+        }
+    }
+
+    /** Убрать уведомление о входящем звонке (ответ, отказ или завершение — из приложения). */
+    private fun clearIncoming(sid: String) =
+        getApplication<Application>().getSystemService(android.app.NotificationManager::class.java)
+            .cancel(NodeService.callNotifId(sid))
+
+    fun acceptCall(sid: String) {
+        clearIncoming(sid)
+        viewModelScope.launch {
+            val title = call?.let { callTitle(it) } ?: "Звонок"
+            runCatching { api.post("/api/call/accept", mapOf("call_id" to sid), timeoutMs = 60_000) }
+                .onSuccess {
+                    if (it.optBoolean("ok")) CallService.start(getApplication(), sid, title)
+                    else toast("Не удалось ответить: ${it.optString("error")}")
+                }.onFailure { toast("Ошибка: ${it.message}") }
+            refreshCalls()
+        }
+    }
+
+    fun endCall(sid: String, reject: Boolean = false) {
+        clearIncoming(sid)
+        viewModelScope.launch {
+            runCatching { api.post(if (reject) "/api/call/reject" else "/api/call/hangup", mapOf("call_id" to sid)) }
+            refreshCalls()
+        }
+    }
+
+    fun toggleMute() { muted = !muted; CallService.setMuted(muted) }
+    fun toggleSpeaker() { speaker = !speaker; CallService.setSpeaker(speaker) }
 
     // ── безопасность ─────────────────────────────────────────────────────
 

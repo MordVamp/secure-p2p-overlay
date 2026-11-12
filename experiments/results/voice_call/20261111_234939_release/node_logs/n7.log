@@ -1,0 +1,38 @@
+2026-11-11T20:49:40.630748Z  INFO p2p_overlay::identity::node_identity: Generating new identity in "logs/scenarios/voice_1794430179_7400/state7"
+2026-11-11T20:49:40.630916Z  INFO p2p_overlay::identity::node_identity: NodeID = 11fb33f2744bded6a47a30efaecf8b15b5af941c74cea72c60e299e2c8d3cc60
+2026-11-11T20:49:40.631274Z  INFO p2p_overlay::rpc::pool: Соединения между узлами переиспользуются: туннели; DHT — соединение на каждый запрос (пул до 128, простой 30000 мс)
+2026-11-11T20:49:40.631492Z  INFO p2p_overlay::node: Listening on 0.0.0.0:7407 NodeID=11fb33f2
+2026-11-11T20:49:40.631763Z  INFO p2p_overlay::dht::node: Bootstrap: connecting to 1 peers
+2026-11-11T20:49:40.632348Z  INFO p2p_overlay::gui::http: GUI: http://127.0.0.1:7424/
+2026-11-11T20:49:40.634421Z  INFO p2p_overlay::rpc: PONG from 7cd679ee@127.0.0.1:7400 rtt=3ms
+2026-11-11T20:49:40.634631Z  INFO p2p_overlay::dht::node: Bootstrap peer 127.0.0.1:7400 (7cd679ee) reachable, NodeID=7cd679ee4baf4ac64bb85d7a5506ae33f34915624890a67170d31ae9ce29b057
+2026-11-11T20:49:40.634717Z  INFO p2p_overlay::dht::node: Starting self-lookup NodeID=11fb33f2
+2026-11-11T20:49:40.634796Z  INFO p2p_overlay::dht::lookup: [lookup-19062e2b] start target=11fb33f2
+2026-11-11T20:49:40.646007Z  INFO p2p_overlay::dht::lookup: [lookup-19062e2b] done target=11fb33f2 closest=3 rpc=3 iter=3 dur=12ms
+2026-11-11T20:49:40.646443Z  INFO p2p_overlay::dht::node: Self-lookup done: 3 closest contacts, 3 RPC, 3 iter, 12ms
+2026-11-11T20:49:40.646515Z  INFO p2p_overlay::dht::node: Routing table: 3 contacts in 2 non-empty buckets
+2026-11-11T20:49:40.646697Z  INFO p2p_overlay::dht::lookup: [lookup-b75b1900] start target=79b70789
+2026-11-11T20:49:40.666228Z  INFO p2p_overlay::dht::lookup: [lookup-b75b1900] done target=79b70789 closest=3 rpc=4 iter=2 dur=20ms
+2026-11-11T20:49:40.673155Z  INFO p2p_overlay::node: NodeRecord опубликован на 4 репликах
+2026-11-11T20:50:11.130152Z  INFO p2p_overlay::dht::lookup: [lookup-39e9c076] start target=ea39588a
+2026-11-11T20:50:11.152173Z  INFO p2p_overlay::dht::lookup: [lookup-39e9c076] done target=ea39588a closest=3 rpc=8 iter=3 dur=22ms
+2026-11-11T20:50:11.152285Z  INFO p2p_overlay::tunnel::manager: Building tunnel to ea39588a
+2026-11-11T20:50:11.154380Z  INFO p2p_overlay::tunnel::builder: [tunnel-755940ea] hop 0 confirmed: eb8d7dfc@127.0.0.1:7411
+2026-11-11T20:50:11.159879Z  INFO p2p_overlay::tunnel::builder: [tunnel-755940ea] hop 1 confirmed: ef6565b7@127.0.0.1:7408
+2026-11-11T20:50:11.159923Z  INFO p2p_overlay::tunnel::session: [tunnel-755940ea] Building → Active
+2026-11-11T20:50:11.159944Z  INFO p2p_overlay::tunnel::builder: [tunnel-755940ea] ACTIVE — 2 hops [eb8d7dfc → ef6565b7 → ea39588a], build took 7ms
+2026-11-11T20:50:11.160799Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=0ms
+2026-11-11T20:50:11.192885Z  INFO p2p_overlay::app::messenger: ← msg 27d57909 from ea39588a kind=CallAnswer
+2026-11-11T20:50:11.193561Z  INFO p2p_overlay::app::messenger::call_ops: 📞 звонок с ea39588a принят
+2026-11-11T20:50:15.320544Z  INFO p2p_overlay::app::messenger: ← msg 12310f62 from ea39588a kind=CallReport
+2026-11-11T20:50:15.633750Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=1ms
+2026-11-11T20:50:17.192665Z  INFO p2p_overlay::tunnel::forwarder: TUNNEL_DATA sent: 1 segments, avg_rtt=3ms
+2026-11-11T20:50:40.632590Z  INFO p2p_overlay::node: Bucket refresh: 4 targets
+2026-11-11T20:50:40.632651Z  INFO p2p_overlay::dht::lookup: [lookup-40194430] start target=11fb33f2
+2026-11-11T20:50:40.632873Z  INFO p2p_overlay::dht::lookup: [lookup-5e27173b] start target=11fb33f2
+2026-11-11T20:50:40.632987Z  INFO p2p_overlay::dht::lookup: [lookup-6e858320] start target=11fb33f2
+2026-11-11T20:50:40.633105Z  INFO p2p_overlay::dht::lookup: [lookup-0172a115] start target=11fb33f2
+2026-11-11T20:50:40.650749Z  INFO p2p_overlay::dht::lookup: [lookup-40194430] done target=11fb33f2 closest=3 rpc=3 iter=2 dur=18ms
+2026-11-11T20:50:40.651262Z  INFO p2p_overlay::dht::lookup: [lookup-0172a115] done target=11fb33f2 closest=3 rpc=3 iter=2 dur=18ms
+2026-11-11T20:50:40.651437Z  INFO p2p_overlay::dht::lookup: [lookup-6e858320] done target=11fb33f2 closest=3 rpc=3 iter=2 dur=19ms
+2026-11-11T20:50:40.651921Z  INFO p2p_overlay::dht::lookup: [lookup-5e27173b] done target=11fb33f2 closest=3 rpc=3 iter=2 dur=19ms

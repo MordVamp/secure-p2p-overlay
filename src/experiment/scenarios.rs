@@ -50,6 +50,7 @@ pub async fn run(which: &str, a: &Args) -> Result<bool> {
             "underlay" => sunderlay(a).await?,
             "media" => smedia(a).await?,
             "call" => scall(a).await?,
+            "voice" => svoice(a).await?,
             other => bail!("неизвестный сценарий {other}; есть 01–09, pcap, channel, files, failover, strategy, media, call, 10, underlay, all"),
         };
     }
@@ -834,6 +835,124 @@ async fn scall(a: &Args) -> Result<bool> {
                  a.nodes, if cfg!(debug_assertions) { "debug" } else { "release" },
                  fmt(&setup), fmt(&ow), fmt(&ow_p95), fmt(&jit), fmt(&loss)))?;
     Ok(ok)
+}
+
+// ── voice: звук звонка целиком — Opus, джиттер-буфер, смешивание; 1:1 и групповой (шаги 5–10 плана) ──
+
+async fn call_session(net: &Net, i: usize, sid: &str) -> Value {
+    let v = net.api(i, "GET", "/api/calls", &[]).await.unwrap_or_default();
+    v["sessions"].as_array().and_then(|l| l.iter().find(|c| c["id"] == sid).cloned()).unwrap_or_default()
+}
+
+async fn wait_call(net: &Net, i: usize, sid: &str, f: impl Fn(&Value) -> bool) -> Option<Value> {
+    for _ in 0..200 {
+        let c = call_session(net, i, sid).await;
+        if f(&c) { return Some(c); }
+        sleep_s(0.05).await;
+    }
+    None
+}
+
+async fn tone(net: &Net, i: usize, freq: f64, secs: f64, listen: &str) -> Value {
+    super::net::api(net.gui(i), "POST", "/api/call/tone", &[("freq", &s(freq)), ("seconds", &s(secs)), ("listen", listen)], 120)
+        .await.map(|v| v["report"].clone()).unwrap_or_default()
+}
+
+fn active_legs(c: &Value) -> usize { c["peers"].as_array().map_or(0, |p| p.iter().filter(|x| x["state"] == "active").count()) }
+
+/// Звук звонка: каждый участник вместо микрофона играет свой тон (тестовый источник узла), узел кодирует его
+/// Opus и шлёт собеседникам; принятое проходит джиттер-буфер, восстановление потерь и смешивание. Проверяется,
+/// что каждый слышит ровно тоны собеседников, и снимается качество: буфер, восстановленное по FEC, замаскированное,
+/// задержка «рот — ухо» и MOS по E-модели.
+async fn svoice(a: &Args) -> Result<bool> {
+    const SECS: f64 = 6.0;
+    const TONES: [f64; 3] = [440.0, 554.0, 660.0];
+    let calls = a.runs.max(1);
+    let mut run = Run::new("voice_call", a, "star", json!({
+        "calls_1to1": calls, "calls_group3": calls.div_ceil(2), "tone_seconds": SECS, "codec": "opus/16000/20, 24 кбит/с, FEC",
+        "e_model": "ITU-T G.107 упрощённая: Ie=10, Bpl=20 (допущение для Opus)",
+    }))?;
+    let mut rng = StdRng::seed_from_u64(a.seed);
+    let mut net = Net::start("voice", a.nodes, "star").await?;
+    net.converge(60.0, 3).await;
+    let n = net.n();
+    let listen = TONES.iter().map(|f| s(f)).collect::<Vec<_>>().join(",");
+    let mut rows = vec![];
+    let (mut setup, mut mos, mut m2e, mut lossa, mut buf) = (vec![], vec![], vec![], vec![], vec![]);
+    let (mut heard_ok, mut total) = (0, 0);
+    let mut ok = true;
+    let plan: Vec<usize> = (0..calls).map(|_| 2).chain((0..calls.div_ceil(2)).map(|_| 3)).collect();
+    for (k, size) in plan.into_iter().enumerate() {
+        // участники: разные узлы
+        let mut who = vec![rng.gen_range(0..n)];
+        while who.len() < size { let x = rng.gen_range(0..n); if !who.contains(&x) { who.push(x); } }
+        let t0 = std::time::Instant::now();
+        let st = if size == 2 {
+            net.api(who[0], "POST", "/api/call/start", &[("target", &net.id(who[1]))]).await
+        } else {
+            let m = who[1..].iter().map(|&i| net.id(i)).collect::<Vec<_>>().join(",");
+            net.api(who[0], "POST", "/api/call/start", &[("members", &m), ("name", "сценарий")]).await
+        }.unwrap_or_default();
+        let Some(sid) = st["call_id"].as_str().map(str::to_owned) else { ok = false; eprintln!("вызов {k}: {st}"); continue };
+        for &i in &who[1..] {
+            if wait_call(&net, i, &sid, |c| c["state"] == "ringing").await.is_some() {
+                let _ = net.api(i, "POST", "/api/call/accept", &[("call_id", &sid)]).await;
+            }
+        }
+        let mut up = true;
+        for &i in &who { up &= wait_call(&net, i, &sid, |c| active_legs(c) == size - 1).await.is_some(); }
+        let setup_ms = t0.elapsed().as_secs_f64() * 1000.0;
+        if !up { ok = false; eprintln!("звонок {k} не установлен"); let _ = net.api(who[0], "POST", "/api/call/hangup", &[("call_id", &sid)]).await; continue; }
+        let reps = futures::future::join_all(who.iter().enumerate().map(|(j, &i)| tone(&net, i, TONES[j], SECS, &listen))).await;
+        total += 1;
+        let mut all_heard = true;
+        for (j, r) in reps.iter().enumerate() {
+            let mut want: Vec<f64> = (0..size).filter(|&x| x != j).map(|x| TONES[x]).collect();
+            want.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            let got: Vec<f64> = r["heard"].as_array().map(|a| a.iter().filter_map(Value::as_f64).collect()).unwrap_or_default();
+            all_heard &= got == want;
+        }
+        if all_heard { heard_ok += 1; }
+        // качество по каждой ноге у каждого участника
+        let (mut q_mos, mut q_m2e, mut q_loss, mut q_buf, mut fec, mut conc, mut late, mut played) = (vec![], vec![], vec![], vec![], 0, 0, 0, 0);
+        for &i in &who {
+            let c = call_session(&net, i, &sid).await;
+            for p in c["peers"].as_array().cloned().unwrap_or_default() {
+                let q = &p["quality"];
+                if let Some(v) = q["mos"].as_f64() { q_mos.push(v); }
+                if let Some(v) = q["mouth_to_ear_ms"].as_f64() { q_m2e.push(v); }
+                if let Some(v) = q["loss_audible_pct"].as_f64() { q_loss.push(v); }
+                if let Some(v) = q["audio"]["buffer_ms"].as_f64() { q_buf.push(v); }
+                fec += q["audio"]["fec"].as_u64().unwrap_or(0);
+                conc += q["audio"]["concealed"].as_u64().unwrap_or(0);
+                late += q["audio"]["late"].as_u64().unwrap_or(0);
+                played += q["audio"]["played"].as_u64().unwrap_or(0);
+            }
+        }
+        let _ = net.api(who[0], "POST", "/api/call/hangup", &[("call_id", &sid)]).await;
+        for &i in &who[1..] { let _ = net.api(i, "POST", "/api/call/hangup", &[("call_id", &sid)]).await; }
+        sleep_s(0.5).await;
+        let avg = |v: &[f64]| if v.is_empty() { f64::NAN } else { v.iter().sum::<f64>() / v.len() as f64 };
+        rows.push(vec![s(k), if size == 2 { "1:1".into() } else { format!("группа {size}") },
+            who.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(" "), f1(setup_ms), s(all_heard),
+            s(played), s(fec), s(conc), s(late), f1(avg(&q_buf)), f1(avg(&q_m2e)), format!("{:.2}", avg(&q_loss)), format!("{:.2}", avg(&q_mos))]);
+        setup.push(setup_ms); mos.extend(q_mos); m2e.extend(q_m2e); lossa.extend(q_loss); buf.extend(q_buf);
+    }
+    close(&mut net, &run.dir.join("node_logs")).await?;
+    run.finish(&["call", "kind", "nodes", "setup_ms", "heard_ok", "played", "fec", "concealed", "late", "buffer_ms",
+                 "mouth_to_ear_ms", "loss_audible_pct", "mos"], &rows,
+        &format!("Звук звонка: каждый участник {SECS} с играет свой тон (тестовый источник узла вместо микрофона) → Opus 16 кГц / 20 мс \
+                  → ключ звонка → TUNNEL_MEDIA через ≥2 ретранслятора → джиттер-буфер, FEC/маскировка, смешивание у получателя. \
+                  Звонков 1:1 — {calls}, групповых (3 участника, «каждый с каждым») — {}; сеть {} узлов, сборка `{}`.\n\n\
+                  - каждый слышит ровно тоны собеседников: {heard_ok} из {total}\n\
+                  - установление (вызов → все ноги активны у всех), мс: {}\n\
+                  - глубина джиттер-буфера по ногам, мс: {}\n\
+                  - задержка «рот — ухо» (сеть + буфер + кадр + кодер), мс: {}\n\
+                  - слышимые потери (замаскированные кадры), %: {}\n\
+                  - MOS по E-модели (Ie=10, Bpl=20 — допущение для Opus): {}",
+                 calls.div_ceil(2), a.nodes, if cfg!(debug_assertions) { "debug" } else { "release" },
+                 fmt(&setup), fmt(&buf), fmt(&m2e), fmt(&lossa), fmt(&mos)))?;
+    Ok(ok && heard_ok == total)
 }
 
 // ── files: передача файлов, goodput и доля служебного трафика (§13.2, §15.2) ──

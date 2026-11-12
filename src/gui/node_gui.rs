@@ -77,10 +77,10 @@ async fn route(node: Arc<Node>, req: Request) -> Response {
                 "store":   store,
                 "bootstrap": node.dht.bootstrap_json(),
                 // что умеет узел: клиенты (desktop-приложение) включают только поддержанные разделы
-                "features": { "messages": true, "aliases": true, "history": true, "files": true, "calls": false,
+                "features": { "messages": true, "aliases": true, "history": true, "files": true, "calls": true,
                               "events": true, "typing": true, "read_receipts": true, "groups": true,
-                              // звонки: сигнализация, ключ звонка и медиатранспорт готовы, звук — шаг 5
-                              "call_signaling": true,
+                              // звонки: 1:1 и групповые (до 5), звук Opus через локальный аудиоканал
+                              "call_signaling": true, "group_calls": true,
                               "mailbox": node.cfg.mailbox.enabled },
                 // режим «только клиент»: узел не ретранслирует чужие туннели
                 "relay":   node.cfg.tunnel.relay,
@@ -254,10 +254,21 @@ async fn route(node: Arc<Node>, req: Request) -> Response {
         }
         // звонки (шаги 2–4): сигнализация, ключ звонка, медиакадры; звук — шаг 5 (пока синтетический поток)
         ("/api/call/start", true) => {
-            let target = match resolve_target(&node, req.query.get("target").map(|s| s.as_str()).unwrap_or("")).await {
-                Ok(t) => t, Err(e) => return Response::error(400, &e),
+            // групповой: members=<id,id>&name=…[&chat=<id группового чата>]; иначе target=<NodeID или @псевдоним>
+            let r = if let Some(m) = req.query.get("members") {
+                let mut ids = vec![];
+                for x in m.split(',').map(str::trim).filter(|x| !x.is_empty()) {
+                    match parse_node_id(x) { Ok(id) => ids.push(id), Err(e) => return Response::error(400, &e) }
+                }
+                let name = req.query.get("name").map(|s| s.as_str()).unwrap_or("Групповой звонок");
+                node.messenger.call_start_group(name, ids, req.query.get("chat").cloned()).await
+            } else {
+                let target = match resolve_target(&node, req.query.get("target").map(|s| s.as_str()).unwrap_or("")).await {
+                    Ok(t) => t, Err(e) => return Response::error(400, &e),
+                };
+                node.messenger.call_start(target).await
             };
-            match node.messenger.call_start(target).await {
+            match r {
                 Ok(id) => Response::json(json!({ "ok": true, "call_id": id })),
                 Err(e) => Response::json(json!({ "ok": false, "error": e.to_string() })),
             }
@@ -283,7 +294,24 @@ async fn route(node: Arc<Node>, req: Request) -> Response {
                 Err(e) => Response::json(json!({ "ok": false, "error": e.to_string() })),
             }
         }
-        ("/api/calls", false) => Response::json(json!({ "calls": node.messenger.calls_json().await })),
+        ("/api/calls", false) => Response::json(json!({
+            "sessions": node.messenger.call_sessions_json().await, "calls": node.messenger.calls_json().await,
+            "mic_level": node.messenger.mic_level(),
+        })),
+        // локальный аудиоканал клиента: UDP 127.0.0.1:port, токен — в каждом кадре (app/voice.rs)
+        ("/api/call/audio", false) => match node.messenger.audio_link().await {
+            Ok((port, token)) => Response::json(json!({ "ok": true, "port": port, "token": hex::encode(token),
+                "rate": crate::app::voice::RATE, "frame_samples": crate::app::voice::FRAME, "codec": crate::app::voice::CODEC })),
+            Err(e) => Response::json(json!({ "ok": false, "error": e.to_string() })),
+        },
+        // тестовый источник вместо микрофона: тон freq Гц на seconds с; в ответ — какие из listen слышны
+        ("/api/call/tone", true) => {
+            let f = |k: &str, d: f64| req.query.get(k).and_then(|v| v.parse::<f64>().ok()).unwrap_or(d);
+            let listen: Vec<f64> = req.query.get("listen").map(|l| l.split(',').filter_map(|x| x.trim().parse().ok()).collect())
+                .unwrap_or_else(|| vec![440.0, 554.0, 660.0, 784.0, 880.0]);
+            let rep = node.messenger.call_tone(f("freq", 440.0), f("seconds", 5.0).clamp(0.1, 120.0), &listen).await;
+            Response::json(json!({ "ok": true, "report": rep }))
+        }
         ("/api/relays", false) => Response::json(json!({ "profiles": node.tunnel_mgr.profiles_json().await })),
         ("/api/files", false) => {
             let (t, dir) = node.messenger.transfers().await;

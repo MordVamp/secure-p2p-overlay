@@ -48,9 +48,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.core.content.IntentCompat
+import androidx.lifecycle.lifecycleScope
 import com.journeyapps.barcodescanner.ScanContract
+import kotlinx.coroutines.launch
 import com.journeyapps.barcodescanner.ScanOptions
+import org.p2poverlay.android.ui.CallBar
+import org.p2poverlay.android.ui.CallScreen
 import org.p2poverlay.android.ui.ChatsList
+import org.p2poverlay.android.ui.Decor
 import org.p2poverlay.android.ui.Conversation
 import org.p2poverlay.android.ui.FilesScreen
 import org.p2poverlay.android.ui.InviteDialog
@@ -69,6 +74,8 @@ class MainActivity : FragmentActivity() {
     private val sharedUri = mutableStateOf<Uri?>(null)
     private val openPeer = mutableStateOf<String?>(null)
     private val forceTab = mutableStateOf<Tab?>(null)
+    /** Ответить на звонок из уведомления (после разрешения на микрофон). */
+    private val acceptCall = mutableStateOf<String?>(null)
     /** Блокировка: при запуске и после 60 с в фоне, если включена в настройках. */
     private val locked = mutableStateOf(false)
     private var stoppedAt = 0L
@@ -99,7 +106,15 @@ class MainActivity : FragmentActivity() {
                         navigationBarStyle = if (dark) androidx.activity.SystemBarStyle.dark(t) else androidx.activity.SystemBarStyle.light(t, t),
                     )
                 }
-                if (locked.value) LockScreen(onUnlock = ::unlock) else Root()
+                if (locked.value) LockScreen(onUnlock = ::unlock) else {
+                    val accept = org.p2poverlay.android.ui.rememberWithMic { vm.acceptCall(it) }
+                    LaunchedEffect(acceptCall.value) { acceptCall.value?.let { accept(it); acceptCall.value = null } }
+                    if (vm.call != null && !vm.callMinimized) CallScreen(vm)
+                    else androidx.compose.foundation.layout.Column {
+                        if (vm.call != null) CallBar(vm)
+                        androidx.compose.foundation.layout.Box(Modifier.weight(1f)) { Root() }
+                    }
+                }
             }
         }
         if (locked.value) unlock()
@@ -149,7 +164,18 @@ class MainActivity : FragmentActivity() {
                 sharedUri.value = it; forceTab.value = Tab.Files
             }
             i.hasExtra(EXTRA_PEER) -> openPeer.value = i.getStringExtra(EXTRA_PEER)
+            i.hasExtra(EXTRA_CALL) -> {
+                // входящий звонок: показать поверх экрана блокировки и включить экран
+                if (Build.VERSION.SDK_INT >= 27) { setShowWhenLocked(true); setTurnScreenOn(true) }
+                vm.callMinimized = false
+                if (i.getBooleanExtra(EXTRA_CALL_ACCEPT, false)) acceptCall.value = i.getStringExtra(EXTRA_CALL)
+                lifecycleScopeRefresh()
+            }
         }
+    }
+
+    private fun lifecycleScopeRefresh() {
+        lifecycleScope.launch { vm.refreshCalls() }
     }
 
     private fun scan() = scanner.launch(
@@ -182,11 +208,13 @@ class MainActivity : FragmentActivity() {
             containerColor = P.Rail,
             snackbarHost = { SnackbarHost(snack) },
             topBar = {
+                androidx.compose.foundation.layout.Column {
                 TopAppBar(
-                    colors = TopAppBarDefaults.topAppBarColors(containerColor = P.Rail),
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = if (P.vampire) P.Side else P.Rail),
                     title = {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Text(if (tab == Tab.Chats) "P2P Overlay" else tab.title, fontWeight = FontWeight.SemiBold, fontSize = 22.sp)
+                            Text(Decor.glyph + (if (tab == Tab.Chats) "P2P Overlay" else tab.title), fontWeight = FontWeight.SemiBold, fontSize = 22.sp,
+                                fontFamily = if (P.vampire) androidx.compose.ui.text.font.FontFamily.Serif else null)
                             when (run) {
                                 is RunState.Running -> Pill("в сети · ${vm.status?.optJSONObject("routing")?.optInt("total_contacts") ?: 0} пиров", P.Green)
                                 RunState.Starting -> Pill("запуск", P.Yellow)
@@ -196,6 +224,8 @@ class MainActivity : FragmentActivity() {
                         }
                     },
                 )
+                Decor.TopEdge()
+                }
             },
             bottomBar = {
                 NavigationBar(containerColor = P.Side) {
@@ -220,6 +250,7 @@ class MainActivity : FragmentActivity() {
             },
         ) { pad ->
             androidx.compose.foundation.layout.Box(Modifier.padding(pad)) {
+                Decor.Backdrop(Modifier.matchParentSize())
                 when (tab) {
                     Tab.Chats -> ChatsList(vm, onOpen = { openPeer.value = it }, onScan = ::scan)
                     Tab.Files -> FilesScreen(vm, sharedUri.value) { sharedUri.value = null }
@@ -232,6 +263,8 @@ class MainActivity : FragmentActivity() {
 
     companion object {
         const val EXTRA_PEER = "peer"
+        const val EXTRA_CALL = "call"
+        const val EXTRA_CALL_ACCEPT = "call_accept"
         @Volatile var visible = false
     }
 }

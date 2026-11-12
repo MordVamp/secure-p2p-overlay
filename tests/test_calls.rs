@@ -78,11 +78,13 @@ fn rx_stats_count_loss_and_reorder() {
 struct Proc(Child);
 impl Drop for Proc { fn drop(&mut self) { let _ = self.0.kill(); let _ = self.0.wait(); } }
 
-fn node(i: u16, boot: Option<u16>) -> Proc {
-    let d = std::env::temp_dir().join(format!("p2p-call-{i}-{}", std::process::id()));
+fn node(i: u16, boot: Option<u16>) -> Proc { node_at(7900, 7920, i, boot) }
+
+fn node_at(p2p: u16, gui: u16, i: u16, boot: Option<u16>) -> Proc {
+    let d = std::env::temp_dir().join(format!("p2p-call-{}-{}", p2p + i, std::process::id()));
     let _ = std::fs::remove_dir_all(&d);
     let mut c = Command::new(env!("CARGO_BIN_EXE_p2p-node"));
-    c.args(["-c", "config/node_config.yaml", "-p", &(7900 + i).to_string(), "--gui-port", &(7920 + i).to_string(),
+    c.args(["-c", "config/node_config.yaml", "-p", &(p2p + i).to_string(), "--gui-port", &(gui + i).to_string(),
             "--state-dir", &d.display().to_string(), "--metrics-dir", &d.join("m").display().to_string(),
             "--mailbox-poll", "0"]);
     if let Some(b) = boot { c.args(["-b", &format!("127.0.0.1:{b}")]); }
@@ -157,5 +159,116 @@ async fn call_signaling_keys_and_media_over_tunnels() {
     assert_eq!(e["end_reason"], "hangup");
     let h = api(7924, "GET", "/api/history", &[("limit", "20")], 5).await.unwrap();
     assert!(h["entries"].as_array().unwrap().iter().any(|x| x["message_id"] == cid && x["status"] == "call_ended"), "{h}");
+    drop(n);
+}
+
+// ── звук: Opus, джиттер-буфер, смешивание; групповой звонок; локальный аудиоканал ─────────────
+
+async fn start_net(p2p: u16, gui: u16, n: u16) -> (Vec<Proc>, Vec<String>) {
+    let mut v = vec![node_at(p2p, gui, 0, None)];
+    for _ in 0..50 { if api(gui, "GET", "/api/status", &[], 1).await.is_ok() { break; } tokio::time::sleep(Duration::from_millis(100)).await; }
+    v.extend((1..n).map(|i| node_at(p2p, gui, i, Some(p2p))));
+    let mut ids = vec![];
+    for i in 0..n {
+        let mut id = String::new();
+        for _ in 0..100 {
+            if let Ok(s) = api(gui + i, "GET", "/api/status", &[], 1).await { id = s["node_id"].as_str().unwrap().into(); break; }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        ids.push(id);
+    }
+    tokio::time::sleep(Duration::from_secs(4)).await;
+    (v, ids)
+}
+
+async fn session(gui: u16, sid: &str) -> serde_json::Value {
+    let v = api(gui, "GET", "/api/calls", &[], 5).await.unwrap();
+    v["sessions"].as_array().unwrap().iter().find(|c| c["id"] == sid).cloned().unwrap_or_default()
+}
+
+async fn wait_session(gui: u16, sid: &str, f: impl Fn(&serde_json::Value) -> bool) -> serde_json::Value {
+    for _ in 0..150 {
+        let s = session(gui, sid).await;
+        if f(&s) { return s; }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    panic!("сеанс {sid} на :{gui}: {}", session(gui, sid).await);
+}
+
+fn active_peers(s: &serde_json::Value) -> usize {
+    s["peers"].as_array().map_or(0, |p| p.iter().filter(|x| x["state"] == "active").count())
+}
+
+async fn tone(gui: u16, freq: &str, secs: &str) -> serde_json::Value {
+    api(gui, "POST", "/api/call/tone", &[("freq", freq), ("seconds", secs), ("listen", "440,554,660,880")], 60).await.unwrap()["report"].clone()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn voice_one_to_one_group_mesh_and_local_audio_link() {
+    const P: u16 = 7960;
+    const G: u16 = 7980;
+    let (n, ids) = start_net(P, G, 6).await;
+
+    // 1:1 — A играет 440 Гц, B — 660 Гц: каждый слышит только собеседника
+    let cid = api(G, "POST", "/api/call/start", &[("target", &ids[1])], 30).await.unwrap()["call_id"].as_str().unwrap().to_owned();
+    wait_session(G + 1, &cid, |s| s["state"] == "ringing").await;
+    assert_eq!(api(G + 1, "POST", "/api/call/accept", &[("call_id", &cid)], 30).await.unwrap()["ok"], true);
+    wait_session(G, &cid, |s| s["state"] == "active").await;
+    let (a, b) = tokio::join!(tone(G, "440", "4"), tone(G + 1, "660", "4"));
+    assert_eq!(a["heard"], serde_json::json!([660.0]), "A слышит B: {a}");
+    assert_eq!(b["heard"], serde_json::json!([440.0]), "B слышит A: {b}");
+    let s = session(G, &cid).await;
+    let q = &s["peers"][0]["quality"];
+    assert!(q["audio"]["played"].as_u64().unwrap() > 100, "{s}");
+    assert!(q["mos"].as_f64().unwrap() > 4.0, "в LAN без потерь MOS высокий: {q}");
+    api(G, "POST", "/api/call/hangup", &[("call_id", &cid)], 30).await.unwrap();
+    wait_session(G + 1, &cid, |s| s["state"] == "ended").await;
+
+    // групповой: A (0) зовёт B (1) и C (2); B и C принимают и соединяются между собой сами
+    let members = format!("{},{}", ids[1], ids[2]);
+    let r = api(G, "POST", "/api/call/start", &[("members", &members), ("name", "Тест")], 30).await.unwrap();
+    assert_eq!(r["ok"], true, "{r}");
+    let sid = r["call_id"].as_str().unwrap().to_owned();
+    for g in [G + 1, G + 2] {
+        let s = wait_session(g, &sid, |s| s["state"] == "ringing").await;
+        assert_eq!(s["group"]["name"], "Тест");
+        assert_eq!(s["outgoing"], false);
+    }
+    assert_eq!(api(G + 1, "POST", "/api/call/accept", &[("call_id", &sid)], 30).await.unwrap()["ok"], true);
+    assert_eq!(api(G + 2, "POST", "/api/call/accept", &[("call_id", &sid)], 30).await.unwrap()["ok"], true);
+    for g in [G, G + 1, G + 2] { wait_session(g, &sid, |s| active_peers(s) == 2).await; }
+    // занято: четвёртый узел не дозвонится участнику группового звонка
+    let busy = api(G + 3, "POST", "/api/call/start", &[("target", &ids[2])], 30).await.unwrap();
+    let bid = busy["call_id"].as_str().unwrap().to_owned();
+    let b = wait_session(G + 3, &bid, |s| s["state"] == "ended").await;
+    assert_eq!(b["end_reason"], "busy");
+
+    // каждый слышит двух других (смешивание в узле)
+    let (x, y, z) = tokio::join!(tone(G, "440", "5"), tone(G + 1, "554", "5"), tone(G + 2, "660", "5"));
+    assert_eq!(x["heard"], serde_json::json!([554.0, 660.0]), "A: {x}");
+    assert_eq!(y["heard"], serde_json::json!([440.0, 660.0]), "B: {y}");
+    assert_eq!(z["heard"], serde_json::json!([440.0, 554.0]), "C: {z}");
+
+    // инициатор ушёл — B и C продолжают; ушёл B — у C звонок закончен, запись в истории
+    api(G, "POST", "/api/call/hangup", &[("call_id", &sid)], 30).await.unwrap();
+    wait_session(G + 1, &sid, |s| s["state"] == "active" && active_peers(s) == 1).await;
+    api(G + 1, "POST", "/api/call/hangup", &[("call_id", &sid)], 30).await.unwrap();
+    wait_session(G + 2, &sid, |s| s["state"] == "ended").await;
+    let h = api(G + 2, "GET", "/api/history", &[("limit", "50")], 5).await.unwrap();
+    assert!(h["entries"].as_array().unwrap().iter().any(|e| e["message_id"] == sid.as_str() && e["status"] == "call_ended"
+        && e["text"].as_str().unwrap_or("").contains("Групповой")), "{h}");
+
+    // локальный аудиоканал: кадр без верного токена игнорируется, с верным — ответ того же размера
+    let a = api(G, "GET", "/api/call/audio", &[], 5).await.unwrap();
+    let port = a["port"].as_u64().unwrap() as u16;
+    let token = hex::decode(a["token"].as_str().unwrap()).unwrap();
+    let sock = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let frame = |t: &[u8]| { let mut b = b"P2A1".to_vec(); b.extend_from_slice(t); b.extend(std::iter::repeat(0u8).take(640)); b };
+    sock.send_to(&frame(&[0u8; 16]), ("127.0.0.1", port)).await.unwrap();
+    let mut buf = [0u8; 2048];
+    assert!(tokio::time::timeout(Duration::from_millis(500), sock.recv_from(&mut buf)).await.is_err(), "чужой токен — без ответа");
+    sock.send_to(&frame(&token), ("127.0.0.1", port)).await.unwrap();
+    let (len, _) = tokio::time::timeout(Duration::from_secs(2), sock.recv_from(&mut buf)).await.unwrap().unwrap();
+    assert_eq!(len, 4 + 640);
     drop(n);
 }

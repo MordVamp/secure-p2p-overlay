@@ -38,7 +38,9 @@ impl EventBus {
         }
         if b.len() >= CAP { b.pop_front(); }
         b.push_back((n, fields));
-        let _ = self.seq.send(n);
+        // send_replace, а не send: send не меняет значение, когда ни один клиент сейчас не ждёт, — номер
+        // не рос, и следующее событие получало тот же номер (клиент с since = N его пропускал)
+        self.seq.send_replace(n);
     }
 
     pub fn last_seq(&self) -> u64 { *self.seq.borrow() }
@@ -62,5 +64,21 @@ impl EventBus {
                 _ => return (self.last_seq(), vec![]),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn sequence_grows_without_waiting_clients() {
+        let bus = EventBus::new();
+        bus.emit("call", json!({ "state": "ringing" })).await;
+        bus.emit("call", json!({ "state": "active" })).await;
+        assert_eq!(bus.last_seq(), 2);
+        let (_, ev) = bus.wait(1, Duration::from_millis(10)).await;
+        assert_eq!(ev.len(), 1, "клиент, видевший событие 1, получает событие 2");
+        assert_eq!(ev[0]["state"], "active");
     }
 }

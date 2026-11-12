@@ -39,6 +39,37 @@ pub struct CallOffer {
     /// Параметры медиа (для шага 5): кодек и длительность кадра.
     pub codec:   String,
     pub frame_ms: u32,
+    /// Групповой звонок (сетка «каждый с каждым»): состав и общий id; None — звонок 1:1.
+    #[serde(default)]
+    pub group:   Option<GroupCall>,
+}
+
+/// Групповой звонок: у каждой пары участников — своя «нога» (свой call_id и ключ), общий `id`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct GroupCall {
+    pub id:        Vec<u8>,
+    pub name:      String,
+    pub members:   Vec<NodeId>,
+    pub initiator: NodeId,
+    /// Групповой чат, из которого начат звонок (hex id) — для записи в историю этого чата.
+    #[serde(default)]
+    pub chat:      Option<String>,
+}
+
+/// Наибольший размер группового звонка (вместе с собой): сетка из 5 участников — 4 потока в каждую сторону.
+pub const MAX_GROUP: usize = 5;
+
+/// Отчёт получателя (раз в 5 с): что дошло от собеседника.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CallReport {
+    pub call_id:   Vec<u8>,
+    pub packets:   u64,
+    pub lost:      u64,
+    pub jitter_ms: f64,
+    pub concealed: u64,
+    pub buffer_ms: f64,
+    #[serde(default)]
+    pub at_ms:     u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -222,6 +253,19 @@ pub struct Call {
     pub tx_seq:      u64,
     pub rx:          RxStats,
     pub window:      ReplayWindow,
+    pub group:       Option<GroupCall>,
+    /// Нога группового звонка, открытая автоматически (участник подключается к уже вошедшим).
+    pub auto:        bool,
+    /// Приём звука: джиттер-буфер и декодер (с момента ответа).
+    pub audio:       Option<crate::app::voice::LegAudio>,
+    /// Последний отчёт собеседника о нашем потоке.
+    pub remote:      Option<CallReport>,
+    /// Круг по туннелю до собеседника и обратно (TUNNEL_ACK отчёта получателя), мс, сглаженный.
+    /// Задержку в одну сторону для качества берём как RTT/2: метки отправителя годятся только при общих часах
+    /// (стенд на одной машине), у телефона и компьютера часы расходятся на десятки и сотни мс.
+    pub rtt_ms:      Option<f64>,
+    /// Звонок (сеанс) уже записан в историю.
+    pub logged:      bool,
 }
 
 impl Call {
@@ -229,7 +273,40 @@ impl Call {
         let (secret, my_pk) = ephemeral();
         Self { id, peer, outgoing, state: CallState::Ringing, created_ms: now_ms(), answered_ms: None, ended_ms: None,
                end_reason: None, secret: Some(secret), my_pk, caller_pk: None, keys: None, tx_seq: 0,
-               rx: RxStats::default(), window: ReplayWindow::default() }
+               rx: RxStats::default(), window: ReplayWindow::default(), group: None, auto: false, audio: None,
+               remote: None, rtt_ms: None, logged: false }
+    }
+
+    /// Id сеанса: у группового — общий id группы звонка, у 1:1 — свой call_id.
+    pub fn session(&self) -> &[u8] { self.group.as_ref().map_or(&self.id, |g| &g.id) }
+
+    /// Звонок стал активным: ключи есть, начать приём звука.
+    pub fn activate(&mut self) {
+        self.state = CallState::Active;
+        self.answered_ms = Some(now_ms());
+        self.audio = crate::app::voice::LegAudio::new().ok();
+    }
+
+    fn one_way(&self) -> (usize, Option<f64>, Option<f64>, Option<f64>) {
+        let mut ow: Vec<f64> = self.rx.one_way_ms.iter().copied().collect();
+        ow.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let pct = |p: f64| if ow.is_empty() { None } else { Some(ow[((ow.len() - 1) as f64 * p).round() as usize]) };
+        (ow.len(), pct(0.5), pct(0.95), ow.last().copied())
+    }
+
+    /// Качество приёма: буфер, восстановленное и потерянное, задержка «рот — ухо» и MOS (E-модель).
+    pub fn quality(&self) -> serde_json::Value {
+        let Some(a) = &self.audio else { return serde_json::Value::Null };
+        let s = &a.stats;
+        let total = s.played + s.fec + s.concealed;
+        let ppl = if total == 0 { 0.0 } else { 100.0 * s.concealed as f64 / total as f64 };
+        let (_, med, _, _) = self.one_way();
+        // RTT/2 (не зависит от часов), пока его нет — по меткам отправителя
+        let net = self.rtt_ms.map(|r| r / 2.0).or(med.map(|m| m.max(0.0)));
+        let m2e = net.map(|ow| crate::app::voice::mouth_to_ear_ms(ow, s.buffer_ms));
+        let (r, mos) = crate::app::voice::emodel(m2e.unwrap_or(0.0), ppl);
+        serde_json::json!({ "audio": s, "loss_audible_pct": ppl, "mouth_to_ear_ms": m2e, "rtt_ms": self.rtt_ms,
+                            "r_factor": m2e.map(|_| r), "mos": m2e.map(|_| mos) })
     }
 
     /// Звонок закончился: секрет и ключи стираются.
@@ -242,18 +319,21 @@ impl Call {
         self.keys = None;
     }
 
+    /// Нога снята как дубль (оба участника позвонили друг другу одновременно) — без следа в истории.
+    pub fn drop_duplicate(&mut self) { self.end("duplicate"); self.logged = true; }
+
     pub fn json(&self) -> serde_json::Value {
-        let mut ow: Vec<f64> = self.rx.one_way_ms.iter().copied().collect();
-        ow.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        let pct = |p: f64| if ow.is_empty() { None } else { Some(ow[((ow.len() - 1) as f64 * p).round() as usize]) };
+        let (n, med, p95, max) = self.one_way();
         serde_json::json!({
+            "session": hex::encode(self.session()), "auto": self.auto,
+            "quality": self.quality(), "remote": self.remote,
             "call_id": hex::encode(&self.id), "peer": self.peer.to_hex(), "outgoing": self.outgoing,
             "state": self.state, "created_ms": self.created_ms, "answered_ms": self.answered_ms,
             "ended_ms": self.ended_ms, "end_reason": self.end_reason,
             "setup_ms": self.answered_ms.map(|a| a.saturating_sub(self.created_ms)),
             "tx_packets": self.tx_seq,
             "rx": self.rx, "rx_lost": self.rx.lost(),
-            "one_way_ms": { "n": ow.len(), "median": pct(0.5), "p95": pct(0.95), "max": ow.last() },
+            "one_way_ms": { "n": n, "median": med, "p95": p95, "max": max },
         })
     }
 }

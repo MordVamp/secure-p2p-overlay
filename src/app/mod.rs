@@ -20,3 +20,4 @@ pub use messenger::Messenger;
 pub mod events;
 pub mod mailbox;
 pub mod calls;
+pub mod voice;

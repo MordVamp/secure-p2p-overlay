@@ -9,6 +9,7 @@ mod app;
 mod node_proc;
 mod settings;
 mod theme;
+mod voice;
 
 fn main() -> eframe::Result<()> {
     let args: Vec<String> = std::env::args().collect();
