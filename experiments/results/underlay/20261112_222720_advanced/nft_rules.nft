@@ -1,0 +1,7 @@
+table inet p2p_underlay {
+  chain out {
+    type filter hook output priority 0; policy accept;
+    ip saddr 127.0.1.0/24 ip daddr 127.0.2.0/24 meta l4proto tcp reject with tcp reset
+    ip saddr 127.0.2.0/24 ip daddr 127.0.1.0/24 meta l4proto tcp reject with tcp reset
+  }
+}
