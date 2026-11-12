@@ -50,6 +50,11 @@ files:                                # передача файлов (§13.2)
   block_size:           40960         # 40 КиБ
   window:               8
   incomplete_timeout_s: 60
+  accept:               known         # known — сам: до auto_accept_bytes от знакомых; иначе спросить | ask | auto
+  auto_accept_bytes:    16777216      # 16 МиБ
+  max_total_bytes:      2147483648    # все принятые файлы вместе — не больше 2 ГиБ
+  min_free_bytes:       536870912     # после приёма на диске остаётся ≥ 512 МиБ
+  offer_timeout_s:      120           # предложение без ответа пользователя отклоняется
 
 mailbox:                              # офлайн-доставка: почтовые ящики в DHT (PROTOCOL §7.7)
   enabled:          true

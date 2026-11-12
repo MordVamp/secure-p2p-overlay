@@ -50,6 +50,8 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.preview(v: String) 
         "light" -> Triple(Color(0xFFF3F4F7), Color.White, Color(0xFF4A55C9))
         "blood" -> Triple(Color(0xFF0E0405), Color(0xFF2B0E11), Color(0xFF8E0A17))
         "night" -> Triple(Color(0xFF0B0912), Color(0xFF221B2E), Color(0xFF6E2240))
+        "forest" -> Triple(Color(0xFF0D1D14), Color(0xFF1A3325), Color(0xFF3E8E5A))
+        "bloom" -> Triple(Color(0xFFFBF2F9), Color.White, Color(0xFFC77DD9))
         "system" -> Triple(Color(0xFF1A1B1F), Color(0xFFF3F4F7), Color(0xFF6C7BFF))
         else -> Triple(Color(0xFF1A1B1F), Color(0xFF36383F), Color(0xFF4A55C9))
     }
@@ -65,6 +67,22 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.preview(v: String) 
                 drawRect(Color(0xFFB0101E), Offset(size.width * x - u * 0.3f, 0f), Size(u * 0.6f, size.height * l))
                 drawCircle(Color(0xFFB0101E), u * 0.42f, Offset(size.width * x, size.height * l))
             }
+        }
+        "forest" -> {
+            for ((x, y) in listOf(0.55f to 0.3f, 0.7f to 0.2f, 0.85f to 0.35f)) {
+                drawCircle(Color(0xFFF4E35E).copy(alpha = 0.25f), u * 0.6f, Offset(size.width * x, size.height * y))
+                drawCircle(Color(0xFFF4E35E), u * 0.22f, Offset(size.width * x, size.height * y))
+            }
+            drawArc(Color(0xFFC82A22), 180f, 180f, true, Offset(u * 0.6f, size.height * 0.55f), Size(u * 2.2f, u * 1.8f))
+            drawRect(Color(0xFFF1E6D2), Offset(u * 1.45f, size.height * 0.55f + u * 0.9f), Size(u * 0.5f, u * 1.4f))
+        }
+        "bloom" -> {
+            for (k in 0 until 5) {
+                val a = k / 5f * 6.2832f
+                drawCircle(Color(0xFFF29BC4), u * 0.45f, Offset(u * 1.6f + kotlin.math.cos(a) * u * 0.55f, size.height * 0.3f + kotlin.math.sin(a) * u * 0.55f))
+            }
+            drawCircle(Color(0xFFFFE08A), u * 0.35f, Offset(u * 1.6f, size.height * 0.3f))
+            drawCircle(Color(0xFFE8B02E), u * 0.18f, Offset(size.width * 0.8f, size.height * 0.2f))
         }
         "night" -> {
             drawCircle(Color(0xFFEDE6C8), u * 1.3f, Offset(size.width * 0.78f, size.height * 0.24f))

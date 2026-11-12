@@ -117,6 +117,8 @@ private fun TransferRow(vm: AppViewModel, ctx: Context, t: JSONObject) {
         "sending" -> "отправка" to P.Yellow
         "receiving" -> "приём" to P.Yellow
         "rejected" -> "отклонён" to P.Red
+        "offered" -> "ждёт вашего решения" to P.Yellow
+        "waiting" -> "ждёт согласия получателя" to P.Yellow
         else -> "ошибка" to P.Red
     }
     SectionCard {
@@ -131,6 +133,16 @@ private fun TransferRow(vm: AppViewModel, ctx: Context, t: JSONObject) {
                 }
             }
             Pill(label, color)
+        }
+        if (status == "offered") {
+            Text("Узел предлагает файл. Незнакомым и большим файлам нужно ваше согласие — без него ничего не пишется на диск.",
+                color = P.Muted, fontSize = 12.sp)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = { vm.fileDecision(t.optString("transfer_id"), true) }) { Text("Принять") }
+                androidx.compose.material3.OutlinedButton(onClick = { vm.fileDecision(t.optString("transfer_id"), false) }) {
+                    Text("Отклонить", color = P.Red)
+                }
+            }
         }
         if (status == "sending" || status == "receiving")
             LinearProgressIndicator(progress = { done.toFloat() / blocks }, modifier = Modifier.fillMaxWidth())

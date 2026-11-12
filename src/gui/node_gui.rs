@@ -294,6 +294,15 @@ async fn route(node: Arc<Node>, req: Request) -> Response {
                 Err(e) => Response::json(json!({ "ok": false, "error": e.to_string() })),
             }
         }
+        // предложенный файл: принять или отклонить (files.accept = known / ask)
+        ("/api/file/accept", true) | ("/api/file/reject", true) => {
+            let Some(id) = req.query.get("transfer_id") else { return Response::error(400, "нужен transfer_id"); };
+            let r = if req.path == "/api/file/accept" { node.messenger.accept_file(id).await } else { node.messenger.reject_file(id).await };
+            match r {
+                Ok(()) => Response::json(json!({ "ok": true })),
+                Err(e) => Response::json(json!({ "ok": false, "error": e.to_string() })),
+            }
+        }
         ("/api/calls", false) => Response::json(json!({
             "sessions": node.messenger.call_sessions_json().await, "calls": node.messenger.calls_json().await,
             "mic_level": node.messenger.mic_level(),

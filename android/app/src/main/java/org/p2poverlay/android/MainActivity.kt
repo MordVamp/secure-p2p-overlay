@@ -210,11 +210,11 @@ class MainActivity : FragmentActivity() {
             topBar = {
                 androidx.compose.foundation.layout.Column {
                 TopAppBar(
-                    colors = TopAppBarDefaults.topAppBarColors(containerColor = if (P.vampire) P.Side else P.Rail),
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = if (P.decorated) P.Side else P.Rail),
                     title = {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             Text(Decor.glyph + (if (tab == Tab.Chats) "P2P Overlay" else tab.title), fontWeight = FontWeight.SemiBold, fontSize = 22.sp,
-                                fontFamily = if (P.vampire) androidx.compose.ui.text.font.FontFamily.Serif else null)
+                                fontFamily = if (P.decorated) androidx.compose.ui.text.font.FontFamily.Serif else null)
                             when (run) {
                                 is RunState.Running -> Pill("в сети · ${vm.status?.optJSONObject("routing")?.optInt("total_contacts") ?: 0} пиров", P.Green)
                                 RunState.Starting -> Pill("запуск", P.Yellow)

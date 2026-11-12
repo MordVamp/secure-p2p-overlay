@@ -49,6 +49,13 @@ class NodeService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> { stopNode(); stopForeground(STOP_FOREGROUND_REMOVE); stopSelf(); return START_NOT_STICKY }
+            ACTION_FILE -> {
+                val id = intent.getStringExtra(EXTRA_SID).orEmpty()
+                val accept = intent.getBooleanExtra(EXTRA_ACCEPT, false)
+                getSystemService(NotificationManager::class.java).cancel(fileNotifId(id))
+                scope.launch { runCatching { NodeApi.of(this@NodeService).post(if (accept) "/api/file/accept" else "/api/file/reject", mapOf("transfer_id" to id)) } }
+                return START_STICKY
+            }
             ACTION_CALL_REJECT -> {
                 val sid = intent.getStringExtra(EXTRA_SID).orEmpty()
                 getSystemService(NotificationManager::class.java).cancel(callNotifId(sid))
@@ -200,6 +207,7 @@ class NodeService : Service() {
             for (i in 0 until ev.length()) {
                 val e = ev.getJSONObject(i)
                 if (e.optString("kind") == "call") { incomingCall(nm, prefs, e); continue }
+                if (e.optString("kind") == "file" && e.optString("status") == "offered") { fileOffer(nm, prefs, e); continue }
                 if (e.optString("kind") != "message") continue
                 if (MainActivity.visible || !prefs.notifyMessages) continue
                 val peer = e.optString("peer")
@@ -261,6 +269,28 @@ class NodeService : Service() {
             .build())
     }
 
+    /** Предложен файл, ждёт решения: уведомление с «Принять» и «Отклонить». */
+    private fun fileOffer(nm: NotificationManager, prefs: Prefs, e: org.json.JSONObject) {
+        val id = e.optString("transfer_id")
+        val peer = e.optString("peer")
+        val who = prefs.contacts.firstOrNull { it.nodeId == peer }?.name ?: "${shortId(peer)}…"
+        val act = { accept: Boolean, rc: Int -> PendingIntent.getService(this, rc,
+            Intent(this, NodeService::class.java).setAction(ACTION_FILE).putExtra(EXTRA_SID, id).putExtra(EXTRA_ACCEPT, accept),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT) }
+        val open = PendingIntent.getActivity(this, id.hashCode(), Intent(this, MainActivity::class.java),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        nm.notify(fileNotifId(id), NotificationCompat.Builder(this, P2pApp.CH_MSG)
+            .setSmallIcon(R.drawable.ic_stat_node)
+            .setContentTitle("$who предлагает файл")
+            .setContentText("${e.optString("name")} · ${e.optLong("size") / 1024} КиБ — принять?")
+            .setContentIntent(open)
+            .addAction(0, "Принять", act(true, id.hashCode() + 1))
+            .addAction(0, "Отклонить", act(false, id.hashCode() + 2))
+            .setAutoCancel(true)
+            .setTimeoutAfter(120_000)
+            .build())
+    }
+
     // ── смена сети: Wi-Fi ↔ мобильная, новый адрес — узел перезапускается с новым --advertise ──
     @Volatile private var advertised: String? = null
     private var netCallback: ConnectivityManager.NetworkCallback? = null
@@ -305,6 +335,9 @@ class NodeService : Service() {
         const val ACTION_STOP = "stop"
         const val ACTION_CALL_REJECT = "call_reject"
         const val EXTRA_SID = "sid"
+        const val ACTION_FILE = "file_decision"
+        const val EXTRA_ACCEPT = "accept"
+        fun fileNotifId(id: String) = 2000 + (id.hashCode() and 0xffff)
         fun callNotifId(sid: String) = 1000 + (sid.hashCode() and 0xffff)
         private const val NOTIF_ID = 1
 

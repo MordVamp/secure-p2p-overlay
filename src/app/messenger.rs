@@ -134,7 +134,13 @@ pub struct Messenger {
     /// Звук: кодер исходящего потока; локальный аудиоканал к клиенту (порт и токен).
     voice:      std::sync::Mutex<call_ops::VoiceState>,
     audio_link: tokio::sync::OnceCell<(u16, [u8; crate::app::voice::TOKEN_LEN])>,
+    /// Предел «заметных» сообщений от одного отправителя (текст, вызов, предложение файла…): ведро токенов.
+    limiter:    crate::app::ratelimit::RateLimiter<NodeId>,
 }
+
+/// Ведро токенов на отправителя: 5 в секунду, запас 30.
+const RATE_PER_S: f64 = 5.0;
+const RATE_BURST: f64 = 30.0;
 
 /// Результат групповой рассылки по одному участнику.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -154,7 +160,8 @@ impl Messenger {
         metrics:   Arc<MetricsCollector>,
         cfg:       Arc<NodeConfig>,
     ) -> Self {
-        let files = FileStore::new(&cfg.node.state_dir, cfg.files.max_bytes, cfg.files.incomplete_timeout_s * 1000);
+        let files = FileStore::new(&cfg.node.state_dir, cfg.files.max_bytes, cfg.files.incomplete_timeout_s * 1000)
+            .with_quota(crate::app::files::Quota { max_total_bytes: cfg.files.max_total_bytes, min_free_bytes: cfg.files.min_free_bytes });
         Self { identity, dht, tunnels, forwarder, metrics, cfg, inbox: Mutex::new(VecDeque::new()),
                seen: Mutex::new(crate::app::replay::ReplayGuard::in_memory()), waiting: Mutex::new(Default::default()),
                keys: Mutex::new(Default::default()), history: None,
@@ -163,7 +170,7 @@ impl Messenger {
                events: Arc::new(EventBus::new()), outbox: Mutex::new(Outbox::in_memory()),
                watch: Mutex::new(Default::default()), typing: Mutex::new(Default::default()),
                probes: Mutex::new(VecDeque::new()), calls: Mutex::new(HashMap::new()),
-               voice: Default::default(), audio_link: tokio::sync::OnceCell::new() }
+               voice: Default::default(), audio_link: tokio::sync::OnceCell::new(), limiter: crate::app::ratelimit::RateLimiter::new(RATE_PER_S, RATE_BURST) }
     }
 
     /// Хранить очередь офлайн-доставки в `<state_dir>/outbox.json` (переживает перезапуск).
@@ -679,6 +686,12 @@ impl Messenger {
         if let Err(e) = self.seen.lock().await.check(&msg.message_id, msg.timestamp_ms) {
             bail!("duplicate message {}: {e}", msg.message_id_hex());
         }
+        // спам: то, что будит пользователя или занимает его место, — не чаще 5/с от одного узла (запас 30);
+        // блоки файлов, подтверждения и служебные кадры не ограничиваются
+        if matches!(msg.kind, MessageKind::Text | MessageKind::GroupText | MessageKind::CallOffer | MessageKind::FileOffer
+                              | MessageKind::Typing | MessageKind::Read) && !self.limiter.allow(msg.from, now_ms()) {
+            bail!("{}: превышен предел сообщений ({RATE_PER_S}/с) — отброшено", msg.from.short());
+        }
 
         match msg.kind {
             // APP_ACK: будим отправителя, только если подтверждение пришло от адресата
@@ -778,7 +791,8 @@ impl Messenger {
     }
 
     async fn upsert_transfer(&self, t: TransferInfo) {
-        self.events.emit("file", serde_json::json!({ "transfer_id": t.transfer_id, "status": t.status, "peer": t.peer })).await;
+        self.events.emit("file", serde_json::json!({ "transfer_id": t.transfer_id, "status": t.status, "peer": t.peer,
+                                                     "name": t.name, "size": t.size })).await;
         let mut v = self.transfers.lock().await;
         match v.iter_mut().find(|x| x.transfer_id == t.transfer_id) {
             Some(x) => *x = t,
@@ -805,13 +819,64 @@ impl Messenger {
     }
 
     /// Удалить неполные входящие файлы по тайм-ауту (вызывается периодически).
-    pub async fn evict_stale_files(&self) {
+    pub async fn evict_stale_files(self: &Arc<Self>) {
         let stale = self.files.lock().await.evict_stale();
         for id in stale {
             let hid = hex::encode(&id);
             warn!("файл {}: неполный, удалён по тайм-ауту", &hid[..8]);
             self.update_transfer(&hid, |t| { t.status = "failed".into(); t.error = Some("тайм-аут: файл не получен целиком".into()); t.finished_ms = Some(now_ms()); }).await;
         }
+        // предложения, на которые пользователь не ответил, — отклонить
+        let expired = self.files.lock().await.expire_pending(self.cfg.files.offer_timeout_s * 1000);
+        for (from, id) in expired {
+            self.reject_offer_inner(from, id, "получатель не ответил на предложение").await;
+        }
+    }
+
+    /// Знакомый узел: мы ему писали сами или он в контактах клиента (список `/api/watch`).
+    async fn is_known(&self, peer: &NodeId) -> bool {
+        if self.watch.lock().await.contains(peer) { return true; }
+        match &self.history { Some(h) => h.has_outgoing_to(&peer.to_hex()).await, None => false }
+    }
+
+    /// Согласие на приём: создать неполный файл и сообщить отправителю (FileAck received = 0).
+    async fn start_receiving(self: &Arc<Self>, from: NodeId, o: FileOffer) -> Result<()> {
+        let tid = o.transfer_id.clone();
+        self.files.lock().await.on_offer(from, o)?;
+        self.update_transfer(&hex::encode(&tid), |t| { t.status = "receiving".into(); t.error = None; }).await;
+        if let Ok(m) = self.build_kind(from, MessageKind::FileAck, &FileAck { transfer_id: tid, received: 0, missing: vec![] }) {
+            let me = self.clone();
+            tokio::spawn(async move { if let Err(e) = me.deliver(from, None, &m).await { warn!("согласие на файл не отправлено: {e}"); } });
+        }
+        Ok(())
+    }
+
+    async fn reject_offer_inner(self: &Arc<Self>, from: NodeId, id: Vec<u8>, why: &str) {
+        let hid = hex::encode(&id);
+        self.update_transfer(&hid, |t| { t.status = "rejected".into(); t.error = Some(why.into()); t.finished_ms = Some(now_ms()); }).await;
+        if let Ok(m) = self.build_kind(from, MessageKind::FileDone, &FileDone { transfer_id: id, ok: false, error: Some(why.into()) }) {
+            let me = self.clone();
+            tokio::spawn(async move { let _ = me.deliver(from, None, &m).await; });
+        }
+    }
+
+    /// Пользователь принял предложенный файл.
+    pub async fn accept_file(self: &Arc<Self>, id_hex: &str) -> Result<()> {
+        let id = hex::decode(id_hex).map_err(|_| anyhow::anyhow!("transfer_id: hex"))?;
+        let (from, o) = self.files.lock().await.take_pending(&id).ok_or_else(|| anyhow::anyhow!("нет такого предложения"))?;
+        if let Err(e) = self.start_receiving(from, o).await {
+            self.reject_offer_inner(from, id, &e.to_string()).await;
+            return Err(e);
+        }
+        Ok(())
+    }
+
+    /// Пользователь отклонил предложенный файл.
+    pub async fn reject_file(self: &Arc<Self>, id_hex: &str) -> Result<()> {
+        let id = hex::decode(id_hex).map_err(|_| anyhow::anyhow!("transfer_id: hex"))?;
+        let (from, _) = self.files.lock().await.take_pending(&id).ok_or_else(|| anyhow::anyhow!("нет такого предложения"))?;
+        self.reject_offer_inner(from, id, "получатель отклонил файл").await;
+        Ok(())
     }
 
     fn file_reply<T: serde::Serialize + Send + 'static>(self: &Arc<Self>, to: NodeId, pk: Vec<u8>, kind: MessageKind, body: T) {
@@ -835,9 +900,26 @@ impl Messenger {
                     blocks: o.blocks, done_blocks: 0, status: "receiving".into(), error: None, path: None,
                     started_ms: now_ms(), finished_ms: None,
                 };
-                let res = self.files.lock().await.on_offer(from, o);
+                // квоты и формат — сразу; затем согласие: само (по политике) или решение пользователя
+                let checked = self.files.lock().await.check_offer(from, &o);
+                let auto = match self.cfg.files.accept.as_str() {
+                    "auto" => true,
+                    "ask" => false,
+                    _ => o.size <= self.cfg.files.auto_accept_bytes && self.is_known(&from).await,
+                };
+                let res = match checked {
+                    Err(e) => Err(e),
+                    Ok(()) if auto => {
+                        self.upsert_transfer(info.clone()).await;
+                        self.start_receiving(from, o).await
+                    }
+                    Ok(()) => self.files.lock().await.hold(from, o).map(|_| {
+                        info!("← предложен файл {} от {}: {} байт — ждёт решения пользователя", info.name, from.short(), info.size);
+                    }),
+                };
                 match res {
-                    Ok(()) => { info!("← файл {} от {}: {} байт", info.name, from.short(), info.size); self.upsert_transfer(info).await; }
+                    Ok(()) if auto => info!("← файл {} от {}: {} байт", info.name, from.short(), info.size),
+                    Ok(()) => self.upsert_transfer(TransferInfo { status: "offered".into(), ..info }).await,
                     Err(e) => {
                         warn!("предложение файла от {} отклонено: {e}", from.short());
                         self.upsert_transfer(TransferInfo { status: "rejected".into(), error: Some(e.to_string()), finished_ms: Some(now_ms()), ..info }).await;
@@ -917,6 +999,22 @@ impl Messenger {
             let m = self.build_kind(target, MessageKind::FileOffer, &offer)?;
             rep.bytes_out += self.deliver(target, None, &m).await?.wire_bytes;
             rep.messages_out += 1;
+            // согласие получателя: FileAck received = 0 (сразу или когда пользователь нажмёт «Принять»)
+            self.update_transfer(&hid, |t| t.status = "waiting".into()).await;
+            let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(self.cfg.files.offer_timeout_s + 15);
+            loop {
+                match tokio::time::timeout_at(deadline, rx.recv()).await {
+                    Ok(Some((m, n))) => {
+                        rep.bytes_in += n as u64;
+                        if m.kind == MessageKind::FileDone {
+                            let d: FileDone = decode(&m.payload)?;
+                            if !d.ok { bail!("получатель отказал: {}", d.error.unwrap_or_default()); }
+                        } else if decode::<FileAck>(&m.payload).is_ok_and(|a| a.received == 0) { break; }
+                    }
+                    _ => bail!("получатель не принял файл за {} с", self.cfg.files.offer_timeout_s),
+                }
+            }
+            self.update_transfer(&hid, |t| t.status = "sending".into()).await;
             let mut f = std::fs::File::open(path)?;
             let mut next = 0u32;
             let mut done_ok = false;   // итог мог прийти раньше подтверждения последнего окна

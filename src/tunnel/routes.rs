@@ -10,10 +10,14 @@ use tokio::sync::RwLock;
 use crate::types::now_ms;
 
 const MAX_ROUTES: usize = 4096;
+/// Маршрутов одного инициатора: иначе один узел занимает всю таблицу ретранслятора и тот никому не строит туннели.
+pub const MAX_ROUTES_PER_INITIATOR: usize = 64;
 
 #[derive(Default)]
 pub struct TunnelRoutes {
     map: RwLock<HashMap<[u8; 16], (SocketAddr, Option<crate::types::NodeId>, u64)>>,
+    /// tunnel_id → инициатор (для квоты).
+    owners: RwLock<HashMap<[u8; 16], (crate::types::NodeId, u64)>>,
 }
 
 impl TunnelRoutes {
@@ -34,6 +38,21 @@ impl TunnelRoutes {
         }
         m.insert(tid, (next, next_id, now + ttl_seconds * 1000));
         true
+    }
+
+    /// С квотой на инициатора: false — таблица переполнена или у инициатора уже `MAX_ROUTES_PER_INITIATOR` живых маршрутов.
+    pub async fn insert_for(&self, initiator: crate::types::NodeId, tid: [u8; 16], next: SocketAddr,
+                            next_id: Option<crate::types::NodeId>, ttl_seconds: u64) -> bool {
+        let now = now_ms();
+        {
+            let mut o = self.owners.write().await;
+            o.retain(|_, (_, exp)| *exp > now);
+            if o.values().filter(|(id, _)| *id == initiator).count() >= MAX_ROUTES_PER_INITIATOR { return false; }
+            o.insert(tid, (initiator, now + ttl_seconds * 1000));
+        }
+        if self.insert_with_id(tid, next, next_id, ttl_seconds).await { return true; }
+        self.owners.write().await.remove(&tid);
+        false
     }
 
     /// Есть ли живой маршрут для этого tunnel_id (защита от повторного/дублирующего BUILD).

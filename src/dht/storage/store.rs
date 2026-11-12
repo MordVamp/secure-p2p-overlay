@@ -29,6 +29,15 @@ impl DhtStore {
             debug!("DhtStore full ({} records), rejecting {}", self.max_records, record.key.to_hex());
             return false;
         }
+        // квота на публикатора: один узел не может занять всё хранилище (иначе чужие STORE отвергаются)
+        if !map.contains_key(&record.key) {
+            let quota = (self.max_records / 16).max(8);
+            let mine = map.values().filter(|r| r.publisher == record.publisher && !r.is_expired()).count();
+            if mine >= quota {
+                debug!("DhtStore: publisher {} reached quota {quota}", record.publisher.short());
+                return false;
+            }
+        }
         // §10.3: откат версии отвергается; равный sequence допустим только как refresh той же записи
         if let Some(old) = map.get(&record.key) {
             if !old.is_expired() && old.publisher == record.publisher {

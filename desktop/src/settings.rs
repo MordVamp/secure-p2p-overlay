@@ -47,6 +47,8 @@ pub struct Settings {
     /// Псевдоним, зарегистрированный этим узлом из приложения (для отображения).
     pub my_alias:    String,
     pub contacts:    Vec<Contact>,
+    /// Тема оформления: dark | light | blood | night | forest | bloom.
+    pub theme:       String,
 }
 
 impl Default for Settings {
@@ -68,6 +70,7 @@ impl Default for Settings {
             verified: vec![],
             my_alias: String::new(),
             contacts: vec![],
+            theme: "dark".into(),
         }
     }
 }

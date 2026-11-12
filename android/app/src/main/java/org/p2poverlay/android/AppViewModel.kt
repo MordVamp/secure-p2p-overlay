@@ -525,6 +525,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Предложенный файл: принять или отклонить. */
+    fun fileDecision(id: String, accept: Boolean) {
+        getApplication<Application>().getSystemService(android.app.NotificationManager::class.java).cancel(NodeService.fileNotifId(id))
+        viewModelScope.launch {
+            runCatching { api.post(if (accept) "/api/file/accept" else "/api/file/reject", mapOf("transfer_id" to id)) }
+                .onSuccess { if (!it.optBoolean("ok")) toast("Не удалось: ${it.optString("error")}") }
+                .onFailure { toast("Ошибка: ${it.message}") }
+            refreshFiles()
+        }
+    }
+
     /** Файл для снимка камеры (FileProvider → камера пишет туда). */
     fun newPhotoFile(): File {
         val dir = File(getApplication<Application>().cacheDir, "camera").apply { mkdirs() }

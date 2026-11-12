@@ -596,8 +596,9 @@ impl RpcHandler {
                 anyhow::bail!("TUNNEL_BUILD: tunnel_id уже используется");
             }
             let ttl = req.ttl_seconds.min(self.cfg.tunnel.ttl_seconds);
-            if !self.routes.insert_with_id(tid, next.socket_addr()?, Some(next.node_id), ttl).await {
-                anyhow::bail!("TUNNEL_BUILD: таблица маршрутов переполнена");
+            if !self.routes.insert_for(req.initiator.node_id, tid, next.socket_addr()?, Some(next.node_id), ttl).await {
+                anyhow::bail!("TUNNEL_BUILD: таблица маршрутов переполнена или у инициатора {} уже {} маршрутов",
+                              req.initiator.node_id.short(), crate::tunnel::routes::MAX_ROUTES_PER_INITIATOR);
             }
         }
         let ok = TunnelBuildOkPayload {

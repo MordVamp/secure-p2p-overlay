@@ -76,6 +76,10 @@ struct Cli {
     #[arg(long)]
     pool_scope: Option<String>,
 
+    /// Согласие на приём файлов: known (по умолчанию) | ask | auto (стенд, эксперименты)
+    #[arg(long)]
+    file_accept: Option<String>,
+
     /// Режим «только клиент»: не быть ретранслятором чужих туннелей (экономия батареи и трафика)
     #[arg(long)]
     no_relay: bool,
@@ -126,6 +130,10 @@ async fn main() -> Result<()> {
     if cli.reuse_connections { cfg.transport.reuse_connections = true; }
     if cli.no_reuse_connections { cfg.transport.reuse_connections = false; }
     if let Some(s) = cli.pool_scope { cfg.transport.pool_scope = s; }
+    if let Some(a) = cli.file_accept { cfg.files.accept = a; }
+    if !["known", "ask", "auto"].contains(&cfg.files.accept.as_str()) {
+        anyhow::bail!("files.accept = {}: допустимо known, ask, auto", cfg.files.accept);
+    }
     if !["tunnels", "all"].contains(&cfg.transport.pool_scope.as_str()) {
         anyhow::bail!("transport.pool_scope = {}: допустимо tunnels, all", cfg.transport.pool_scope);
     }

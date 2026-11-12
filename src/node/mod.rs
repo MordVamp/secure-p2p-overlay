@@ -366,6 +366,13 @@ impl Node {
                     match res {
                         Ok((stream, peer_addr)) => {
                             debug!("Connection from {}", peer_addr);
+                            // предел входящих соединений: всего и с одного адреса — иначе один узел исчерпывает
+                            // дескрипторы и задачи; закрытие гарда (конец задачи) освобождает место
+                            let Some(guard) = ConnGuard::acquire(peer_addr.ip()) else {
+                                warn!("соединение с {peer_addr} отклонено: предел входящих соединений");
+                                drop(stream);
+                                continue;
+                            };
                             let _ = stream.set_nodelay(true);   // см. rpc::dial_expect: без Нейгла и отложенных ответов
                             let handler  = self.make_handler();
                             let timeout  = self.cfg.transport.read_timeout_ms;
@@ -378,6 +385,7 @@ impl Node {
                             let inflight = if pooled { 64 } else { 1 };
                             let mut rx2  = shutdown_rx.clone();
                             tokio::spawn(async move {
+                                let _guard = guard;
                                 let hs_timeout = std::time::Duration::from_millis(handshake_ms);
                                 tokio::select! {
                                     res = async move {
@@ -494,4 +502,40 @@ async fn handle_conn(
     drop(tx);
     let _ = writer.await;
     res
+}
+
+// ── предел входящих соединений ───────────────────────────────────────────────
+
+/// Всего входящих соединений и с одного адреса (loopback — без предела по адресу: стенд целиком на 127.0.0.1).
+pub const MAX_INBOUND: usize = 1024;
+pub const MAX_INBOUND_PER_IP: usize = 64;
+
+static INBOUND: std::sync::Mutex<Option<std::collections::HashMap<std::net::IpAddr, usize>>> = std::sync::Mutex::new(None);
+static INBOUND_TOTAL: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+pub struct ConnGuard(std::net::IpAddr);
+
+impl ConnGuard {
+    pub fn acquire(ip: std::net::IpAddr) -> Option<Self> {
+        use std::sync::atomic::Ordering;
+        let mut g = INBOUND.lock().unwrap_or_else(|e| e.into_inner());
+        let m = g.get_or_insert_with(Default::default);
+        if INBOUND_TOTAL.load(Ordering::Relaxed) >= MAX_INBOUND { return None; }
+        let n = m.entry(ip).or_insert(0);
+        if !ip.is_loopback() && *n >= MAX_INBOUND_PER_IP { return None; }
+        *n += 1;
+        INBOUND_TOTAL.fetch_add(1, Ordering::Relaxed);
+        Some(Self(ip))
+    }
+}
+
+impl Drop for ConnGuard {
+    fn drop(&mut self) {
+        use std::sync::atomic::Ordering;
+        let mut g = INBOUND.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(m) = g.as_mut() {
+            if let Some(n) = m.get_mut(&self.0) { *n -= 1; if *n == 0 { m.remove(&self.0); } }
+        }
+        INBOUND_TOTAL.fetch_sub(1, Ordering::Relaxed);
+    }
 }

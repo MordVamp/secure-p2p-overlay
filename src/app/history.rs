@@ -124,6 +124,14 @@ impl History {
         s.lines().any(|l| l.contains(&needle) && l.contains("\"dir\":\"in\""))
     }
 
+    /// Писали ли мы сами этому узлу (признак «знакомого» для автоматического приёма файлов).
+    pub async fn has_outgoing_to(&self, peer: &str) -> bool {
+        let _g = self.lock.lock().await;
+        let Ok(s) = std::fs::read_to_string(&self.path) else { return false };
+        let p = format!("\"peer\":\"{peer}\"");
+        s.lines().any(|l| l.contains("\"dir\":\"out\"") && l.contains(&p))
+    }
+
     /// Собеседники, с которыми была переписка (для проверки почтовых ящиков).
     pub async fn peers(&self) -> Vec<String> {
         let _g = self.lock.lock().await;

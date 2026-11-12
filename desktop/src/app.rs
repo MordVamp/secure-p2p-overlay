@@ -175,6 +175,7 @@ fn ago(ms_ago: u64) -> String {
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         theme::apply(&cc.egui_ctx);
+        theme::set(&cc.egui_ctx, &Settings::load().theme);
         let (tx, rx) = channel();
         let s = Settings::load();
         let port = Arc::new(AtomicU16::new(0));
@@ -236,17 +237,17 @@ impl App {
         match self.s.mode {
             // на порту API уже отвечает узел (напр. остался от прошлого запуска) — подключаемся к нему
             Mode::Launch if api::get(self.s.gui_port, "/api/status", &[]).is_ok() => {
-                self.toast(format!("На порту {} уже работает узел — подключаюсь к нему", self.s.gui_port), YELLOW);
+                self.toast(format!("На порту {} уже работает узел — подключаюсь к нему", self.s.gui_port), YELLOW());
                 self.port.store(self.s.gui_port, Ordering::Relaxed);
             }
             Mode::Launch => match LocalNode::start(&self.s) {
                 Ok(n) => {
-                    self.toast(format!("Узел запущен (pid {})", n.pid()), GREEN);
+                    self.toast(format!("Узел запущен (pid {})", n.pid()), GREEN());
                     self.local = Some(n);
                     self.helpers_pending = self.s.helpers > 0;
                     self.port.store(self.s.gui_port, Ordering::Relaxed);
                 }
-                Err(e) => self.toast(e, RED),
+                Err(e) => self.toast(e, RED()),
             },
             Mode::Attach => self.port.store(self.s.attach_port, Ordering::Relaxed),
         }
@@ -268,18 +269,23 @@ impl App {
     fn drain(&mut self) {
         while let Ok(m) = self.rx.try_recv() {
             match m {
-                Msg::Status(Ok(v)) => { self.status = Some(v); self.conn_err = None; }
+                Msg::Status(Ok(v)) => {
+                    // впервые на связи: контакты — узлу (знакомые: их файлы до 16 МиБ принимаются без вопроса)
+                    if self.status.is_none() { self.watch_contacts(); }
+                    self.status = Some(v);
+                    self.conn_err = None;
+                }
                 Msg::Status(Err(e)) => { if self.port.load(Ordering::Relaxed) != 0 { self.conn_err = Some(e); } }
                 Msg::History(h) => { if self.port.load(Ordering::Relaxed) != 0 { self.history = h; self.rebuild_chats(); } }
                 Msg::Sent { pending, res } => {
                     self.pending.retain(|p| p.id != pending);
                     match res {
-                        Err(e) => self.toast(format!("Не доставлено: {e}"), RED),
+                        Err(e) => self.toast(format!("Не доставлено: {e}"), RED()),
                         Ok(v) if v["queued"].as_bool() == Some(true) =>
-                            self.toast("Получатель недоступен — сообщение в почтовом ящике DHT, он заберёт его сам", YELLOW),
+                            self.toast("Получатель недоступен — сообщение в почтовом ящике DHT, он заберёт его сам", YELLOW()),
                         Ok(v) if v["results"].is_array() => {
                             let bad = v["results"].as_array().unwrap().iter().filter(|r| r["status"] != "delivered").count();
-                            if bad > 0 { self.toast(format!("Группа: не доставлено сразу {bad} участникам"), YELLOW); }
+                            if bad > 0 { self.toast(format!("Группа: не доставлено сразу {bad} участникам"), YELLOW()); }
                         }
                         _ => {}
                     }
@@ -300,7 +306,7 @@ impl App {
                             Purpose::AddContact(name) => self.add_contact(name, id),
                         }
                     }
-                    Err(e) => self.toast(format!("@{alias}: {e}"), RED),
+                    Err(e) => self.toast(format!("@{alias}: {e}"), RED()),
                 },
                 Msg::Files(v) => self.files = v,
                 Msg::Relays(v) => if !v.is_null() { self.relays = v },
@@ -310,28 +316,28 @@ impl App {
                         Ok(v) => {
                             let r = &v["report"];
                             self.toast(format!("«{name}» доставлен: {:.2} МиБ/с, служебная доля {:.1}%",
-                                               r["goodput_mib_s"].as_f64().unwrap_or(0.0), r["overhead_share"].as_f64().unwrap_or(0.0) * 100.0), GREEN);
+                                               r["goodput_mib_s"].as_f64().unwrap_or(0.0), r["overhead_share"].as_f64().unwrap_or(0.0) * 100.0), GREEN());
                         }
-                        Err(e) => self.toast(format!("«{name}» не доставлен: {e}"), RED),
+                        Err(e) => self.toast(format!("«{name}» не доставлен: {e}"), RED()),
                     }
                 }
                 Msg::Safety { peer, res } => self.safety = Some((peer, res)),
                 Msg::Deleted { peer, res } => match api::ok(res) {
                     Ok(v) => {
-                        self.toast(format!("Переписка удалена ({} записей)", api::s(&v, "removed")), GREEN);
+                        self.toast(format!("Переписка удалена ({} записей)", api::s(&v, "removed")), GREEN());
                         if self.active.as_deref() == Some(peer.as_str()) { self.active = None; }
                     }
-                    Err(e) => self.toast(e, RED),
+                    Err(e) => self.toast(e, RED()),
                 },
                 Msg::Calls(v) => { self.calls = v; self.sync_call_audio(); }
-                Msg::CallDone { what, res } => if let Err(e) = api::ok(res) { self.toast(format!("{what}: {e}"), RED); },
+                Msg::CallDone { what, res } => if let Err(e) = api::ok(res) { self.toast(format!("{what}: {e}"), RED()); },
                 Msg::Alias { name, res } => match api::ok(res) {
                     Ok(v) => {
-                        self.toast(format!("Псевдоним @{name} опубликован ({} реплик)", api::s(&v, "stored_on")), GREEN);
+                        self.toast(format!("Псевдоним @{name} опубликован ({} реплик)", api::s(&v, "stored_on")), GREEN());
                         self.s.my_alias = name;
                         let _ = self.s.save();
                     }
-                    Err(e) => self.toast(format!("@{name}: {e}"), RED),
+                    Err(e) => self.toast(format!("@{name}: {e}"), RED()),
                 },
             }
         }
@@ -385,7 +391,7 @@ impl App {
         self.chats = chats;
         for (peer, text) in fresh {
             let notified = self.toasts.iter().any(|t| t.text.ends_with(&text));
-            if !notified { self.toast(format!("✉ {}: {text}", self.display_name(&peer)), ACCENT); }
+            if !notified { self.toast(format!("✉ {}: {text}", self.display_name(&peer)), ACCENT()); }
         }
         self.history_loaded = true;
     }
@@ -402,6 +408,12 @@ impl App {
         self.route = None;
     }
 
+    fn watch_contacts(&self) {
+        let ids: Vec<String> = self.s.contacts.iter().map(|c| c.node_id.clone()).collect();
+        if ids.is_empty() { return; }
+        self.bg(move |p| { let _ = api::post(p, "/api/watch", &[("peers", &ids.join(","))]); Msg::Relays(Value::Null) });
+    }
+
     fn add_contact(&mut self, name: String, id: String) {
         let name = if name.trim().is_empty() { format!("{}…", short(&id)) } else { name.trim().to_owned() };
         match self.s.contacts.iter_mut().find(|c| c.node_id == id) {
@@ -409,7 +421,8 @@ impl App {
             None => self.s.contacts.push(Contact { name: name.clone(), node_id: id }),
         }
         let _ = self.s.save();
-        self.toast(format!("Контакт «{name}» сохранён"), GREEN);
+        self.watch_contacts();
+        self.toast(format!("Контакт «{name}» сохранён"), GREEN());
     }
 
     /// NodeID или @псевдоним → действие (псевдоним разрешается через DHT в фоне).
@@ -426,7 +439,7 @@ impl App {
                 Msg::Resolved { purpose, alias, res }
             });
         } else {
-            self.toast("Нужен NodeID (64 hex) или @псевдоним", YELLOW);
+            self.toast("Нужен NodeID (64 hex) или @псевдоним", YELLOW());
         }
     }
 
@@ -534,7 +547,7 @@ impl eframe::App for App {
                 self.local = None;
                 self.port.store(0, Ordering::Relaxed);
                 self.status = None;
-                self.toast("Процесс узла завершился — см. журнал на вкладке «Подключение»", RED);
+                self.toast("Процесс узла завершился — см. журнал на вкладке «Подключение»", RED());
             }
         }
         if self.helpers_pending && self.local.is_some() && self.connected() {
@@ -542,11 +555,11 @@ impl eframe::App for App {
             for i in 1..=self.s.helpers as u16 {
                 match LocalNode::start_helper(&self.s, i) {
                     Ok(n) => self.helpers.push(n),
-                    Err(e) => { self.toast(format!("ретранслятор {i}: {e}"), RED); break; }
+                    Err(e) => { self.toast(format!("ретранслятор {i}: {e}"), RED()); break; }
                 }
             }
             if !self.helpers.is_empty() {
-                self.toast(format!("Запущено ретрансляторов: {}", self.helpers.len()), GREEN);
+                self.toast(format!("Запущено ретрансляторов: {}", self.helpers.len()), GREEN());
             }
         }
         self.rail(ctx);
@@ -555,8 +568,9 @@ impl eframe::App for App {
             Tab::Chats => self.chats_tab(ctx),
             tab => {
                 egui::CentralPanel::default()
-                    .frame(egui::Frame::default().fill(BG_MAIN).inner_margin(Margin::same(24)))
+                    .frame(egui::Frame::default().fill(BG_MAIN()).inner_margin(Margin::same(24)))
                     .show(ctx, |ui| {
+                        theme::decor_bg(ui, true);
                         ScrollArea::vertical().auto_shrink([false; 2]).show(ui, |ui| match tab {
                             Tab::Contacts => self.contacts_tab(ui),
                             Tab::Files => self.files_tab(ui),
@@ -569,8 +583,9 @@ impl eframe::App for App {
                     });
             }
         }
+        theme::decor_top(ctx);
         self.toasts_ui(ctx);
-        ctx.request_repaint_after(Duration::from_millis(500));
+        ctx.request_repaint_after(Duration::from_millis(if theme::animated() { 40 } else { 500 }));
     }
 
     /// Закрытие окна: остановить узел, запущенный приложением.
@@ -583,11 +598,11 @@ impl eframe::App for App {
 impl App {
     fn rail(&mut self, ctx: &egui::Context) {
         egui::SidePanel::left("rail").resizable(false).exact_width(76.0)
-            .frame(egui::Frame::default().fill(BG_RAIL).inner_margin(Margin::symmetric(14, 16)))
+            .frame(egui::Frame::default().fill(BG_RAIL()).inner_margin(Margin::symmetric(14, 16)))
             .show(ctx, |ui| {
                 ui.vertical_centered(|ui| {
                     let (r, _) = ui.allocate_exact_size(Vec2::splat(48.0), egui::Sense::hover());
-                    ui.painter().rect_filled(r, CornerRadius::same(16), ACCENT);
+                    ui.painter().rect_filled(r, CornerRadius::same(16), ACCENT());
                     ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, "P2P",
                                       egui::FontId::proportional(15.0), Color32::WHITE);
                     ui.add_space(6.0);
@@ -604,9 +619,9 @@ impl App {
                         ui.add_space(4.0);
                     }
                     ui.with_layout(Layout::bottom_up(Align::Center), |ui| {
-                        let (c, tip) = if self.connected() { (GREEN, "узел на связи".to_owned()) }
-                            else if self.port.load(Ordering::Relaxed) != 0 { (YELLOW, format!("подключение… {}", self.conn_err.clone().unwrap_or_default())) }
-                            else { (RED, "не подключено".to_owned()) };
+                        let (c, tip) = if self.connected() { (GREEN(), "узел на связи".to_owned()) }
+                            else if self.port.load(Ordering::Relaxed) != 0 { (YELLOW(), format!("подключение… {}", self.conn_err.clone().unwrap_or_default())) }
+                            else { (RED(), "не подключено".to_owned()) };
                         let (r, resp) = ui.allocate_exact_size(Vec2::splat(18.0), egui::Sense::hover());
                         ui.painter().circle_filled(r.center(), 6.0, c);
                         resp.on_hover_text(tip);
@@ -620,7 +635,7 @@ impl App {
         ui.vertical_centered(|ui| {
             ui.label(RichText::new("🔌").size(56.0));
             ui.label(RichText::new("Нет связи с узлом").size(20.0).strong());
-            ui.label(RichText::new(self.conn_err.clone().unwrap_or_else(|| "Запустите свой узел или подключитесь к работающему".into())).color(MUTED));
+            ui.label(RichText::new(self.conn_err.clone().unwrap_or_else(|| "Запустите свой узел или подключитесь к работающему".into())).color(MUTED()));
             ui.add_space(8.0);
             if ui.add(primary("Открыть «Подключение»")).clicked() { self.tab = Tab::Connection; }
         });
@@ -630,9 +645,13 @@ impl App {
 
     fn chats_tab(&mut self, ctx: &egui::Context) {
         egui::SidePanel::left("chat_list").resizable(false).exact_width(290.0)
-            .frame(egui::Frame::default().fill(BG_SIDE).inner_margin(Margin::symmetric(12, 16)))
+            .frame(egui::Frame::default().fill(BG_SIDE()).inner_margin(Margin::symmetric(12, 16)))
             .show(ctx, |ui| {
-                ui.label(RichText::new("Чаты").size(20.0).strong());
+                theme::decor_bg(ui, false);
+                ui.horizontal(|ui| {
+                    theme::glyph(ui, 22.0);
+                    ui.label(RichText::new("Чаты").size(20.0).strong());
+                });
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
                     let w = ui.available_width() - 40.0 - ui.spacing().item_spacing.x;
@@ -650,7 +669,7 @@ impl App {
                     for c in &self.s.contacts { if !peers.contains(&c.node_id) { peers.push(c.node_id.clone()); } }
                     if let Some(a) = &self.active { if !peers.contains(a) { peers.insert(0, a.clone()); } }
                     if peers.is_empty() {
-                        ui.label(RichText::new("Пока нет переписки. Введите NodeID собеседника или его @псевдоним выше.").color(MUTED));
+                        ui.label(RichText::new("Пока нет переписки. Введите NodeID собеседника или его @псевдоним выше.").color(MUTED()));
                     }
                     for peer in peers {
                         if self.chat_row(ui, &peer) { self.open_chat(peer); }
@@ -658,7 +677,7 @@ impl App {
                 });
             });
 
-        egui::CentralPanel::default().frame(egui::Frame::default().fill(BG_MAIN)).show(ctx, |ui| {
+        egui::CentralPanel::default().frame(egui::Frame::default().fill(BG_MAIN())).show(ctx, |ui| {
             if !self.connected() { self.not_connected_hint(ui); return; }
             match self.active.clone() {
                 None => {
@@ -666,7 +685,7 @@ impl App {
                     ui.vertical_centered(|ui| {
                         ui.label(RichText::new("💬").size(64.0));
                         ui.label(RichText::new("Выберите чат или начните новый").size(20.0).strong());
-                        ui.label(RichText::new("Сообщения идут через туннель из ≥2 ретрансляторов и шифруются сквозным ключом получателя").color(MUTED));
+                        ui.label(RichText::new("Сообщения идут через туннель из ≥2 ретрансляторов и шифруются сквозным ключом получателя").color(MUTED()));
                     });
                 }
                 Some(peer) => self.conversation(ui, peer),
@@ -678,7 +697,7 @@ impl App {
         let selected = self.active.as_deref() == Some(peer);
         let chat = self.chats.iter().find(|c| c.peer == peer);
         let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 58.0), egui::Sense::click());
-        let fill = if selected { BG_HOVER } else if resp.hovered() { BG_CARD } else { Color32::TRANSPARENT };
+        let fill = if selected { BG_HOVER() } else if resp.hovered() { BG_CARD() } else { Color32::TRANSPARENT };
         ui.painter().rect_filled(rect, CornerRadius::same(10), fill);
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink2(Vec2::new(10.0, 8.0))).layout(Layout::left_to_right(Align::Center)));
         let name = self.display_name(peer);
@@ -691,17 +710,17 @@ impl App {
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         let n = self.unread(peer);
                         if n > 0 {
-                            egui::Frame::default().fill(RED).corner_radius(CornerRadius::same(9)).inner_margin(Margin::symmetric(6, 0))
+                            egui::Frame::default().fill(RED()).corner_radius(CornerRadius::same(9)).inner_margin(Margin::symmetric(6, 0))
                                 .show(ui, |ui| ui.label(RichText::new(n.to_string()).size(12.0).color(Color32::WHITE)));
                         }
-                        ui.label(RichText::new(self.time(c.last_ts)).size(12.0).color(MUTED));
+                        ui.label(RichText::new(self.time(c.last_ts)).size(12.0).color(MUTED()));
                     });
                 }
             });
             let preview = chat.and_then(|c| c.msgs.last()).map(|m| {
                 if m.mine { format!("Вы: {}", m.text) } else { m.text.clone() }
             }).unwrap_or_else(|| format!("{}…", short(peer)));
-            ui.add(egui::Label::new(RichText::new(preview).size(13.0).color(MUTED)).truncate());
+            ui.add(egui::Label::new(RichText::new(preview).size(13.0).color(MUTED())).truncate());
         });
         resp.clicked()
     }
@@ -709,7 +728,7 @@ impl App {
     fn conversation(&mut self, ui: &mut egui::Ui, peer: String) {
         let name = self.display_name(&peer);
         egui::TopBottomPanel::top("conv_head")
-            .frame(egui::Frame::default().fill(BG_MAIN).inner_margin(Margin::symmetric(20, 12)).stroke(Stroke::new(1.0_f32, BG_RAIL)))
+            .frame(egui::Frame::default().fill(BG_MAIN()).inner_margin(Margin::symmetric(20, 12)).stroke(Stroke::new(1.0_f32, BG_RAIL())))
             .show_inside(ui, |ui| {
                 ui.horizontal(|ui| {
                     theme::avatar(ui, &peer, &name, 40.0);
@@ -717,15 +736,15 @@ impl App {
                         ui.spacing_mut().item_spacing.y = 0.0;
                         ui.horizontal(|ui| {
                             ui.label(RichText::new(&name).size(17.0).strong());
-                            if self.s.verified.contains(&peer) { theme::pill(ui, "сверен", GREEN); }
+                            if self.s.verified.contains(&peer) { theme::pill(ui, "сверен", GREEN()); }
                         });
                         if self.typing(&peer) {
-                            ui.label(RichText::new("печатает…").size(12.0).color(ACCENT));
+                            ui.label(RichText::new("печатает…").size(12.0).color(ACCENT()));
                         } else if let Some((_, members)) = self.groups.get(&peer) {
                             let names: Vec<String> = members.iter().map(|m| self.display_name(m)).collect();
-                            ui.label(RichText::new(names.join(", ")).size(11.5).color(MUTED));
+                            ui.label(RichText::new(names.join(", ")).size(11.5).color(MUTED()));
                         } else {
-                            ui.label(RichText::new(&peer).size(11.5).color(MUTED).monospace());
+                            ui.label(RichText::new(&peer).size(11.5).color(MUTED()).monospace());
                         }
                     });
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -756,7 +775,7 @@ impl App {
                         }
                         if ui.button("📋").on_hover_text("Скопировать NodeID").clicked() {
                             ui.ctx().copy_text(peer.clone());
-                            self.toast("NodeID скопирован", GREEN);
+                            self.toast("NodeID скопирован", GREEN());
                         }
                         if self.s.contact_name(&peer).is_none() && ui.button("⭐ В контакты").clicked() {
                             self.c_id = peer.clone();
@@ -776,7 +795,7 @@ impl App {
                         ui.add_space(6.0);
                         match r {
                             Ok(v) => {
-                                ui.label(RichText::new("Номер безопасности — у собеседника на экране должны быть те же цифры:").size(12.5).color(MUTED));
+                                ui.label(RichText::new("Номер безопасности — у собеседника на экране должны быть те же цифры:").size(12.5).color(MUTED()));
                                 let groups: Vec<&str> = v["safety"].as_str().unwrap_or("").split(' ').collect();
                                 for row in groups.chunks(6) {
                                     ui.label(RichText::new(row.join("  ")).monospace().size(17.0));
@@ -787,7 +806,7 @@ impl App {
                                     if ui.button("Скрыть").clicked() { verify = Some(ok); }
                                 });
                             }
-                            Err(e) => { ui.label(RichText::new(e).color(RED)); }
+                            Err(e) => { ui.label(RichText::new(e).color(RED())); }
                         }
                     }
                 }
@@ -800,7 +819,7 @@ impl App {
             });
 
         egui::TopBottomPanel::bottom("composer")
-            .frame(egui::Frame::default().fill(BG_MAIN).inner_margin(Margin::symmetric(20, 14)))
+            .frame(egui::Frame::default().fill(BG_MAIN()).inner_margin(Margin::symmetric(20, 14)))
             .show_inside(ui, |ui| {
                 ui.horizontal(|ui| {
                     let r = ui.add(field(&mut self.composer)
@@ -814,16 +833,17 @@ impl App {
                         r.request_focus();
                     }
                 });
-                ui.label(RichText::new("🔒 E2E: X25519 + AES-256-GCM · подпись Ed25519 · доставка подтверждается APP_ACK").size(11.5).color(MUTED));
+                ui.label(RichText::new("🔒 E2E: X25519 + AES-256-GCM · подпись Ed25519 · доставка подтверждается APP_ACK").size(11.5).color(MUTED()));
             });
 
-        egui::CentralPanel::default().frame(egui::Frame::default().fill(BG_MAIN).inner_margin(Margin::symmetric(20, 10)))
+        egui::CentralPanel::default().frame(egui::Frame::default().fill(BG_MAIN()).inner_margin(Margin::symmetric(20, 10)))
             .show_inside(ui, |ui| {
+                theme::decor_bg(ui, true);
                 ScrollArea::vertical().stick_to_bottom(true).auto_shrink([false; 2]).show(ui, |ui| {
                     let chat = self.chats.iter().find(|c| c.peer == peer);
                     if chat.is_none() && !self.pending.iter().any(|p| p.peer == peer) {
                         ui.add_space(40.0);
-                        ui.vertical_centered(|ui| ui.label(RichText::new("Сообщений пока нет — напишите первым").color(MUTED)));
+                        ui.vertical_centered(|ui| ui.label(RichText::new("Сообщений пока нет — напишите первым").color(MUTED())));
                     }
                     let group = Self::is_group(&peer);
                     if let Some(c) = chat {
@@ -835,7 +855,7 @@ impl App {
                                           rtt: None, lookup: None, build: None, send: None, error: None };
                         self.bubble(ui, &m, group);
                     }
-                    if self.typing(&peer) { ui.label(RichText::new("печатает…").color(ACCENT).size(13.0)); }
+                    if self.typing(&peer) { ui.label(RichText::new("печатает…").color(ACCENT()).size(13.0)); }
                 });
             });
         if ui.ctx().input(|i| i.focused) { self.report_read(&peer); }
@@ -845,27 +865,27 @@ impl App {
         let max_w = (ui.available_width() * 0.66).max(240.0);
         let text = if m.text.is_empty() { "—" } else { m.text.as_str() };
         let (icon, icon_color) = match m.status.as_str() {
-            _ if m.read => ("✔✔ прочитано", ACCENT),
-            "queued" => ("🕓 в почтовом ящике", YELLOW),
-            "partial" => ("✔ не всем", YELLOW),
-            "delivered" => ("✔✔", GREEN),
-            "sent" => ("✔", TEXT),
-            "pending" => ("⏳", YELLOW),
-            "received" => ("", TEXT),
-            _ => ("✖", RED),
+            _ if m.read => ("✔✔ прочитано", ACCENT()),
+            "queued" => ("🕓 в почтовом ящике", YELLOW()),
+            "partial" => ("✔ не всем", YELLOW()),
+            "delivered" => ("✔✔", GREEN()),
+            "sent" => ("✔", TEXT()),
+            "pending" => ("⏳", YELLOW()),
+            "received" => ("", TEXT()),
+            _ => ("✖", RED()),
         };
         let footer = format!("{}  {icon}  {}", self.time(m.ts), m.rtt.map(|r| format!("{r} мс")).unwrap_or_default());
         // ширина пузыря = ширина текста (с переносом по max_w), а не всей колонки
         let body = egui::TextStyle::Body.resolve(ui.style());
         let w = ui.fonts(|f| {
-            let t = f.layout(text.to_owned(), body.clone(), TEXT, max_w).size().x;
-            let foot = f.layout_no_wrap(footer.clone(), egui::FontId::proportional(11.0), TEXT).size().x;
+            let t = f.layout(text.to_owned(), body.clone(), TEXT(), max_w).size().x;
+            let foot = f.layout_no_wrap(footer.clone(), egui::FontId::proportional(11.0), TEXT()).size().x;
             t.max(foot + 6.0).min(max_w).ceil()
         });
         let (fill, radius) = if m.mine {
-            (ACCENT_DIM, CornerRadius { nw: 14, ne: 14, sw: 14, se: 4 })
+            (ACCENT_DIM(), CornerRadius { nw: 14, ne: 14, sw: 14, se: 4 })
         } else {
-            (BG_CARD, CornerRadius { nw: 14, ne: 14, sw: 4, se: 14 })
+            (BG_CARD(), CornerRadius { nw: 14, ne: 14, sw: 4, se: 14 })
         };
         ui.horizontal(|ui| {
             if m.mine { ui.add_space((ui.available_width() - w - 24.0).max(0.0)); }
@@ -878,17 +898,18 @@ impl App {
                         if group && !m.mine {
                             ui.label(RichText::new(self.display_name(&m.author)).size(12.5).strong().color(theme::color_for(&m.author)));
                         }
-                        ui.add(egui::Label::new(RichText::new(text).color(TEXT)).wrap());
+                        ui.add(egui::Label::new(RichText::new(text).color(if m.mine { ON_ACCENT() } else { TEXT() })).wrap());
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 6.0;
-                            ui.label(RichText::new(self.time(m.ts)).size(11.0).color(TEXT.gamma_multiply(0.6)));
+                            ui.label(RichText::new(self.time(m.ts)).size(11.0).color(if m.mine { ON_ACCENT() } else { TEXT() }.gamma_multiply(0.7)));
                             if m.mine && !icon.is_empty() {
                                 ui.label(RichText::new(icon).size(11.0).color(icon_color));
-                                if let Some(r) = m.rtt { ui.label(RichText::new(format!("{r} мс")).size(11.0).color(TEXT.gamma_multiply(0.6))); }
+                                if let Some(r) = m.rtt { ui.label(RichText::new(format!("{r} мс")).size(11.0).color(ON_ACCENT().gamma_multiply(0.7))); }
                             }
                         });
                     });
                 }).response;
+            theme::bubble_decor(ui.painter(), resp.rect, m.mine, &format!("{}{}", m.id, m.ts));
             if m.mine {
                 let tip = match m.status.as_str() {
                     "delivered" => format!(
@@ -921,16 +942,16 @@ impl App {
                 theme::avatar(ui, if me.is_empty() { "me" } else { &me }, &label, 56.0);
                 ui.vertical(|ui| {
                     if !self.s.my_alias.is_empty() { ui.label(RichText::new(format!("@{}", self.s.my_alias)).size(18.0).strong()); }
-                    if me.is_empty() { ui.label(RichText::new("узел не подключён").color(MUTED)); }
+                    if me.is_empty() { ui.label(RichText::new("узел не подключён").color(MUTED())); }
                     else {
                         ui.horizontal(|ui| {
                             ui.label(RichText::new(&me).monospace().size(12.5));
                             if ui.small_button("📋").on_hover_text("Скопировать NodeID").clicked() {
                                 ui.ctx().copy_text(me.clone());
-                                self.toast("NodeID скопирован — отправьте его собеседнику", GREEN);
+                                self.toast("NodeID скопирован — отправьте его собеседнику", GREEN());
                             }
                         });
-                        if let Some(st) = &self.status { ui.label(RichText::new(format!("адрес {}", api::s(st, "addr"))).color(MUTED)); }
+                        if let Some(st) = &self.status { ui.label(RichText::new(format!("адрес {}", api::s(st, "addr"))).color(MUTED())); }
                     }
                 });
             });
@@ -943,7 +964,7 @@ impl App {
                     self.bg(move |p| { let res = api::post(p, "/api/alias", &[("name", &name)]); Msg::Alias { name, res } });
                 }
             });
-            ui.label(RichText::new("Псевдоним — подписанная запись в DHT: по @имени собеседники найдут ваш NodeID. Занятое имя перезаписать нельзя.").size(12.5).color(MUTED));
+            ui.label(RichText::new("Псевдоним — подписанная запись в DHT: по @имени собеседники найдут ваш NodeID. Занятое имя перезаписать нельзя.").size(12.5).color(MUTED()));
         });
         ui.add_space(12.0);
 
@@ -952,6 +973,18 @@ impl App {
             let mut changed = ui.checkbox(&mut self.s.send_typing, "Сообщать собеседнику «печатает…» (раз в 4 с, только по открытому туннелю)").changed();
             changed |= ui.checkbox(&mut self.s.send_receipts, "Отправлять отчёты о прочтении").changed();
             if changed { let _ = self.s.save(); }
+        });
+        ui.add_space(12.0);
+
+        card(ui, |ui| {
+            section_title(ui, "Оформление");
+            if let Some(id) = theme::picker(ui) {
+                self.s.theme = id.to_owned();
+                let _ = self.s.save();
+                theme::set(ui.ctx(), id);
+            }
+            ui.label(RichText::new("Вампирские и фейские темы — с оформлением: кровь на панелях, замок и летучие мыши, \
+                                    светлячки и мухоморы, цветы, бабочки и пыльца.").size(12.5).color(MUTED()));
         });
         ui.add_space(12.0);
 
@@ -970,7 +1003,7 @@ impl App {
 
         section_title(ui, &format!("Адресная книга · {}", self.s.contacts.len()));
         if self.s.contacts.is_empty() {
-            ui.label(RichText::new("Пусто. Контакты хранятся локально в настройках приложения.").color(MUTED));
+            ui.label(RichText::new("Пусто. Контакты хранятся локально в настройках приложения.").color(MUTED()));
         }
         let mut remove = None;
         let mut open = None;
@@ -982,7 +1015,7 @@ impl App {
                     ui.vertical(|ui| {
                         ui.spacing_mut().item_spacing.y = 0.0;
                         ui.label(RichText::new(&c.name).strong());
-                        ui.label(RichText::new(&c.node_id).monospace().size(11.5).color(MUTED));
+                        ui.label(RichText::new(&c.node_id).monospace().size(11.5).color(MUTED()));
                     });
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         if ui.button("🗑").on_hover_text("Удалить").clicked() { remove = Some(i); }
@@ -1002,11 +1035,11 @@ impl App {
 
     fn coming_soon(&self, ui: &mut egui::Ui, feature: &str, title: &str, text: &str) {
         let supported = self.feature(feature);
-        egui::Frame::default().fill(YELLOW.gamma_multiply(0.08)).stroke(Stroke::new(1.0_f32, YELLOW.gamma_multiply(0.5)))
+        egui::Frame::default().fill(YELLOW().gamma_multiply(0.08)).stroke(Stroke::new(1.0_f32, YELLOW().gamma_multiply(0.5)))
             .corner_radius(CornerRadius::same(12)).inner_margin(Margin::same(16))
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
-                ui.label(RichText::new(title).size(16.0).strong().color(YELLOW));
+                ui.label(RichText::new(title).size(16.0).strong().color(YELLOW()));
                 ui.label(text);
                 ui.label(RichText::new(if supported {
                     format!("Узел сообщает features.{feature} = true, но этот клиент ещё не подключён к API функции.")
@@ -1014,7 +1047,7 @@ impl App {
                     format!("Подключённый узел сообщает features.{feature} = false — элементы ниже неактивны.")
                 } else {
                     "Узел не подключён.".to_owned()
-                }).size(12.5).color(MUTED));
+                }).size(12.5).color(MUTED()));
             });
         ui.add_space(14.0);
     }
@@ -1022,7 +1055,7 @@ impl App {
     fn files_tab(&mut self, ui: &mut egui::Ui) {
         ui.heading("Файлы");
         ui.label(RichText::new("Файл режется на блоки по 40 КиБ; каждый блок подписан и зашифрован для получателя, идёт через туннель; \
-                                получатель подтверждает окна блоков и в конце проверяет SHA-256.").color(MUTED));
+                                получатель подтверждает окна блоков и в конце проверяет SHA-256.").color(MUTED()));
         ui.add_space(10.0);
         if !self.connected() { self.not_connected_hint(ui); return; }
         // перетаскивание файла в окно
@@ -1053,23 +1086,23 @@ impl App {
                 }
             });
             let (r, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 90.0), egui::Sense::hover());
-            let c = if hovering { ACCENT } else { MUTED.gamma_multiply(0.5) };
+            let c = if hovering { ACCENT() } else { MUTED().gamma_multiply(0.5) };
             ui.painter().rect_stroke(r, CornerRadius::same(12), Stroke::new(1.5_f32, c), egui::StrokeKind::Inside);
             ui.painter().text(r.center(), egui::Align2::CENTER_CENTER,
                 if hovering { "Отпустите — путь подставится в поле выше" } else { "…или перетащите файл в окно" },
                 egui::FontId::proportional(15.0), c);
             if !self.f_sending.is_empty() {
-                ui.label(RichText::new(format!("⏳ отправляется: {}", self.f_sending.join(", "))).color(YELLOW));
+                ui.label(RichText::new(format!("⏳ отправляется: {}", self.f_sending.join(", "))).color(YELLOW()));
             }
         });
         ui.add_space(12.0);
         card(ui, |ui| {
             section_title(ui, "Передачи");
             if let Some(d) = self.files["downloads_dir"].as_str() {
-                ui.label(RichText::new(format!("Полученные файлы сохраняются в {d}")).size(12.5).color(MUTED));
+                ui.label(RichText::new(format!("Полученные файлы сохраняются в {d}")).size(12.5).color(MUTED()));
             }
             let list = self.files["transfers"].as_array().cloned().unwrap_or_default();
-            if list.is_empty() { ui.label(RichText::new("передач пока не было").color(MUTED)); return; }
+            if list.is_empty() { ui.label(RichText::new("передач пока не было").color(MUTED())); return; }
             egui::Grid::new("files_grid").num_columns(6).striped(true).spacing([18.0, 8.0]).show(ui, |ui| {
                 for h in ["", "Файл", "Собеседник", "Размер", "Прогресс", "Статус"] { ui.label(RichText::new(h).strong()); }
                 ui.end_row();
@@ -1084,11 +1117,20 @@ impl App {
                     let (done, all) = (api::u(t, "done_blocks").unwrap_or(0) as f32, api::u(t, "blocks").unwrap_or(1).max(1) as f32);
                     ui.add(egui::ProgressBar::new(done / all).desired_width(160.0).text(format!("{}/{}", done as u64, all as u64)));
                     let st = api::s(t, "status");
-                    let c = match st.as_str() { "sent" | "received" => GREEN, "failed" | "rejected" => RED, _ => YELLOW };
+                    let c = match st.as_str() { "sent" | "received" => GREEN(), "failed" | "rejected" => RED(), _ => YELLOW() };
                     let label = match st.as_str() { "sent" => "доставлен", "received" => "получен", "sending" => "отправка",
-                                                     "receiving" => "приём", "rejected" => "отклонён", _ => "ошибка" };
-                    let resp = theme::pill_resp(ui, label, c);
-                    if let Some(e) = t["error"].as_str() { resp.on_hover_text(e); }
+                                                     "receiving" => "приём", "rejected" => "отклонён", "offered" => "ждёт вашего решения",
+                                                     "waiting" => "ждёт согласия получателя", _ => "ошибка" };
+                    if st == "offered" {
+                        let id = api::s(t, "transfer_id");
+                        ui.horizontal(|ui| {
+                            if ui.add(primary("Принять")).clicked() { self.file_decision("/api/file/accept", id.clone()); }
+                            if ui.add(danger("Отклонить")).clicked() { self.file_decision("/api/file/reject", id.clone()); }
+                        });
+                    } else {
+                        let resp = theme::pill_resp(ui, label, c);
+                        if let Some(e) = t["error"].as_str() { resp.on_hover_text(e); }
+                    }
                     ui.end_row();
                 }
             });
@@ -1123,7 +1165,7 @@ impl App {
                 let token = hex_bytes(&api::s(&v, "token"));
                 match crate::voice::CallAudio::start(api::u(&v, "port").unwrap_or(0) as u16, token) {
                     Ok(a) => self.call_audio = Some(a),
-                    Err(e) => { self.call_err = Some(e.clone()); self.toast(format!("Звук: {e}"), RED); }
+                    Err(e) => { self.call_err = Some(e.clone()); self.toast(format!("Звук: {e}"), RED()); }
                 }
             }
             Err(e) => self.call_err = Some(e),
@@ -1164,7 +1206,7 @@ impl App {
             self.call_attention = Some(sid.clone());
             ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(egui::UserAttentionType::Critical));
         }
-        let fill = if incoming { ACCENT_DIM } else { GREEN.gamma_multiply(0.75) };
+        let fill = if incoming { ACCENT_DIM() } else { GREEN().gamma_multiply(0.75) };
         egui::TopBottomPanel::top("call_banner").frame(egui::Frame::default().fill(fill).inner_margin(Margin::symmetric(18, 10)))
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
@@ -1177,7 +1219,7 @@ impl App {
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         if incoming {
                             if ui.add(danger("Отклонить")).clicked() { self.call_action("/api/call/reject", sid.clone()); }
-                            if ui.add(egui::Button::new(RichText::new("Ответить").color(Color32::WHITE)).fill(GREEN)).clicked() {
+                            if ui.add(egui::Button::new(RichText::new("Ответить").color(Color32::WHITE)).fill(GREEN())).clicked() {
                                 self.call_action("/api/call/accept", sid.clone());
                                 self.tab = Tab::Calls;
                             }
@@ -1190,10 +1232,14 @@ impl App {
             });
     }
 
+    fn file_decision(&self, path: &'static str, id: String) {
+        self.bg(move |p| { let res = api::post(p, path, &[("transfer_id", &id)]); Msg::CallDone { what: "Файл".into(), res } });
+    }
+
     fn calls_tab(&mut self, ui: &mut egui::Ui) {
         ui.heading("Звонки");
         ui.label(RichText::new("Голос идёт через туннель из ≥2 ретрансляторов: Opus 16 кГц, свой ключ на каждый звонок (X25519 → \
-                                AES-256-GCM), кадры без подтверждений; групповой — «каждый с каждым», до 5 участников.").color(MUTED));
+                                AES-256-GCM), кадры без подтверждений; групповой — «каждый с каждым», до 5 участников.").color(MUTED()));
         ui.add_space(10.0);
         if !self.connected() { self.not_connected_hint(ui); return; }
         if !self.feature("calls") {
@@ -1212,9 +1258,9 @@ impl App {
         card(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label(RichText::new(self.call_title(s)).size(22.0).strong());
-                theme::pill(ui, &call_status(s), if s["state"] == "active" { GREEN } else { YELLOW });
+                theme::pill(ui, &call_status(s), if s["state"] == "active" { GREEN() } else { YELLOW() });
                 if let Some(m) = s["mos"].as_f64() {
-                    theme::pill_resp(ui, &format!("MOS {m:.1}"), if m >= 4.0 { GREEN } else if m >= 3.6 { YELLOW } else { RED })
+                    theme::pill_resp(ui, &format!("MOS {m:.1}"), if m >= 4.0 { GREEN() } else if m >= 3.6 { YELLOW() } else { RED() })
                         .on_hover_text("Оценка качества по E-модели ITU-T G.107: задержка «рот — ухо» и слышимые потери");
                 }
             });
@@ -1230,8 +1276,8 @@ impl App {
             ui.horizontal_wrapped(|ui| {
                 for (id, name, level, st, q) in tiles {
                     let speaking = level > 0.02;
-                    egui::Frame::default().fill(BG_MAIN).corner_radius(CornerRadius::same(14)).inner_margin(Margin::same(16))
-                        .stroke(Stroke::new(if speaking { 3.0_f32 } else { 1.0_f32 }, if speaking { GREEN } else { BG_RAIL }))
+                    egui::Frame::default().fill(BG_MAIN()).corner_radius(CornerRadius::same(14)).inner_margin(Margin::same(16))
+                        .stroke(Stroke::new(if speaking { 3.0_f32 } else { 1.0_f32 }, if speaking { GREEN() } else { BG_RAIL() }))
                         .show(ui, |ui| {
                             ui.set_width(160.0);
                             ui.vertical_centered(|ui| {
@@ -1245,7 +1291,7 @@ impl App {
                                         _ => "соединение…".into(),
                                     },
                                 };
-                                ui.label(RichText::new(sub).size(12.0).color(MUTED));
+                                ui.label(RichText::new(sub).size(12.0).color(MUTED()));
                             });
                         });
                 }
@@ -1254,7 +1300,7 @@ impl App {
         ui.add_space(12.0);
         ui.horizontal(|ui| {
             if incoming {
-                if ui.add_sized([170.0, 44.0], egui::Button::new(RichText::new("📞 Ответить").color(Color32::WHITE)).fill(GREEN)).clicked() {
+                if ui.add_sized([170.0, 44.0], egui::Button::new(RichText::new("📞 Ответить").color(Color32::WHITE)).fill(GREEN())).clicked() {
                     self.call_action("/api/call/accept", sid.clone());
                 }
                 if ui.add_sized([150.0, 44.0], danger("Отклонить")).clicked() { self.call_action("/api/call/reject", sid.clone()); }
@@ -1268,8 +1314,8 @@ impl App {
                 if ui.add_sized([150.0, 44.0], danger("⛔ Завершить")).clicked() { self.call_action("/api/call/hangup", sid.clone()); }
             }
         });
-        if let Some(a) = &self.call_audio { ui.label(RichText::new(&a.devices).size(12.0).color(MUTED)); }
-        if let Some(e) = &self.call_err { ui.label(RichText::new(format!("Звук: {e}")).color(RED)); }
+        if let Some(a) = &self.call_audio { ui.label(RichText::new(&a.devices).size(12.0).color(MUTED())); }
+        if let Some(e) = &self.call_err { ui.label(RichText::new(format!("Звук: {e}")).color(RED())); }
     }
 
     fn call_start_view(&mut self, ui: &mut egui::Ui) {
@@ -1280,7 +1326,7 @@ impl App {
             for (g, (name, members)) in &self.groups {
                 if members.len() <= 5 { targets.push((g.clone(), format!("👥 {name} ({})", members.len()))); }
             }
-            if targets.is_empty() { ui.label(RichText::new("Нет контактов и групп — добавьте собеседника на вкладке «Контакты».").color(MUTED)); }
+            if targets.is_empty() { ui.label(RichText::new("Нет контактов и групп — добавьте собеседника на вкладке «Контакты».").color(MUTED())); }
             for (id, name) in targets {
                 ui.horizontal(|ui| {
                     theme::avatar(ui, &id, &name, 32.0);
@@ -1296,15 +1342,15 @@ impl App {
         card(ui, |ui| {
             section_title(ui, "Недавние звонки");
             let recent: Vec<&Value> = self.history.iter().rev().filter(|e| api::s(e, "status").starts_with("call_")).take(15).collect();
-            if recent.is_empty() { ui.label(RichText::new("звонков пока не было").color(MUTED)); }
+            if recent.is_empty() { ui.label(RichText::new("звонков пока не было").color(MUTED())); }
             for e in recent {
                 ui.horizontal(|ui| {
-                    let c = match api::s(e, "status").as_str() { "call_ended" => GREEN, "call_missed" => RED, _ => YELLOW };
+                    let c = match api::s(e, "status").as_str() { "call_ended" => GREEN(), "call_missed" => RED(), _ => YELLOW() };
                     ui.label(RichText::new(if api::s(e, "dir") == "out" { "↗" } else { "↘" }).color(c));
                     ui.label(api::s(e, "text"));
-                    ui.label(RichText::new(self.display_name(&api::s(e, "peer"))).color(MUTED));
+                    ui.label(RichText::new(self.display_name(&api::s(e, "peer"))).color(MUTED()));
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        ui.label(RichText::new(self.time(api::u(e, "ts_ms").unwrap_or(0))).size(12.0).color(MUTED));
+                        ui.label(RichText::new(self.time(api::u(e, "ts_ms").unwrap_or(0))).size(12.0).color(MUTED()));
                     });
                 });
             }
@@ -1328,12 +1374,12 @@ impl App {
                 (records.len().to_string(), "записей DHT"),
                 (st["bootstrap"]["join_ms"].as_u64().map(|x| if x == 0 { "seed".into() } else { format!("{x} мс") }).unwrap_or("—".into()), "bootstrap"),
             ] {
-                egui::Frame::default().fill(BG_CARD).corner_radius(CornerRadius::same(12)).inner_margin(Margin::same(14))
+                egui::Frame::default().fill(BG_CARD()).corner_radius(CornerRadius::same(12)).inner_margin(Margin::same(14))
                     .show(ui, |ui| {
                         ui.vertical(|ui| {
                             ui.set_min_width(120.0);
                             ui.label(RichText::new(v).size(26.0).strong());
-                            ui.label(RichText::new(l).color(MUTED));
+                            ui.label(RichText::new(l).color(MUTED()));
                         });
                     });
             }
@@ -1387,12 +1433,12 @@ impl App {
             if let Some((title, res)) = &self.tool_out {
                 ui.add_space(6.0);
                 let (c, body) = match res {
-                    Ok(v) if v.get("ok").and_then(Value::as_bool) != Some(false) => (GREEN, serde_json::to_string_pretty(v).unwrap_or_default()),
-                    Ok(v) => (RED, serde_json::to_string_pretty(v).unwrap_or_default()),
-                    Err(e) => (RED, e.clone()),
+                    Ok(v) if v.get("ok").and_then(Value::as_bool) != Some(false) => (GREEN(), serde_json::to_string_pretty(v).unwrap_or_default()),
+                    Ok(v) => (RED(), serde_json::to_string_pretty(v).unwrap_or_default()),
+                    Err(e) => (RED(), e.clone()),
                 };
                 ui.label(RichText::new(title).color(c).strong());
-                egui::Frame::default().fill(BG_INPUT).corner_radius(CornerRadius::same(8)).inner_margin(Margin::same(10)).show(ui, |ui| {
+                egui::Frame::default().fill(BG_INPUT()).corner_radius(CornerRadius::same(8)).inner_margin(Margin::same(10)).show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ScrollArea::vertical().id_salt("tool_out").max_height(220.0).show(ui, |ui| {
                         ui.label(RichText::new(body).monospace());
@@ -1405,7 +1451,7 @@ impl App {
         let now = api::u(&st, "now_ms").unwrap_or_else(now_ms);
         card(ui, |ui| {
             section_title(ui, &format!("Туннели · {}", tunnels.len()));
-            if tunnels.is_empty() { ui.label(RichText::new("нет — туннель строится при первой отправке").color(MUTED)); }
+            if tunnels.is_empty() { ui.label(RichText::new("нет — туннель строится при первой отправке").color(MUTED())); }
             egui::Grid::new("tunnels").num_columns(6).striped(true).spacing([24.0, 6.0]).show(ui, |ui| {
                 if !tunnels.is_empty() {
                     for h in ["tunnel_id", "состояние", "роль", "hops", "посл. ACK", "uptime"] { ui.label(RichText::new(h).strong()); }
@@ -1436,7 +1482,7 @@ impl App {
                         let id = api::s(p, "node_id");
                         ui.label(RichText::new(format!("{}…", short(&id))).monospace()).on_hover_text(&id);
                         let sc = p["score"].as_f64().unwrap_or(0.0);
-                        ui.label(RichText::new(format!("{sc:.2}")).color(if sc > 0.6 { GREEN } else if sc > 0.3 { YELLOW } else { RED }));
+                        ui.label(RichText::new(format!("{sc:.2}")).color(if sc > 0.6 { GREEN() } else if sc > 0.3 { YELLOW() } else { RED() }));
                         let pr = &p["profile"];
                         ui.label(api::s(pr, "successes"));
                         ui.label(api::s(pr, "failures"));
@@ -1487,7 +1533,7 @@ impl App {
 
     fn journal_tab(&mut self, ui: &mut egui::Ui) {
         ui.heading("Журнал отправки и приёма");
-        ui.label(RichText::new("Локальная история узла (state/history.jsonl): переживает перезапуск.").color(MUTED));
+        ui.label(RichText::new("Локальная история узла (state/history.jsonl): переживает перезапуск.").color(MUTED()));
         ui.add_space(8.0);
         ui.horizontal(|ui| {
             for (i, l) in ["Все", "Исходящие", "Входящие", "Ошибки"].iter().enumerate() {
@@ -1508,7 +1554,7 @@ impl App {
                     ui.label(if dir == "out" { "↗" } else { "↘" });
                     let peer = api::s(e, "peer");
                     ui.label(self.display_name(&peer)).on_hover_text(&peer);
-                    let c = match status.as_str() { "delivered" | "received" => GREEN, "failed" => RED, _ => YELLOW };
+                    let c = match status.as_str() { "delivered" | "received" => GREEN(), "failed" => RED(), _ => YELLOW() };
                     theme::pill(ui, &status, c);
                     ui.label(ms(api::u(e, "rtt_ms")));
                     let body = e["error"].as_str().map(str::to_owned).unwrap_or_else(|| api::s(e, "text"));
@@ -1536,7 +1582,7 @@ impl App {
                         ui.label("Программа узла");
                         ui.vertical(|ui| {
                             ui.add(field(&mut self.s.node_bin).hint_text("авто").desired_width(420.0));
-                            ui.label(RichText::new(format!("будет использовано: {}", find_node_binary(&self.s.node_bin).display())).size(12.0).color(MUTED));
+                            ui.label(RichText::new(format!("будет использовано: {}", find_node_binary(&self.s.node_bin).display())).size(12.0).color(MUTED()));
                         });
                         ui.end_row();
                         ui.label("Порт узла (P2P)"); ui.add(egui::DragValue::new(&mut self.s.listen_port).range(1024..=65535)); ui.end_row();
@@ -1544,13 +1590,13 @@ impl App {
                         ui.label("Bootstrap-пиры");
                         ui.vertical(|ui| {
                             ui.add(field(&mut self.s.bootstrap).hint_text("127.0.0.1:7001, …").desired_width(420.0));
-                            ui.label(RichText::new("пусто — узел станет первым (seed) узлом сети").size(12.0).color(MUTED));
+                            ui.label(RichText::new("пусто — узел станет первым (seed) узлом сети").size(12.0).color(MUTED()));
                         });
                         ui.end_row();
                         ui.label("Каталог состояния");
                         ui.vertical(|ui| {
                             ui.add(field(&mut self.s.state_dir).desired_width(420.0));
-                            ui.label(RichText::new("identity.key (= ваш NodeID), history.jsonl, журнал узла").size(12.0).color(MUTED));
+                            ui.label(RichText::new("identity.key (= ваш NodeID), history.jsonl, журнал узла").size(12.0).color(MUTED()));
                         });
                         ui.end_row();
                         ui.label("Автозапуск"); ui.checkbox(&mut self.s.autostart, "запускать узел при старте приложения"); ui.end_row();
@@ -1558,7 +1604,7 @@ impl App {
                         ui.vertical(|ui| {
                             ui.checkbox(&mut self.s.lan, "доступен с других устройств (телефон, другой ПК)");
                             ui.label(RichText::new("узел сообщает пирам свой LAN-адрес (--advertise auto); порт P2P должен быть открыт в брандмауэре")
-                                .size(12.0).color(MUTED));
+                                .size(12.0).color(MUTED()));
                         });
                         ui.end_row();
                         ui.label("Ретрансляторы");
@@ -1567,7 +1613,7 @@ impl App {
                             ui.label(RichText::new(format!(
                                 "запустить рядом вспомогательные узлы (порты {}…): туннелю нужно ≥ 2 ретранслятора, \
                                  а в сети «телефон + компьютер» их больше нет", self.s.listen_port.saturating_add(1)))
-                                .size(12.0).color(MUTED));
+                                .size(12.0).color(MUTED()));
                         });
                         ui.end_row();
                     }
@@ -1585,13 +1631,13 @@ impl App {
                     self.disconnect();
                 }
                 if ui.button("💾 Сохранить").clicked() {
-                    match self.s.save() { Ok(()) => self.toast("Настройки сохранены", GREEN), Err(e) => self.toast(e, RED) }
+                    match self.s.save() { Ok(()) => self.toast("Настройки сохранены", GREEN()), Err(e) => self.toast(e, RED()) }
                 }
             });
             ui.add_space(4.0);
-            let line = if self.connected() { (GREEN, format!("на связи: {}", self.my_id())) }
-                else if let Some(e) = &self.conn_err { (YELLOW, e.clone()) }
-                else { (MUTED, "не подключено".into()) };
+            let line = if self.connected() { (GREEN(), format!("на связи: {}", self.my_id())) }
+                else if let Some(e) = &self.conn_err { (YELLOW(), e.clone()) }
+                else { (MUTED(), "не подключено".into()) };
             ui.label(RichText::new(line.1).color(line.0).size(12.5));
         });
 
@@ -1605,12 +1651,12 @@ impl App {
             ui.add_space(12.0);
             card(ui, |ui| {
                 section_title(ui, &format!("Журнал узла · pid {}", n.pid()));
-                ui.label(RichText::new(format!("{}  →  {}", n.bin.display(), n.log_path.display())).size(12.0).color(MUTED));
-                egui::Frame::default().fill(BG_INPUT).corner_radius(CornerRadius::same(8)).inner_margin(Margin::same(10)).show(ui, |ui| {
+                ui.label(RichText::new(format!("{}  →  {}", n.bin.display(), n.log_path.display())).size(12.0).color(MUTED()));
+                egui::Frame::default().fill(BG_INPUT()).corner_radius(CornerRadius::same(8)).inner_margin(Margin::same(10)).show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ScrollArea::vertical().id_salt("node_log").max_height(320.0).stick_to_bottom(true).show(ui, |ui| {
                         for l in &self.node_log {
-                            let c = if l.contains(" WARN ") { YELLOW } else if l.contains(" ERROR ") { RED } else { MUTED };
+                            let c = if l.contains(" WARN ") { YELLOW() } else if l.contains(" ERROR ") { RED() } else { MUTED() };
                             ui.label(RichText::new(l).monospace().size(11.5).color(c));
                         }
                     });
@@ -1651,25 +1697,25 @@ impl App {
                 ui.add_space(12.0);
                 ui.vertical(|ui| {
                     ui.label("В приложении на Android: вкладка «Узел» → «Сканировать QR» (или вставьте ссылку).");
-                    ui.label(RichText::new("Телефон возьмёт этот узел как bootstrap и добавит его в контакты.").color(MUTED).size(13.0));
+                    ui.label(RichText::new("Телефон возьмёт этот узел как bootstrap и добавит его в контакты.").color(MUTED()).size(13.0));
                     ui.add_space(6.0);
                     ui.horizontal(|ui| {
                         ui.label(RichText::new(&link).monospace().size(12.0));
                         if ui.small_button("Копировать").clicked() {
                             ui.ctx().copy_text(link.clone());
-                            self.toast("Ссылка скопирована", GREEN);
+                            self.toast("Ссылка скопирована", GREEN());
                         }
                     });
                     ui.add_space(6.0);
                     if local_only {
-                        pill(ui, "узел анонсирует 127.0.0.1 — включите «Локальная сеть» и перезапустите", YELLOW);
+                        pill(ui, "узел анонсирует 127.0.0.1 — включите «Локальная сеть» и перезапустите", YELLOW());
                     } else {
-                        pill(ui, "доступен в локальной сети", GREEN);
+                        pill(ui, "доступен в локальной сети", GREEN());
                     }
                     let relays = self.helpers.len();
                     let peers = self.status.as_ref().and_then(|s| s["routing"]["total_contacts"].as_u64()).unwrap_or(0) as usize;
                     ui.label(RichText::new(format!("ретрансляторов запущено приложением: {relays}; известно пиров: {peers}"))
-                        .size(12.5).color(if relays + peers >= 3 { MUTED } else { YELLOW }));
+                        .size(12.5).color(if relays + peers >= 3 { MUTED() } else { YELLOW() }));
                 });
             });
         });
@@ -1681,9 +1727,9 @@ impl App {
         egui::Area::new(egui::Id::new("toasts")).anchor(egui::Align2::RIGHT_BOTTOM, Vec2::new(-18.0, -18.0))
             .show(ctx, |ui| {
                 for t in self.toasts.iter().rev().take(4) {
-                    egui::Frame::default().fill(BG_SIDE).stroke(Stroke::new(1.0_f32, t.color))
+                    egui::Frame::default().fill(BG_SIDE()).stroke(Stroke::new(1.0_f32, t.color))
                         .corner_radius(CornerRadius::same(10)).inner_margin(Margin::symmetric(14, 10))
-                        .show(ui, |ui| { ui.set_max_width(380.0); ui.label(RichText::new(&t.text).color(TEXT)); });
+                        .show(ui, |ui| { ui.set_max_width(380.0); ui.label(RichText::new(&t.text).color(TEXT())); });
                     ui.add_space(6.0);
                 }
             });
@@ -1694,31 +1740,31 @@ impl App {
 fn rail_button(ui: &mut egui::Ui, icon: &str, selected: bool, badge: usize, soon: bool) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(48.0), egui::Sense::click());
     let p = ui.painter();
-    let fill = if selected { ACCENT } else if resp.hovered() { BG_HOVER } else { BG_SIDE };
+    let fill = if selected { ACCENT() } else if resp.hovered() { BG_HOVER() } else { BG_SIDE() };
     p.rect_filled(rect, CornerRadius::same(if selected || resp.hovered() { 16 } else { 24 }), fill);
     if selected {
         let bar = egui::Rect::from_min_size(egui::pos2(rect.left() - 14.0, rect.top() + 8.0), Vec2::new(4.0, 32.0));
-        p.rect_filled(bar, CornerRadius::same(2), Color32::WHITE);
+        p.rect_filled(bar, CornerRadius::same(2), TEXT());
     }
-    let c = if soon && !selected { MUTED } else { Color32::WHITE };
+    let c = if selected { ON_ACCENT() } else if soon { MUTED() } else { TEXT() };
     p.text(rect.center(), egui::Align2::CENTER_CENTER, icon, egui::FontId::proportional(20.0), c);
     if badge > 0 {
         let center = rect.right_bottom() - Vec2::new(6.0, 6.0);
-        p.circle_filled(center, 9.0, RED);
+        p.circle_filled(center, 9.0, RED());
         p.text(center, egui::Align2::CENTER_CENTER, badge.min(99).to_string(), egui::FontId::proportional(11.0), Color32::WHITE);
     } else if soon {
         let center = rect.right_top() + Vec2::new(-6.0, 6.0);
-        p.circle_filled(center, 5.0, YELLOW);
+        p.circle_filled(center, 5.0, YELLOW());
     }
     resp
 }
 
 /// Цепочка «Вы → relay → relay → получатель» по ответу `/api/route`.
 fn route_chain(ui: &mut egui::Ui, r: &Result<Value, String>) {
-    let v = match r { Ok(v) => v, Err(e) => { ui.label(RichText::new(e).color(RED)); return; } };
+    let v = match r { Ok(v) => v, Err(e) => { ui.label(RichText::new(e).color(RED())); return; } };
     let t = &v["tunnel"];
     if t.is_null() {
-        ui.label(RichText::new("Туннеля сейчас нет — он будет построен при следующей отправке.").color(MUTED));
+        ui.label(RichText::new("Туннеля сейчас нет — он будет построен при следующей отправке.").color(MUTED()));
         return;
     }
     let chip = |ui: &mut egui::Ui, title: &str, sub: &str, c: Color32| {
@@ -1728,26 +1774,26 @@ fn route_chain(ui: &mut egui::Ui, r: &Result<Value, String>) {
                 ui.vertical(|ui| {
                     ui.spacing_mut().item_spacing.y = 0.0;
                     ui.label(RichText::new(title).strong().color(c));
-                    if !sub.is_empty() { ui.label(RichText::new(sub).size(11.0).color(MUTED)); }
+                    if !sub.is_empty() { ui.label(RichText::new(sub).size(11.0).color(MUTED())); }
                 });
             });
     };
     ui.horizontal_wrapped(|ui| {
-        chip(ui, "Вы", "инициатор", GREEN);
+        chip(ui, "Вы", "инициатор", GREEN());
         for h in t["hops"].as_array().cloned().unwrap_or_default() {
-            ui.label(RichText::new("→").size(18.0).color(MUTED));
+            ui.label(RichText::new("→").size(18.0).color(MUTED()));
             let alive = h["alive"].as_bool().unwrap_or(false);
-            chip(ui, &format!("relay {}", short(&api::s(&h, "node_id"))), &api::s(&h, "addr"), if alive { GREEN } else { YELLOW });
+            chip(ui, &format!("relay {}", short(&api::s(&h, "node_id"))), &api::s(&h, "addr"), if alive { GREEN() } else { YELLOW() });
         }
-        ui.label(RichText::new("→").size(18.0).color(MUTED));
-        chip(ui, "получатель", &short(&api::s(v, "target")), ACCENT);
+        ui.label(RichText::new("→").size(18.0).color(MUTED()));
+        chip(ui, "получатель", &short(&api::s(v, "target")), ACCENT());
     });
     let state = api::s(t, "state");
     ui.horizontal(|ui| {
         theme::pill(ui, &state, state_color(&state));
         ui.label(RichText::new(format!("tunnel {} · работает {} · последний ACK {} назад",
             api::s(t, "tunnel_id"), api::u(t, "uptime_ms").map(ago).unwrap_or_default(),
-            api::u(t, "last_ack_age_ms").map(ago).unwrap_or_default())).size(12.0).color(MUTED))
+            api::u(t, "last_ack_age_ms").map(ago).unwrap_or_default())).size(12.0).color(MUTED()))
             .on_hover_text("Зелёный relay — недавно подтвердил доставку (TUNNEL_ACK); жёлтый — подтверждений давно не было \
                             (туннель простаивает, DEGRADED). Отказ обнаружится при отправке, и маршрут будет перестроен.");
     });
